@@ -8,7 +8,7 @@ import {
   Modal,
   Dimensions,
 } from 'react-native';
-import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
+import { CameraView, CameraType, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -27,6 +27,7 @@ export const VideoRecorder: React.FC<VideoRecorderProps> = ({
 }) => {
   const [facing, setFacing] = useState<CameraType>('front');
   const [permission, requestPermission] = useCameraPermissions();
+  const [micPermission, requestMicPermission] = useMicrophonePermissions();
   const [isRecording, setIsRecording] = useState(false);
   const [recordedVideoUri, setRecordedVideoUri] = useState<string | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -48,18 +49,27 @@ export const VideoRecorder: React.FC<VideoRecorderProps> = ({
     };
   }, []);
 
-  if (!permission) {
+  if (!permission || !micPermission) {
     return <View style={styles.container} />;
   }
 
-  if (!permission.granted) {
+  const hasCamera = !!permission.granted;
+  const hasMic = !!micPermission.granted;
+
+  if (!hasCamera || !hasMic) {
     return (
       <View style={styles.container}>
         <View style={styles.permissionContainer}>
           <Text style={styles.permissionText}>
-            Camera permission is required to record video answers
+            Camera and microphone permissions are required to record video answers
           </Text>
-          <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
+          <TouchableOpacity
+            style={styles.permissionButton}
+            onPress={async () => {
+              await requestPermission();
+              await requestMicPermission();
+            }}
+          >
             <Text style={styles.permissionButtonText}>Grant Permission</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.cancelButton} onPress={onCancel}>
@@ -89,6 +99,7 @@ export const VideoRecorder: React.FC<VideoRecorderProps> = ({
 
       const video = await cameraRef.current.recordAsync({
         maxDuration: 5,
+        mute: false,
         // Quality options for smaller file size
         videoBitrate: 1000000, // 1 Mbps
       });
