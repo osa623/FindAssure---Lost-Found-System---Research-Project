@@ -38,7 +38,70 @@ FEATURE_COLUMNS = [
     "f_found_n_tokens",
     "f_query_missing_fields",
     "f_len_ratio",
+    # --- NEW: Numeric/monetary matching features ---
+    "f_numeric_match",         # overlap ratio of extracted numbers
+    "f_money_amount_match",    # closeness of monetary values (0=far, 1=exact)
 ]
+
+# ---------------------------------------------------------------------------
+# Fuzzy string match helper
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Numeric value extraction + matching  (handles money amounts like "10000")
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_MONEY_PATTERN = _re.compile(
+    r'(?:rs\.?|lkr|usd|\$|rupees?)\s*[\d,]+(?:\.\d+)?'   # currency prefix
+    r'|[\d,]+(?:\.\d+)?\s*(?:rs\.?|lkr|usd|rupees?)'      # currency suffix
+    r'|\b\d[\d,]*(?:\.\d+)?\b',                             # plain numbers
+    _re.IGNORECASE,
+)
+
+def _extract_numbers(text: str) -> list[float]:
+    """Extract all numeric values from text, normalizing commas/currency."""
+    if not text:
+        return []
+    nums = []
+    for m in _MONEY_PATTERN.finditer(text):
+        raw = _re.sub(r'[^\d.]', '', m.group())
+        try:
+            val = float(raw)
+            if val > 0:
+                nums.append(val)
+        except (ValueError, OverflowError):
+            continue
+    return sorted(set(nums))
+
+def _numeric_overlap(lost_nums: list[float], found_nums: list[float]) -> float:
+    """Fraction of lost numbers that appear in found numbers (exact match)."""
+    if not lost_nums:
+        return -1.0  # N/A — no numbers to compare
+    if not found_nums:
+        return 0.0
+    matched = sum(1 for n in lost_nums if n in found_nums)
+    return round(matched / len(lost_nums), 4)
+
+def _money_proximity(lost_nums: list[float], found_nums: list[float]) -> float:
+    """
+    Best-case closeness between monetary amounts.
+    Returns 1.0 for exact match, decreasing toward 0.0 for distant values.
+    Returns -1.0 (N/A) when either side has no numbers.
+    """
+    if not lost_nums or not found_nums:
+        return -1.0
+    # Find best pair proximity
+    best = 0.0
+    for lv in lost_nums:
+        for fv in found_nums:
+            if lv == fv:
+                return 1.0  # exact
+            max_val = max(abs(lv), abs(fv), 1.0)
+            proximity = 1.0 - min(abs(lv - fv) / max_val, 1.0)
+            best = max(best, proximity)
+    return round(best, 4)
 
 # ---------------------------------------------------------------------------
 # Fuzzy string match helper
@@ -204,10 +267,13 @@ def compute_final_score(
     id_bonus: float,
     id_penalty: float,
     contradiction: float,
+    numeric_match: float = -1.0,
+    money_match: float = -1.0,
 ) -> float:
     """
     Rule-based final score in [0.0, 1.0].
-    Weights: semantic=0.40, keyword=0.20, attribute=0.25, identifier=0.15
+    Base weights: semantic=0.40, keyword=0.20, attribute=0.25, identifier=0.15.
+    When numeric values exist, they contribute an additive bonus up to +0.10.
     """
     score = (
         0.40 * semantic +
@@ -215,8 +281,16 @@ def compute_final_score(
         0.25 * attr +
         0.15 * id_bonus
     )
+    # --- NEW: Numeric bonus (only when values exist, i.e. >= 0) ---
+    num_bonus = 0.0
+    if numeric_match >= 0:
+        num_bonus += 0.05 * numeric_match
+    if money_match >= 0:
+        num_bonus += 0.05 * money_match
+    score += num_bonus
+
     score = max(0.0, score - id_penalty - contradiction)
-    return round(score, 4)
+    return round(min(1.0, score), 4)
 
 # ---------------------------------------------------------------------------
 # Feature computer  (DESIGN_DOC §H3)
@@ -248,6 +322,12 @@ def compute_features(lost_attrs: dict, found_item: dict) -> dict:
     id_bonus, id_penalty = identifier_score(lost_attrs, found_attrs)
     contradiction = contradiction_penalty(lost_attrs, found_attrs)
 
+    # --- NEW: Extract numeric / monetary values from both sides ---
+    lost_text = (lost_attrs.get("clean_description") or "")
+    found_text_desc = found_item.get("description", "")
+    lost_nums = _extract_numbers(lost_text)
+    found_nums = _extract_numbers(found_text_desc)
+
     return {
         "f_semantic_sim":            round(sem, 4),
         "f_bm25_score_norm":         round(kw, 4),
@@ -268,6 +348,9 @@ def compute_features(lost_attrs: dict, found_item: dict) -> dict:
             len((lost_attrs.get("clean_description") or "").split()) /
             max(1, len(found_item.get("description", "").split()))
         ),
+        # --- NEW: Numeric/monetary features ---
+        "f_numeric_match":      _numeric_overlap(lost_nums, found_nums),
+        "f_money_amount_match": _money_proximity(lost_nums, found_nums),
         # Private key used by rule-based scorer (not a feature column)
         "_id_penalty": id_penalty,
     }
@@ -440,6 +523,8 @@ def score_and_rank_candidates(
                 id_bonus=f["f_identifier_match_ratio"],
                 id_penalty=f.get("_id_penalty", 0.0),
                 contradiction=f["f_contradiction_score"],
+                numeric_match=f.get("f_numeric_match", -1.0),
+                money_match=f.get("f_money_amount_match", -1.0),
             )
             c["model_version"] = "rule_based_v1"
 
