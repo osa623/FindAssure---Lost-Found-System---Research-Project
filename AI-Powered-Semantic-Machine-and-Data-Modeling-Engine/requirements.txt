@@ -21,3 +21,4 @@ rank_bm25>=0.2.2
 lightgbm>=4.3.0
 thefuzz>=0.22.1
 python-levenshtein>=0.25.0
+datasets>=2.14.0

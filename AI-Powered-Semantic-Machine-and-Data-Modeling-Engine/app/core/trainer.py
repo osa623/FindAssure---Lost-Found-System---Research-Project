@@ -24,7 +24,7 @@ from app.core.scorer import FEATURE_COLUMNS, compute_features
 
 
 # ---------------------------------------------------------------------------
-# Hard negative sampler  (DESIGN_DOC §E2)
+# Hard negative sampler  (DESIGN_DOC §E2 — Enhanced)
 # ---------------------------------------------------------------------------
 
 def sample_hard_negatives(impression: dict, positive_found_id: str, n_neg: int = 8) -> list[dict]:
@@ -32,12 +32,52 @@ def sample_hard_negatives(impression: dict, positive_found_id: str, n_neg: int =
     From an impression, take the top-ranked items that are NOT the positive.
     These are hard negatives: current model ranked them highly but they were wrong.
 
+    Enhanced strategy:
+      - Prioritize items ranked ABOVE the positive (model put them higher → harder)
+      - Then fill remaining slots from items ranked below
+
     Returns up to n_neg candidates (sorted closest-to-rank-1 first).
     """
     shown = impression.get("shown_results") or []
     negatives = [r for r in shown if r.get("found_id") != positive_found_id]
-    negatives_sorted = sorted(negatives, key=lambda x: x.get("rank", 999))
-    return negatives_sorted[:n_neg]
+
+    # Find the rank of the positive item
+    pos_rank = 999
+    for r in shown:
+        if r.get("found_id") == positive_found_id:
+            pos_rank = r.get("rank", 999)
+            break
+
+    # Prioritize items ranked above positive (harder negatives)
+    above_positive = [r for r in negatives if r.get("rank", 999) < pos_rank]
+    below_positive = [r for r in negatives if r.get("rank", 999) >= pos_rank]
+
+    above_positive.sort(key=lambda x: x.get("rank", 999))
+    below_positive.sort(key=lambda x: x.get("rank", 999))
+
+    # Merge: above first, then below
+    prioritized = above_positive + below_positive
+    return prioritized[:n_neg]
+
+
+def load_mined_hard_negatives() -> list[dict]:
+    """
+    Load pre-mined hard negatives from scripts/mine_hard_negatives.py output.
+    Returns list of {anchor, negative, source, difficulty} dicts.
+    """
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    hn_path = os.path.join(base_dir, "data", "raw", "hard_negatives.json")
+    if not os.path.exists(hn_path):
+        return []
+    try:
+        import json
+        with open(hn_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        logger.info(f"Loaded {len(data)} pre-mined hard negatives from {hn_path}")
+        return data
+    except Exception as e:
+        logger.warning(f"Failed to load hard negatives: {e}")
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -355,5 +395,19 @@ def train_reranker_model(df) -> object:
     logger.info("Feature importance (top 10):")
     for feat, imp in feat_importance[:10]:
         logger.info(f"  {feat}: {imp:.2f}")
+
+    # --- NEW: Train confidence calibrator (Platt scaling) ---
+    try:
+        from app.core.scorer import train_calibrator
+        import pandas as pd
+
+        # Use the entire dataset to fit calibrator
+        X_all = df[FEATURE_COLUMNS].fillna(0)
+        raw_scores = model.predict(X_all)
+        cal_labels = df["label"].values
+        train_calibrator(list(raw_scores), list(cal_labels))
+        logger.info("Confidence calibrator trained successfully")
+    except Exception as cal_err:
+        logger.warning(f"Calibrator training failed (non-critical): {cal_err}")
 
     return model

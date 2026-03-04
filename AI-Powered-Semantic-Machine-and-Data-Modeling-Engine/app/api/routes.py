@@ -347,6 +347,15 @@ async def submit_feedback(payload: FeedbackRequest, db=Depends(get_db)):
         except Exception as rl_err:
             logger.debug(f"RL update skipped: {rl_err}")
 
+        # --- NEW: Collect (lost, found) text pairs for embedding fine-tuning ---
+        # When user confirms a match (is_correct=true), save the pair of
+        # descriptions so the sentence-transformer can learn from real feedback.
+        if payload.is_correct:
+            try:
+                await _collect_embedding_pair(db, payload)
+            except Exception as ep_err:
+                logger.debug(f"Embedding pair collection skipped: {ep_err}")
+
         return {
             "status": "ok",
             "verification_id": doc["verification_id"],
@@ -442,6 +451,10 @@ async def feedback_stats(db=Depends(get_db)):
         from app.config import settings
         ready = verifications_positive >= settings.MIN_TRAIN_POSITIVES
 
+        # --- Embedding fine-tuning stats ---
+        embedding_pairs = await db.embedding_training_pairs.count_documents({})
+        embedding_ready = embedding_pairs >= settings.MIN_TRAIN_POSITIVES
+
         return {
             "status": "ok",
             "impressions": impressions,
@@ -453,6 +466,16 @@ async def feedback_stats(db=Depends(get_db)):
             },
             "training_ready": ready,
             "min_required": settings.MIN_TRAIN_POSITIVES,
+            "embedding_fine_tuning": {
+                "collected_pairs": embedding_pairs,
+                "ready": embedding_ready,
+                "min_required": settings.MIN_TRAIN_POSITIVES,
+                "message": (
+                    f"Ready to fine-tune embeddings! ({embedding_pairs} pairs collected)"
+                    if embedding_ready
+                    else f"Need {settings.MIN_TRAIN_POSITIVES - embedding_pairs} more confirmed matches for embedding fine-tuning."
+                ),
+            },
             "message": (
                 f"Ready to retrain! ({verifications_positive} verified pairs)"
                 if ready
@@ -460,4 +483,150 @@ async def feedback_stats(db=Depends(get_db)):
             ),
         }
     except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Helper: Collect (lost, found) text pair for embedding fine-tuning
+# ---------------------------------------------------------------------------
+
+async def _collect_embedding_pair(db, payload: FeedbackRequest):
+    """
+    When user confirms a match, look up the original lost description and
+    the matched found description from MongoDB, then store the pair in
+    `embedding_training_pairs` for future sentence-transformer fine-tuning.
+
+    This runs inside the /feedback handler for positive feedback only.
+    """
+    # 1. Get the lost description from the impression log
+    lost_text = None
+    if payload.impression_id:
+        impression = await db.match_impressions.find_one(
+            {"impression_id": payload.impression_id},
+            {"lost_item_raw": 1},
+        )
+        if impression:
+            lost_text = impression.get("lost_item_raw")
+
+    # Fallback: try match_selections
+    if not lost_text:
+        selection = await db.match_selections.find_one(
+            {"query_id": payload.query_id},
+            {"lost_item_raw": 1},
+        )
+        if selection:
+            lost_text = selection.get("lost_item_raw")
+
+    if not lost_text:
+        logger.debug("Embedding pair: no lost text found — skipping")
+        return
+
+    # 2. Get the found description
+    found_doc = await db.found_items.find_one(
+        {"item_id": payload.found_id},
+        {"description": 1, "category": 1},
+    )
+    if not found_doc or not found_doc.get("description"):
+        logger.debug("Embedding pair: no found description — skipping")
+        return
+
+    found_text = found_doc["description"]
+
+    # 3. Deduplicate — don't insert if this pair already exists
+    existing = await db.embedding_training_pairs.find_one({
+        "lost_id": payload.query_id,
+        "found_id": payload.found_id,
+    })
+    if existing:
+        return
+
+    # 4. Store the pair
+    pair_doc = {
+        "pair_id": str(uuid.uuid4()),
+        "lost_id": payload.query_id,
+        "found_id": payload.found_id,
+        "anchor": lost_text[:2000],
+        "positive": found_text[:2000],
+        "category": found_doc.get("category", ""),
+        "source": "user_feedback",
+        "created_at": datetime.utcnow(),
+    }
+    await db.embedding_training_pairs.insert_one(pair_doc)
+    count = await db.embedding_training_pairs.count_documents({})
+    logger.info(
+        f"Embedding training pair collected: lost={payload.query_id}, "
+        f"found={payload.found_id} (total: {count})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /retrain-embeddings — Fine-tune sentence-transformer from feedback
+# ---------------------------------------------------------------------------
+
+@router.post("/retrain-embeddings", summary="Fine-tune Embedding Model from User Feedback")
+async def retrain_embeddings(payload: RetrainRequest, db=Depends(get_db)):
+    """
+    Fine-tune the sentence-transformer embedding model using (lost, found)
+    text pairs collected from confirmed user matches.
+
+    Every time a user picks a found item and confirms "Yes, this is mine",
+    the system stores the (lost_description, found_description) pair.
+    When enough pairs are collected (default: 50), this endpoint trains the
+    embedding model so it learns from real user behavior.
+
+    This is different from /retrain:
+      - /retrain trains the LightGBM re-ranker (ranking layer)
+      - /retrain-embeddings trains the sentence-transformer (embedding layer)
+    """
+    if db is None:
+        return {"status": "error", "detail": "Database unavailable"}
+
+    from app.config import settings
+
+    try:
+        # Count available pairs
+        total_pairs = await db.embedding_training_pairs.count_documents({})
+
+        if total_pairs < settings.MIN_TRAIN_POSITIVES and not payload.force:
+            return {
+                "status": "insufficient_data",
+                "detail": (
+                    f"Only {total_pairs} feedback pairs collected (need {settings.MIN_TRAIN_POSITIVES}). "
+                    f"Collect more confirmed matches or set force=true."
+                ),
+                "stats": {"collected_pairs": total_pairs, "min_required": settings.MIN_TRAIN_POSITIVES},
+            }
+
+        # Fetch all pairs from MongoDB
+        cursor = db.embedding_training_pairs.find(
+            {},
+            {"anchor": 1, "positive": 1, "category": 1, "_id": 0},
+        )
+        pairs = await cursor.to_list(length=10000)
+
+        if not pairs:
+            return {"status": "error", "detail": "No training pairs found."}
+
+        # Run fine-tuning (CPU-bound, runs in thread to avoid blocking)
+        import asyncio
+        from app.core.embedding_trainer import fine_tune_from_feedback
+        result = await asyncio.to_thread(fine_tune_from_feedback, pairs)
+
+        # Reload the semantic engine with the new model
+        try:
+            engine = SemanticEngine()
+            engine.reload_model()
+            logger.info("Semantic engine reloaded with fine-tuned model")
+        except Exception as reload_err:
+            logger.warning(f"Model reload deferred to next restart: {reload_err}")
+
+        return {
+            "status": "ok",
+            "message": "Embedding model fine-tuned from user feedback and deployed!",
+            "stats": result,
+        }
+    except ImportError as e:
+        return {"status": "error", "detail": f"Missing dependency: {e}"}
+    except Exception as e:
+        logger.error(f"Embedding retrain failed: {e}")
         return {"status": "error", "detail": str(e)}

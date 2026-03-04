@@ -39,6 +39,26 @@ class SemanticEngine:
         # Get actual dimension from model
         self.dimension = self.model.get_sentence_embedding_dimension()
         print(f"Model dimension: {self.dimension}")
+
+    def reload_model(self):
+        """
+        Hot-reload the sentence-transformer model from disk.
+        Called after embedding fine-tuning completes, so the running server
+        picks up the new model without a restart.
+        """
+        print("Reloading Semantic Model after fine-tuning...")
+        try:
+            new_model = SentenceTransformer(settings.MODEL_PATH)
+            new_dim = new_model.get_sentence_embedding_dimension()
+            if new_dim != self.dimension:
+                print(f"WARNING: New model dimension {new_dim} differs from current {self.dimension}. Skipping reload.")
+                return False
+            self.model = new_model
+            print(f"Model reloaded successfully (dim={self.dimension})")
+            return True
+        except Exception as e:
+            print(f"Model reload failed: {e}")
+            return False
         
         # Use Inner Product (IP) index for cosine similarity
         # Vectors will be normalized, so IP = cosine similarity

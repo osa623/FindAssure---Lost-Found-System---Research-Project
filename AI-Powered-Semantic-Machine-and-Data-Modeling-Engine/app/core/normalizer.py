@@ -161,6 +161,49 @@ Return ONLY a valid JSON object. No explanation, no markdown, no code fence.
 """
 
 # ---------------------------------------------------------------------------
+# Query Expansion Prompt  (NEW — generates synonym/paraphrase expansions)
+# ---------------------------------------------------------------------------
+
+QUERY_EXPANSION_PROMPT = """\
+You are a query expansion expert for a lost-and-found item matching system.
+Given a user's search description for a lost item, generate alternative phrasings
+and synonym expansions that would help match against found item descriptions.
+
+=== ORIGINAL QUERY ===
+{query_text}
+
+=== ITEM CATEGORY ===
+{category}
+
+=== OUTPUT FORMAT ===
+Return ONLY a valid JSON object. No explanation, no markdown, no code fence.
+
+{{
+  "expanded_queries": [
+    "<original query kept as-is>",
+    "<alternative phrasing 1 using common synonyms>",
+    "<alternative phrasing 2 emphasizing key attributes>"
+  ],
+  "extra_keywords": [
+    "<additional search keywords not in the original query but semantically related>"
+  ],
+  "attribute_variants": {{
+    "color_variants": ["<alternative color names, e.g. 'dark blue' → 'navy', 'cobalt'>"],
+    "type_variants": ["<alternative item type names, e.g. 'wallet' → 'purse', 'billfold'>"],
+    "brand_variants": ["<alternative brand spellings or nicknames>"]
+  }}
+}}
+
+=== RULES ===
+1. Keep the original query as the FIRST element in expanded_queries.
+2. Generate exactly 2 alternative phrasings (total 3 including original).
+3. extra_keywords should be 3-8 terms that are highly relevant synonyms not already in the query.
+4. Only include attribute_variants that are genuinely equivalent (not loosely related).
+5. Do NOT invent details not implied by the original query.
+6. Keep expansions concise and focused on matching probability.
+"""
+
+# ---------------------------------------------------------------------------
 # Fallback schema (used when Gemini API key is not configured)
 # ---------------------------------------------------------------------------
 
@@ -420,3 +463,60 @@ class LostTextNormalizer:
 
         await self._cache_set(db, key, result)
         return result
+
+    async def expand_query(
+        self,
+        db,
+        query_text: str,
+        category: str,
+    ) -> dict:
+        """
+        Expand a search query with synonyms, alternative phrasings, and extra keywords
+        using Gemini to improve recall in the retrieval stage.
+
+        Args:
+            db:          Motor database instance (or None)
+            query_text:  Clean user query text
+            category:    Item category
+
+        Returns:
+            dict with keys: expanded_queries, extra_keywords, attribute_variants
+            Falls back to returning original text if Gemini unavailable.
+        """
+        fallback = {
+            "expanded_queries": [query_text.strip()],
+            "extra_keywords": [],
+            "attribute_variants": {
+                "color_variants": [],
+                "type_variants": [],
+                "brand_variants": [],
+            },
+        }
+
+        if self._model is None or not query_text or not query_text.strip():
+            return fallback
+
+        key = self._cache_key(query_text, category, "expand")
+        cached = await self._cache_get(db, key)
+        if cached:
+            return cached
+
+        try:
+            prompt = QUERY_EXPANSION_PROMPT.format(
+                query_text=query_text.strip()[:2000],
+                category=category or "unknown",
+            )
+            result = self._call_gemini(prompt)
+            result.setdefault("expanded_queries", [query_text.strip()])
+            result.setdefault("extra_keywords", [])
+            result.setdefault("attribute_variants", {})
+
+            # Ensure original query is first
+            if query_text.strip() not in result["expanded_queries"]:
+                result["expanded_queries"].insert(0, query_text.strip())
+
+            await self._cache_set(db, key, result)
+            return result
+        except Exception as e:
+            logger.warning(f"Query expansion failed: {e}")
+            return fallback
