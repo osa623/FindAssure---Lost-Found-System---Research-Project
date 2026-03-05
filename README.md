@@ -334,6 +334,16 @@ git push origin feature/your-feature-name
 
 | Date | PR # | Branch | Summary |
 |------|------|--------|---------|
+| 2026-02-17 | [#47](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/47) | Dev-Stable | Dev stable |
+| 2026-02-16 | [#46](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/46) | Dev-Stable | Add image pipeline & normalize logs |
+| 2026-02-11 | [#44](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/44) | AI-Powered-Semantic-Machine-and-Data-Modeling-Engine | AI powered semantic machine and data modeling engine |
+| 2026-02-10 | [#43](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/43) | FindAssure-Dev | Find assure dev |
+| 2026-02-10 | [#41](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/41) | AI-Powered-Semantic-Machine-and-Data-Modeling-Engine | Temp changes |
+| 2026-02-10 | [#38](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/38) | main | Updating the dev branch with main codebase |
+| 2026-02-10 | [#37](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/37) | FindAssure-Dev | Merged AI-Powered-Semantic-Machine branch |
+| 2026-01-10 | [#36](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/36) | get-answers-from-video-capture-from-mobile | Final readme updated |
+| 2026-01-09 | [#35](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/35) | get-answers-from-video-capture-from-mobile | Readme updated v2 |
+| 2026-01-09 | [#34](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/34) | get-answers-from-video-capture-from-mobile | Readme PR log |
 | 2026-01-09 | [#33](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/33) | get-answers-from-video-capture | README documentation updated |
 | 2026-01-09 | [#32](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/32) | get-answers-from-video-capture | Fixed project file structure |
 | 2026-01-07 | [#29](https://github.com/LSYDananjaya/FindAssure---Lost-Found-System---Research-Project/pull/29) | Image-Processing-Pipeline | Image processing pipeline implemented |

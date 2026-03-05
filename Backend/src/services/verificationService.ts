@@ -90,8 +90,12 @@ export const createVerification = async (
     );
 
     // Update verification with Python backend results
-    const finalScore = parseFloat(pythonResponse.final_confidence.replace('%', '')) / 100;
-    const newStatus: VerificationStatus = pythonResponse.is_absolute_owner ? 'passed' : 'failed';
+    const parsedConfidence = parseFloat((pythonResponse.final_confidence || '0').replace('%', ''));
+    const finalScore = Number.isFinite(parsedConfidence) ? parsedConfidence / 100 : 0;
+    const isAbsoluteOwner = typeof pythonResponse.is_absolute_owner === 'boolean'
+      ? pythonResponse.is_absolute_owner
+      : pythonResponse.gemini_recommendation === 'MATCH';
+    const newStatus: VerificationStatus = isAbsoluteOwner ? 'passed' : 'failed';
 
     verification.status = newStatus;
     verification.similarityScore = finalScore;
@@ -99,7 +103,7 @@ export const createVerification = async (
     await verification.save();
 
     // Update found item status based on verification result
-    if (pythonResponse.is_absolute_owner) {
+    if (isAbsoluteOwner) {
       await FoundItem.findByIdAndUpdate(data.foundItemId, {
         status: 'claimed',
       });

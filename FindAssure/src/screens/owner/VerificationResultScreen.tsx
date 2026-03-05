@@ -13,16 +13,22 @@ interface VerificationResult {
   question_id: number;
   final_similarity: string;
   status: 'match' | 'partial_match' | 'mismatch';
-  local_explanation: string;
+  local_explanation?: string;
   gemini_analysis: string | null;
 }
 
 interface PythonVerificationResponse {
-  final_confidence: string;
-  is_absolute_owner: boolean;
-  gemini_recommendation: string;
-  gemini_reasoning: string;
-  results: VerificationResult[];
+  final_confidence?: string;
+  is_absolute_owner?: boolean;
+  gemini_recommendation?: string;
+  gemini_reasoning?: string;
+  rejection_reason?: string;
+  minimum_question_score?: string;
+  semantic_confidence?: string;
+  face_confidence_score?: string;
+  face_decision?: string;
+  has_zero_match_question?: boolean;
+  results?: VerificationResult[];
 }
 
 interface VerificationData {
@@ -90,14 +96,17 @@ const VerificationResultScreen = () => {
   }
 
   const pythonResult = verification.pythonVerificationResult;
-  const isVerified = verification.status === 'passed' && pythonResult?.is_absolute_owner;
+  const fallbackAbsoluteOwner = pythonResult?.gemini_recommendation === 'MATCH';
+  const isAbsoluteOwner = pythonResult?.is_absolute_owner ?? fallbackAbsoluteOwner;
+  // Keep backend status as source of truth, with fallback for newer Python payload formats.
+  const isVerified = verification.status === 'passed' || (verification.status !== 'failed' && !!isAbsoluteOwner);
 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content}>
         {/* Status Header */}
         <View style={[styles.statusCard, isVerified ? styles.successCard : styles.failureCard]}>
-          <Text style={styles.statusIcon}>{isVerified ? '✅' : '❌'}</Text>
+          <Text style={styles.statusIcon}>{isVerified ? 'OK' : 'NO'}</Text>
           <Text style={styles.statusTitle}>
             {isVerified ? 'Verification Successful!' : 'Verification Failed'}
           </Text>
@@ -106,12 +115,15 @@ const VerificationResultScreen = () => {
               ? 'You have been verified as the owner of this item'
               : 'Your answers did not match sufficiently. This may not be your item.'}
           </Text>
+          {!isVerified && !!pythonResult?.rejection_reason && (
+            <Text style={styles.failureReason}>{pythonResult.rejection_reason}</Text>
+          )}
         </View>
 
         {/* Founder Contact Info - Only show if verified */}
         {isVerified && verification.foundItemId.founderContact && (
           <View style={styles.contactCard}>
-            <Text style={styles.contactTitle}>🎉 Founder Contact Information</Text>
+            <Text style={styles.contactTitle}>Founder Contact Information</Text>
             <View style={styles.contactInfo}>
               <View style={styles.contactRow}>
                 <Text style={styles.contactLabel}>Name:</Text>
@@ -137,19 +149,24 @@ const VerificationResultScreen = () => {
           <View style={styles.resultsCard}>
             <Text style={styles.resultsTitle}>Question Analysis</Text>
             {pythonResult.results.map((result, index) => (
-              <View key={result.question_id} style={styles.resultItem}>
+              <View key={result.question_id || index} style={styles.resultItem}>
                 <View style={styles.resultHeader}>
                   <Text style={styles.resultNumber}>Q{result.question_id}</Text>
                   <Text style={styles.resultSimilarity}>{result.final_similarity}</Text>
-                  <View style={[
-                    styles.resultStatus,
-                    result.status === 'match' && styles.statusMatch,
-                    result.status === 'partial_match' && styles.statusPartial,
-                    result.status === 'mismatch' && styles.statusMismatch,
-                  ]}>
+                  <View
+                    style={[
+                      styles.resultStatus,
+                      result.status === 'match' && styles.statusMatch,
+                      result.status === 'partial_match' && styles.statusPartial,
+                      result.status === 'mismatch' && styles.statusMismatch,
+                    ]}
+                  >
                     <Text style={styles.resultStatusText}>
-                      {result.status === 'match' ? '✓ Match' : 
-                       result.status === 'partial_match' ? '~ Partial' : '✗ Mismatch'}
+                      {result.status === 'match'
+                        ? 'Match'
+                        : result.status === 'partial_match'
+                          ? 'Partial'
+                          : 'Mismatch'}
                     </Text>
                   </View>
                 </View>
@@ -213,8 +230,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEE2E2',
   },
   statusIcon: {
-    fontSize: 64,
+    fontSize: 48,
     marginBottom: 12,
+    fontWeight: '700',
   },
   statusTitle: {
     fontSize: 24,
@@ -225,6 +243,12 @@ const styles = StyleSheet.create({
   statusMessage: {
     fontSize: 16,
     color: '#6B7280',
+    textAlign: 'center',
+  },
+  failureReason: {
+    marginTop: 10,
+    fontSize: 13,
+    color: '#991B1B',
     textAlign: 'center',
   },
   contactCard: {

@@ -39,11 +39,17 @@ export interface PythonVerificationResult {
 export interface PythonVerificationResponse {
   owner_id: string;
   category: string;
-  final_confidence: string;
-  is_absolute_owner: boolean;
-  gemini_recommendation: string;
-  gemini_reasoning: string;
-  results: PythonVerificationResult[];
+  final_confidence?: string;
+  is_absolute_owner?: boolean;
+  gemini_recommendation?: string;
+  gemini_reasoning?: string;
+  rejection_reason?: string;
+  minimum_question_score?: string;
+  semantic_confidence?: string;
+  face_confidence_score?: string;
+  face_decision?: string;
+  has_zero_match_question?: boolean;
+  results?: PythonVerificationResult[];
 }
 
 /**
