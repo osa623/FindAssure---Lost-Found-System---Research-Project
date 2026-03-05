@@ -2,9 +2,13 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 import logging
+import threading
+import time
 
+from PIL import Image
 from ultralytics import YOLO
 from app.domain.category_specs import canonicalize_label
+from app.services.gpu_semaphore import gpu_inference_guard
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -22,7 +26,39 @@ class YoloDetection:
 class YoloService:
     def __init__(self):
         self.model = None
+        self._predict_lock = threading.Lock()
+        self._warmup_lock = threading.Lock()
+        self._warmup_done = False
         self._load_model()
+
+    def warmup(self) -> None:
+        """
+        Run a one-time deterministic warmup inference so Ultralytics setup/fuse
+        happens once before concurrent request traffic.
+        """
+        if self._warmup_done:
+            return
+        with self._warmup_lock:
+            if self._warmup_done:
+                return
+            if self.model is None:
+                raise RuntimeError("YOLO model is not loaded.")
+
+            start = time.perf_counter()
+            logger.debug("YOLO_WARMUP_START")
+            try:
+                # Tiny deterministic RGB image to trigger predictor/model setup.
+                dummy = Image.new("RGB", (32, 32), color=(0, 0, 0))
+                with self._predict_lock:
+                    with gpu_inference_guard("predict", "yolo"):
+                        self.model(dummy, conf=0.01, verbose=False)
+                self._warmup_done = True
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+                logger.debug("YOLO_WARMUP_DONE elapsed_ms=%.2f", elapsed_ms)
+            except Exception:
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+                logger.exception("YOLO_WARMUP_FAIL elapsed_ms=%.2f", elapsed_ms)
+                raise
 
     def _load_model(self):
         """
@@ -64,7 +100,30 @@ class YoloService:
         if self.model is None:
             raise RuntimeError("YOLO model is not loaded.")
 
-        results = self.model(image_path_or_array, conf=conf_threshold, verbose=False)
+        # Defensive lazy warmup for paths where lifespan warmup did not run.
+        if not self._warmup_done:
+            try:
+                self.warmup()
+            except Exception:
+                logger.warning("YOLO_WARMUP_LAZY_FAIL continuing_without_warmup", exc_info=True)
+
+        start = time.perf_counter()
+        logger.debug("YOLO_PREDICT_START conf=%.4f", float(conf_threshold))
+        try:
+            with self._predict_lock:
+                with gpu_inference_guard("predict", "yolo"):
+                    results = self.model(image_path_or_array, conf=conf_threshold, verbose=False)
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            logger.exception(
+                "YOLO_PREDICT_FAIL elapsed_ms=%.2f exc_type=%s message=%s",
+                elapsed_ms,
+                type(exc).__name__,
+                str(exc),
+            )
+            raise
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        logger.debug("YOLO_PREDICT_DONE elapsed_ms=%.2f", elapsed_ms)
         
         detections = []
         

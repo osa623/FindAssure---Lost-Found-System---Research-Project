@@ -42,6 +42,7 @@ from PIL import Image
 
 from app.domain.category_specs import canonicalize_label, CATEGORY_SPECS
 from app.config.settings import settings
+from app.services.gpu_semaphore import gpu_inference_guard
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +231,12 @@ def _is_generic_caption(text: str) -> bool:
 
 
 class FlorenceService:
+    _shared_model = None
+    _shared_processor = None
+    _shared_model_key = None
+    _shared_using_fp16 = False
+    _shared_lock = threading.Lock()
+
     def __init__(
         self,
         model_path: str = "app/models/florence2-base-ft/",
@@ -251,9 +258,15 @@ class FlorenceService:
         self.fast_max_new_tokens = settings.FLORENCE_FAST_MAX_NEW_TOKENS
         self.fast_num_beams = settings.FLORENCE_FAST_NUM_BEAMS
         self.perf_profile = str(settings.PERF_PROFILE).lower()
+        self.enable_amp = bool(getattr(settings, "FLORENCE_ENABLE_AMP", True))
+        self.use_fp16 = bool(getattr(settings, "FLORENCE_USE_FP16", True))
+        self.ocr_max_side = int(getattr(settings, "FLORENCE_OCR_MAX_SIDE", 512))
+        self.caption_max_side = int(getattr(settings, "FLORENCE_CAPTION_MAX_SIDE", 640))
+        self._using_fp16 = False
 
         self._processor = None
         self._model = None
+        self._model_load_lock = threading.Lock()
 
         self._lite_worker_ctx = mp.get_context("spawn")
         self._lite_worker_proc = None
@@ -341,67 +354,127 @@ class FlorenceService:
     # ----------------------------
     # Model loading / core runner
     # ----------------------------
+    def _cache_key(self) -> Tuple[str, str, str, bool]:
+        return (
+            os.path.abspath(self.model_path),
+            str(self.device),
+            str(self.torch_dtype),
+            bool(self.device == "cuda" and self.use_fp16),
+        )
+
     def load_model(self) -> None:
         if self._model is not None and self._processor is not None:
+            logger.debug("FLORENCE_MODEL_LOAD_SKIP_ALREADY_LOADED")
             return
+        lock = getattr(self, "_model_load_lock", None)
+        if lock is None:
+            self._model_load_lock = threading.Lock()
+            lock = self._model_load_lock
+        assert lock is not None
+        with lock:
+            if self._model is not None and self._processor is not None:
+                logger.debug("FLORENCE_MODEL_LOAD_SKIP_ALREADY_LOADED_LOCKED")
+                return
+            cache_key = self._cache_key()
+            with FlorenceService._shared_lock:
+                if (
+                    FlorenceService._shared_model is not None
+                    and FlorenceService._shared_processor is not None
+                    and FlorenceService._shared_model_key == cache_key
+                ):
+                    self._model = FlorenceService._shared_model
+                    self._processor = FlorenceService._shared_processor
+                    self._using_fp16 = bool(FlorenceService._shared_using_fp16)
+                    logger.debug(
+                        "FLORENCE_MODEL_REUSE_SHARED model_path=%s device=%s fp16=%s",
+                        self.model_path,
+                        self.device,
+                        self._using_fp16,
+                    )
+                    return
 
-        if not os.path.exists(self.model_path):
-            raise RuntimeError(f"Florence model not found at {self.model_path}. Please ensure weights are present locally.")
+            logger.debug(
+                "FLORENCE_MODEL_LOAD_START model_path=%s device=%s",
+                self.model_path,
+                self.device,
+            )
+            if not os.path.exists(self.model_path):
+                raise RuntimeError(f"Florence model not found at {self.model_path}. Please ensure weights are present locally.")
 
-        from transformers import AutoModelForCausalLM, AutoProcessor, dynamic_module_utils  # type: ignore
-        import torch  # type: ignore
-        from unittest.mock import patch
+            from transformers import AutoModelForCausalLM, AutoProcessor, dynamic_module_utils  # type: ignore
+            import torch  # type: ignore
+            from unittest.mock import patch
 
-        # Workaround for flash_attn dependency on Windows
-        original_check_imports = dynamic_module_utils.check_imports
+            # Workaround for flash_attn dependency on Windows
+            original_check_imports = dynamic_module_utils.check_imports
 
-        def custom_check_imports(filename):
-            try:
-                return original_check_imports(filename)
-            except ImportError as e:
-                if "flash_attn" in str(e):
-                    return []
-                raise e
-
-        kwargs = {"trust_remote_code": True, "local_files_only": True}
-        
-        try:
-            with patch("transformers.dynamic_module_utils.check_imports", side_effect=custom_check_imports):
-                self._processor = AutoProcessor.from_pretrained(self.model_path, **kwargs)
-        except Exception as e:
-             raise RuntimeError(f"Failed to load Florence processor from {self.model_path}: {e}")
-
-        # dtype
-        if self.torch_dtype == "auto":
-            model_kwargs = {"trust_remote_code": True, "local_files_only": True}
-        else:
-            dtype = getattr(torch, self.torch_dtype)
-            model_kwargs = {"trust_remote_code": True, "torch_dtype": dtype, "local_files_only": True}
-        
-        # Use SDPA attention if available (PyTorch 2.0+) to avoid flash_attn dependency
-        if hasattr(torch.nn.functional, "scaled_dot_product_attention"):
-             model_kwargs["attn_implementation"] = "sdpa"
-        else:
-             model_kwargs["attn_implementation"] = "eager"
-
-        try:
-            with patch("transformers.dynamic_module_utils.check_imports", side_effect=custom_check_imports):
-                self._model = AutoModelForCausalLM.from_pretrained(self.model_path, **model_kwargs)
-        except Exception as e:
-            # Fallback: try without attn_implementation if it fails (some older transformers versions)
-            if "attn_implementation" in model_kwargs:
-                del model_kwargs["attn_implementation"]
+            def custom_check_imports(filename):
                 try:
-                    with patch("transformers.dynamic_module_utils.check_imports", side_effect=custom_check_imports):
-                        self._model = AutoModelForCausalLM.from_pretrained(self.model_path, **model_kwargs)
-                except Exception as e2:
-                    raise RuntimeError(f"Failed to load Florence model from {self.model_path}: {e2}")
-            else:
-                raise RuntimeError(f"Failed to load Florence model from {self.model_path}: {e}")
+                    return original_check_imports(filename)
+                except ImportError as e:
+                    if "flash_attn" in str(e):
+                        return []
+                    raise e
 
-        if self.device:
-            self._model.to(self.device)
-        self._model.eval()
+            kwargs = {"trust_remote_code": True, "local_files_only": True}
+            
+            try:
+                with patch("transformers.dynamic_module_utils.check_imports", side_effect=custom_check_imports):
+                    self._processor = AutoProcessor.from_pretrained(self.model_path, **kwargs)
+            except Exception as e:
+                 raise RuntimeError(f"Failed to load Florence processor from {self.model_path}: {e}")
+
+            # dtype
+            if self.torch_dtype == "auto":
+                model_kwargs = {"trust_remote_code": True, "local_files_only": True}
+            else:
+                dtype = getattr(torch, self.torch_dtype)
+                model_kwargs = {"trust_remote_code": True, "torch_dtype": dtype, "local_files_only": True}
+            
+            # Use SDPA attention if available (PyTorch 2.0+) to avoid flash_attn dependency
+            if hasattr(torch.nn.functional, "scaled_dot_product_attention"):
+                 model_kwargs["attn_implementation"] = "sdpa"
+            else:
+                 model_kwargs["attn_implementation"] = "eager"
+
+            try:
+                with patch("transformers.dynamic_module_utils.check_imports", side_effect=custom_check_imports):
+                    self._model = AutoModelForCausalLM.from_pretrained(self.model_path, **model_kwargs)
+            except Exception as e:
+                # Fallback: try without attn_implementation if it fails (some older transformers versions)
+                if "attn_implementation" in model_kwargs:
+                    del model_kwargs["attn_implementation"]
+                    try:
+                        with patch("transformers.dynamic_module_utils.check_imports", side_effect=custom_check_imports):
+                            self._model = AutoModelForCausalLM.from_pretrained(self.model_path, **model_kwargs)
+                    except Exception as e2:
+                        raise RuntimeError(f"Failed to load Florence model from {self.model_path}: {e2}")
+                else:
+                    raise RuntimeError(f"Failed to load Florence model from {self.model_path}: {e}")
+
+            if self.device:
+                self._model.to(self.device)
+            if self.device == "cuda" and self.use_fp16:
+                try:
+                    self._model.half()
+                    self._using_fp16 = True
+                except Exception:
+                    self._using_fp16 = False
+                    logger.warning("FLORENCE_MODEL_HALF_FAILED_FALLBACK_FP32")
+            else:
+                self._using_fp16 = False
+            self._model.eval()
+            with FlorenceService._shared_lock:
+                FlorenceService._shared_model = self._model
+                FlorenceService._shared_processor = self._processor
+                FlorenceService._shared_model_key = cache_key
+                FlorenceService._shared_using_fp16 = bool(self._using_fp16)
+            logger.debug(
+                "FLORENCE_MODEL_LOAD_DONE model_path=%s device=%s fp16=%s",
+                self.model_path,
+                self.device,
+                self._using_fp16,
+            )
 
     def _run_task(
         self,
@@ -435,13 +508,24 @@ class FlorenceService:
             max_tokens = self.max_new_tokens
             num_beams = 3
 
+        use_amp_cuda = bool(
+            self.device == "cuda"
+            and torch.cuda.is_available()
+            and bool(getattr(self, "enable_amp", True))
+        )
         with torch.no_grad():
-            generated_ids = self._model.generate(
-                **inputs,
-                max_new_tokens=max_tokens,
-                num_beams=num_beams,
-                do_sample=False,
-            )
+            with gpu_inference_guard("generate", "florence"):
+                with torch.autocast(
+                    device_type="cuda",
+                    dtype=torch.float16,
+                    enabled=use_amp_cuda,
+                ):
+                    generated_ids = self._model.generate(
+                        **inputs,
+                        max_new_tokens=max_tokens,
+                        num_beams=num_beams,
+                        do_sample=False,
+                    )
 
         generated_text = self._processor.batch_decode(generated_ids, skip_special_tokens=False)[0]
 
@@ -604,6 +688,10 @@ class FlorenceService:
 
     @staticmethod
     def _resize_for_lite(image: Image.Image, max_side: int = 512) -> Image.Image:
+        return FlorenceService._resize_with_max_side(image, max_side=max_side)
+
+    @staticmethod
+    def _resize_with_max_side(image: Image.Image, max_side: int) -> Image.Image:
         if not isinstance(image, Image.Image):
             return image
         w, h = image.size
@@ -627,6 +715,61 @@ class FlorenceService:
                 return future.result(timeout=timeout_sec)
             except FuturesTimeoutError as exc:
                 raise TimeoutError(f"Operation exceeded timeout of {timeout_ms} ms") from exc
+
+    def _run_ocr_recovery_once(
+        self,
+        image: Image.Image,
+        profile_key: str,
+        timeout_ms: int,
+        max_side: int,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """
+        Single OCR-only recovery attempt on a downscaled image.
+        """
+        start = time.perf_counter()
+        resized = self._resize_for_lite(image, max_side=max_side)
+        source = f"ocr_recovery_{int(max_side)}"
+        try:
+            recovered = self._run_with_timeout(
+                self.ocr,
+                timeout_ms,
+                resized,
+                profile_key,
+            )
+            text = str(recovered or "").strip()
+            return text, {
+                "source": source,
+                "status": "success",
+                "reason": "ok_nonempty" if text else "ok_empty_ocr",
+                "elapsed_ms": round((time.perf_counter() - start) * 1000.0, 2),
+                "recovered_nonempty": bool(text),
+                "max_side": int(max_side),
+                "input_wh": (int(image.width), int(image.height)),
+                "resized_wh": (int(resized.width), int(resized.height)),
+            }
+        except TimeoutError:
+            return "", {
+                "source": source,
+                "status": "timeout",
+                "reason": "timeout",
+                "elapsed_ms": round((time.perf_counter() - start) * 1000.0, 2),
+                "recovered_nonempty": False,
+                "max_side": int(max_side),
+                "input_wh": (int(image.width), int(image.height)),
+                "resized_wh": (int(resized.width), int(resized.height)),
+            }
+        except Exception as exc:
+            return "", {
+                "source": source,
+                "status": "error",
+                "reason": "exception",
+                "message": str(exc),
+                "elapsed_ms": round((time.perf_counter() - start) * 1000.0, 2),
+                "recovered_nonempty": False,
+                "max_side": int(max_side),
+                "input_wh": (int(image.width), int(image.height)),
+                "resized_wh": (int(resized.width), int(resized.height)),
+            }
 
     @staticmethod
     def _encode_lite_image(image: Image.Image, jpeg_quality: int) -> bytes:
@@ -765,6 +908,368 @@ class FlorenceService:
             },
         }
 
+    @staticmethod
+    def _ocr_first_reason(caption_text: Any, ocr_text: Any) -> str:
+        has_caption = bool(str(caption_text or "").strip())
+        has_ocr = bool(str(ocr_text or "").strip())
+        if has_caption and has_ocr:
+            return "ok_nonempty"
+        if not has_caption and not has_ocr:
+            return "ok_empty_both"
+        if not has_caption:
+            return "ok_empty_caption"
+        return "ok_empty_ocr"
+
+    def analyze_ocr_first(
+        self,
+        image_or_crop: Image.Image,
+        *,
+        canonical_label: Optional[str] = None,
+        fast: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        OCR-first extraction path for PP2.
+
+        Behavior:
+          1) OCR first (timeout-bounded).
+          2) Run detailed caption only when OCR is empty, label is unknown, or fast=False.
+          3) Optional color and grounding only in non-fast mode.
+        """
+        start = time.perf_counter()
+        profile_key = (self.perf_profile or "balanced").lower()
+        timeout_ms = int(getattr(settings, "FLORENCE_TIMEOUT_MS", 30000))
+        ocr_timeout_ms = int(getattr(settings, "FLORENCE_OCR_TIMEOUT_MS", 15000))
+        recovery_max_side = int(getattr(settings, "FLORENCE_OCR_RECOVERY_MAX_SIDE", 384))
+        ocr_max_side = int(getattr(settings, "FLORENCE_OCR_MAX_SIDE", getattr(self, "ocr_max_side", 512)))
+        caption_max_side = int(getattr(settings, "FLORENCE_CAPTION_MAX_SIDE", getattr(self, "caption_max_side", 640)))
+        ocr_image = self._resize_with_max_side(image_or_crop, max_side=ocr_max_side)
+        detail_image = self._resize_with_max_side(image_or_crop, max_side=caption_max_side)
+
+        def _img_wh(img: Any) -> Optional[Tuple[int, int]]:
+            if isinstance(img, Image.Image):
+                return (int(img.width), int(img.height))
+            return None
+
+        caption_text = ""
+        ocr_text = ""
+        color_vqa: Optional[str] = None
+        grounded_features: List[str] = []
+        grounded_defects: List[str] = []
+        grounded_attachments: List[str] = []
+        key_count: Optional[int] = None
+
+        timings: Dict[str, Any] = {}
+        raw: Dict[str, Any] = {
+            "caption_source": "ocr_first",
+            "timings": timings,
+            "ocr_first": {
+                "status": "success",
+                "fast": bool(fast),
+                "ran_caption": False,
+                "ran_color_vqa": False,
+                "ran_grounding": False,
+                "needs_detail": False,
+                "detail_trigger": [],
+                "ocr_input_wh": _img_wh(image_or_crop),
+                "ocr_resized_wh": _img_wh(ocr_image),
+                "detail_input_wh": _img_wh(image_or_crop),
+                "detail_resized_wh": _img_wh(detail_image),
+                "timeout_ms_used": {
+                    "ocr_ms": int(ocr_timeout_ms),
+                    "full_ms": int(timeout_ms),
+                },
+            },
+            "florence": {
+                "status": "success",
+                "reason": "ok",
+                "stage": "all",
+                "attempts": [],
+                "timeout_ms_used": {
+                    "ocr_ms": int(ocr_timeout_ms),
+                    "full_ms": int(timeout_ms),
+                },
+                "recovery_attempted": False,
+                "recovery_succeeded": False,
+            },
+        }
+
+        def _record_attempt(source: str, status: str, reason: str, elapsed_ms: float, **extra: Any) -> None:
+            florence_meta = raw.get("florence", {})
+            if not isinstance(florence_meta, dict):
+                florence_meta = {}
+            attempts = florence_meta.get("attempts", [])
+            if not isinstance(attempts, list):
+                attempts = []
+            attempt_entry: Dict[str, Any] = {
+                "source": str(source),
+                "status": str(status),
+                "reason": str(reason),
+                "elapsed_ms": round(float(elapsed_ms), 2),
+            }
+            for key, value in extra.items():
+                attempt_entry[key] = value
+            attempts.append(attempt_entry)
+            florence_meta["attempts"] = attempts
+            raw["florence"] = florence_meta
+
+        def _try_timeout_recovery(stage_name: str) -> bool:
+            nonlocal ocr_text
+            florence_meta = raw.get("florence", {})
+            if not isinstance(florence_meta, dict):
+                florence_meta = {}
+            florence_meta["recovery_attempted"] = True
+            raw["florence"] = florence_meta
+
+            recovered_text, recovery_meta = self._run_ocr_recovery_once(
+                image_or_crop,
+                profile_key=profile_key,
+                timeout_ms=ocr_timeout_ms,
+                max_side=recovery_max_side,
+            )
+            timings["ocr_recovery_ms"] = float(recovery_meta.get("elapsed_ms", 0.0) or 0.0)
+            _record_attempt(
+                source=str(recovery_meta.get("source", f"ocr_recovery_{recovery_max_side}")),
+                status=str(recovery_meta.get("status", "error")),
+                reason=str(recovery_meta.get("reason", "exception")),
+                elapsed_ms=float(recovery_meta.get("elapsed_ms", 0.0) or 0.0),
+                max_side=int(recovery_meta.get("max_side", recovery_max_side)),
+                recovered_nonempty=bool(recovery_meta.get("recovered_nonempty", False)),
+            )
+
+            florence_meta = raw.get("florence", {})
+            if not isinstance(florence_meta, dict):
+                florence_meta = {}
+
+            if recovered_text:
+                if not ocr_text:
+                    ocr_text = recovered_text
+                florence_meta["recovery_succeeded"] = True
+                florence_meta["status"] = "degraded"
+                florence_meta["reason"] = "timeout_recovered_ocr_only"
+                florence_meta["stage"] = stage_name
+                raw["florence"] = florence_meta
+                raw["ocr_first"]["status"] = "degraded"
+                raw["ocr_first"]["reason"] = "timeout_recovered_ocr_only"
+                return True
+
+            florence_meta["recovery_succeeded"] = False
+            florence_meta["status"] = "failed"
+            florence_meta["reason"] = "timeout"
+            florence_meta["stage"] = stage_name
+            raw["florence"] = florence_meta
+            raw["ocr_first"]["status"] = "failed"
+            raw["ocr_first"]["reason"] = "timeout"
+            return False
+
+        def _safe_payload() -> Dict[str, Any]:
+            timings["total_ms"] = round((time.perf_counter() - start) * 1000.0, 2)
+            meta = raw.get("ocr_first", {})
+            if isinstance(meta, dict):
+                meta["caption_len"] = int(len(str(caption_text or "").strip()))
+                meta["ocr_len"] = int(len(str(ocr_text or "").strip()))
+                meta["reason"] = str(meta.get("reason", self._ocr_first_reason(caption_text, ocr_text)))
+                raw["ocr_first"] = meta
+            florence_meta = raw.get("florence", {})
+            if isinstance(florence_meta, dict):
+                florence_meta["caption_len"] = int(len(str(caption_text or "").strip()))
+                florence_meta["ocr_len"] = int(len(str(ocr_text or "").strip()))
+                if not florence_meta.get("reason"):
+                    florence_meta["reason"] = "ok"
+                if not florence_meta.get("status"):
+                    florence_meta["status"] = "success"
+                if not florence_meta.get("stage"):
+                    florence_meta["stage"] = "all"
+                raw["florence"] = florence_meta
+            return {
+                "caption": caption_text,
+                "ocr_text": ocr_text,
+                "color_vqa": color_vqa,
+                "grounded_features": grounded_features,
+                "grounded_defects": grounded_defects,
+                "grounded_attachments": grounded_attachments,
+                "key_count": key_count,
+                "raw": raw,
+            }
+
+        # Step 1: OCR first (hard requirement for stage order).
+        ocr_start = time.perf_counter()
+        try:
+            ocr_raw = self._run_with_timeout(
+                self.ocr,
+                ocr_timeout_ms,
+                ocr_image,
+                profile_key,
+            )
+            ocr_text = str(ocr_raw or "").strip()
+            _record_attempt("primary_ocr", "success", "ok_nonempty" if ocr_text else "ok_empty_ocr", (time.perf_counter() - ocr_start) * 1000.0)
+        except TimeoutError as exc:
+            raw["error"] = {"type": "timeout", "stage": "ocr", "message": str(exc)}
+            _record_attempt("primary_ocr", "timeout", "timeout", (time.perf_counter() - ocr_start) * 1000.0)
+            raw["ocr_first"]["status"] = "timeout"
+            raw["ocr_first"]["reason"] = "ocr_timeout"
+            raw["florence"]["status"] = "failed"
+            raw["florence"]["reason"] = "timeout"
+            raw["florence"]["stage"] = "ocr"
+            _try_timeout_recovery("ocr")
+            return _safe_payload()
+        except Exception as exc:
+            raw["error"] = {"type": "error", "stage": "ocr", "message": str(exc)}
+            raw["ocr_first"]["status"] = "error"
+            raw["ocr_first"]["reason"] = "ocr_exception"
+            _record_attempt("primary_ocr", "error", "exception", (time.perf_counter() - ocr_start) * 1000.0)
+            raw["florence"]["status"] = "failed"
+            raw["florence"]["reason"] = "exception"
+            raw["florence"]["stage"] = "ocr"
+            return _safe_payload()
+        timings["ocr_ms"] = round((time.perf_counter() - ocr_start) * 1000.0, 2)
+
+        needs_detail_reasons: List[str] = []
+        if not ocr_text:
+            needs_detail_reasons.append("ocr_empty")
+        if canonical_label is None:
+            needs_detail_reasons.append("canonical_label_missing")
+        if not fast:
+            needs_detail_reasons.append("fast_false")
+
+        needs_detail = bool(needs_detail_reasons)
+        raw["ocr_first"]["needs_detail"] = needs_detail
+        raw["ocr_first"]["detail_trigger"] = list(needs_detail_reasons)
+
+        # Step 2: Optional detailed caption.
+        if needs_detail:
+            raw["ocr_first"]["ran_caption"] = True
+            caption_start = time.perf_counter()
+            try:
+                caption_raw = self._run_with_timeout(
+                    self.caption,
+                    timeout_ms,
+                    detail_image,
+                    True,
+                    profile_key,
+                )
+                caption_clean, _ = _sanitize_caption(str(caption_raw or ""))
+                caption_text = caption_clean.strip() or str(caption_raw or "").strip()
+                _record_attempt(
+                    "primary_caption",
+                    "success",
+                    "ok_nonempty" if caption_text else "ok_empty_caption",
+                    (time.perf_counter() - caption_start) * 1000.0,
+                )
+            except TimeoutError as exc:
+                raw["error"] = {"type": "timeout", "stage": "caption", "message": str(exc)}
+                _record_attempt("primary_caption", "timeout", "timeout", (time.perf_counter() - caption_start) * 1000.0)
+                raw["ocr_first"]["status"] = "timeout"
+                raw["ocr_first"]["reason"] = "caption_timeout"
+                raw["florence"]["status"] = "failed"
+                raw["florence"]["reason"] = "timeout"
+                raw["florence"]["stage"] = "caption"
+                _try_timeout_recovery("caption")
+                timings["caption_ms"] = round((time.perf_counter() - caption_start) * 1000.0, 2)
+                return _safe_payload()
+            except Exception as exc:
+                raw["error"] = {"type": "error", "stage": "caption", "message": str(exc)}
+                raw["ocr_first"]["status"] = "error"
+                raw["ocr_first"]["reason"] = "caption_exception"
+                _record_attempt("primary_caption", "error", "exception", (time.perf_counter() - caption_start) * 1000.0)
+                raw["florence"]["status"] = "failed"
+                raw["florence"]["reason"] = "exception"
+                raw["florence"]["stage"] = "caption"
+                timings["caption_ms"] = round((time.perf_counter() - caption_start) * 1000.0, 2)
+                return _safe_payload()
+            timings["caption_ms"] = round((time.perf_counter() - caption_start) * 1000.0, 2)
+
+        # Step 3: Optional enrichments for non-fast pass only.
+        if not fast:
+            color_start = time.perf_counter()
+            raw["ocr_first"]["ran_color_vqa"] = True
+            color_q = (
+                "What is the primary color of the OBJECT (not the background)? "
+                "Answer with a short phrase including shade/tone if visible. If unsure, answer 'unknown'."
+            )
+            try:
+                color_ans = self._run_with_timeout(
+                    self.vqa,
+                    timeout_ms,
+                    detail_image,
+                    color_q,
+                    profile_key,
+                )
+                color_vqa = str(color_ans or "").strip() or None
+                if isinstance(color_vqa, str) and color_vqa.lower() == "unknown":
+                    color_vqa = None
+            except TimeoutError as exc:
+                raw["color_error"] = {"type": "timeout", "message": str(exc)}
+            except Exception as exc:
+                raw["color_error"] = {"type": "error", "message": str(exc)}
+            timings["color_ms"] = round((time.perf_counter() - color_start) * 1000.0, 2)
+
+            spec_key = canonicalize_label(canonical_label) if canonical_label else None
+            if spec_key and spec_key in CATEGORY_SPECS:
+                raw["ocr_first"]["ran_grounding"] = True
+                grounding_start = time.perf_counter()
+                raw_grounding_labels: List[str] = []
+
+                def _run_grounding_candidates(candidates: List[str]) -> List[str]:
+                    normalized = _normalize_grounding_candidates(candidates)
+                    if not normalized:
+                        return []
+
+                    found_items = set()
+                    for chunk in _chunk_list(normalized, chunk_size=25):
+                        prompt_text = ", ".join(chunk)
+                        g_out = self._run_with_timeout(
+                            self.ground_phrases,
+                            timeout_ms,
+                            detail_image,
+                            prompt_text,
+                            profile_key,
+                        )
+                        g_data = (
+                            g_out.get("<CAPTION_TO_PHRASE_GROUNDING>")
+                            or g_out.get("result", {}).get("<CAPTION_TO_PHRASE_GROUNDING>")
+                        )
+                        if g_data and "labels" in g_data:
+                            detected_labels = [str(l).strip().lower() for l in g_data["labels"]]
+                            raw_grounding_labels.extend(g_data["labels"])
+                            for cand in chunk:
+                                if cand.lower() in detected_labels:
+                                    found_items.add(cand)
+                    return list(found_items)
+
+                try:
+                    specs = CATEGORY_SPECS[spec_key]
+                    grounded_features = _run_grounding_candidates(specs.get("features", []))
+                    grounded_defects = _run_grounding_candidates(specs.get("defects", []))
+                    raw["grounding_raw"] = {"labels": raw_grounding_labels}
+                except TimeoutError as exc:
+                    raw["grounding_error"] = {"type": "timeout", "message": str(exc)}
+                except Exception as exc:
+                    raw["grounding_error"] = {"type": "error", "message": str(exc)}
+                timings["grounding_ms"] = round((time.perf_counter() - grounding_start) * 1000.0, 2)
+
+            if canonical_label == "Key":
+                key_count_start = time.perf_counter()
+                try:
+                    kc_q = "How many separate keys are visible in this image? Answer with a single integer."
+                    kc_ans = self._run_with_timeout(
+                        self.vqa,
+                        timeout_ms,
+                        detail_image,
+                        kc_q,
+                        profile_key,
+                    )
+                    m = re.search(r"\b(\d+)\b", str(kc_ans or ""))
+                    if m:
+                        key_count = int(m.group(1))
+                except Exception:
+                    key_count = None
+                timings["key_count_ms"] = round((time.perf_counter() - key_count_start) * 1000.0, 2)
+
+        raw["florence"]["status"] = str(raw.get("florence", {}).get("status", "success"))
+        raw["florence"]["reason"] = str(raw.get("florence", {}).get("reason", "ok"))
+        raw["florence"]["stage"] = str(raw.get("florence", {}).get("stage", "all"))
+        return _safe_payload()
+
     def analyze_crop(
         self,
         crop: Image.Image,
@@ -788,9 +1293,10 @@ class FlorenceService:
 
         if mode_key == "lite":
             lite_start = time.perf_counter()
-            timeout_ms = int(getattr(settings, "FLORENCE_LITE_TIMEOUT_MS", 15000))
+            timeout_ms = int(getattr(settings, "FLORENCE_TIMEOUT_MS", 30000))
+            ocr_timeout_ms = int(getattr(settings, "FLORENCE_OCR_TIMEOUT_MS", 15000))
+            recovery_max_side = int(getattr(settings, "FLORENCE_OCR_RECOVERY_MAX_SIDE", 384))
             max_side = int(getattr(settings, "FLORENCE_LITE_MAX_SIDE", 512))
-            jpeg_quality = int(getattr(settings, "FLORENCE_LITE_JPEG_QUALITY", 70))
             input_wh = (int(crop.width), int(crop.height)) if isinstance(crop, Image.Image) else None
             resized_crop = self._resize_for_lite(crop, max_side=max_side)
             resized_wh = (
@@ -799,11 +1305,11 @@ class FlorenceService:
                 else input_wh
             )
             try:
-                lite_out = self._run_lite_via_worker_with_timeout(
+                lite_out = self._run_with_timeout(
+                    self._analyze_crop_lite_core,
+                    timeout_ms,
                     resized_crop,
-                    profile_key=profile_key,
-                    timeout_ms=timeout_ms,
-                    jpeg_quality=jpeg_quality,
+                    profile_key,
                 )
                 if not isinstance(lite_out, dict):
                     raise RuntimeError("Lite output must be a dict")
@@ -832,12 +1338,57 @@ class FlorenceService:
                 lite_meta["caption_len"] = int(len(caption_val.strip()))
                 lite_meta["ocr_len"] = int(len(ocr_val.strip()))
                 raw["lite"] = lite_meta
+                raw["florence"] = {
+                    "status": "success",
+                    "reason": "ok",
+                    "stage": "lite_core",
+                    "attempts": [
+                        {
+                            "source": "primary_lite_core",
+                            "status": "success",
+                            "reason": str(lite_meta.get("reason", self._lite_reason(caption_val, ocr_val))),
+                            "elapsed_ms": float(timings.get("lite_ms", 0.0) or 0.0),
+                        }
+                    ],
+                    "timeout_ms_used": {
+                        "ocr_ms": int(ocr_timeout_ms),
+                        "full_ms": int(timeout_ms),
+                    },
+                    "recovery_attempted": False,
+                    "recovery_succeeded": False,
+                }
                 lite_out["raw"] = raw
                 return lite_out
             except TimeoutError as exc:
+                primary_elapsed = round((time.perf_counter() - lite_start) * 1000.0, 2)
+                recovered_ocr, recovery_meta = self._run_ocr_recovery_once(
+                    resized_crop,
+                    profile_key=profile_key,
+                    timeout_ms=ocr_timeout_ms,
+                    max_side=recovery_max_side,
+                )
+                attempts: List[Dict[str, Any]] = [
+                    {
+                        "source": "primary_lite_core",
+                        "status": "timeout",
+                        "reason": "timeout",
+                        "elapsed_ms": float(primary_elapsed),
+                    },
+                    {
+                        "source": str(recovery_meta.get("source", f"ocr_recovery_{recovery_max_side}")),
+                        "status": str(recovery_meta.get("status", "error")),
+                        "reason": str(recovery_meta.get("reason", "exception")),
+                        "elapsed_ms": float(recovery_meta.get("elapsed_ms", 0.0) or 0.0),
+                        "max_side": int(recovery_meta.get("max_side", recovery_max_side)),
+                        "recovered_nonempty": bool(recovery_meta.get("recovered_nonempty", False)),
+                    },
+                ]
+                recovered_nonempty = bool(str(recovered_ocr or "").strip())
+                florence_status = "degraded" if recovered_nonempty else "failed"
+                florence_reason = "timeout_recovered_ocr_only" if recovered_nonempty else "timeout"
                 return {
                     "caption": "",
-                    "ocr_text": "",
+                    "ocr_text": recovered_ocr if recovered_nonempty else "",
                     "color_vqa": None,
                     "grounded_features": [],
                     "grounded_defects": [],
@@ -847,21 +1398,35 @@ class FlorenceService:
                         "caption_source": "lite_caption",
                         "error": {"type": "timeout", "message": str(exc)},
                         "lite": {
-                            "status": "timeout",
-                            "reason": "timeout_hard_kill",
-                            "lite_nonempty": False,
+                            "status": florence_status,
+                            "reason": florence_reason,
+                            "lite_nonempty": bool(recovered_nonempty),
                             "input_wh": input_wh,
                             "resized_wh": resized_wh,
                             "timeout_ms_used": int(timeout_ms),
                             "caption_len": 0,
-                            "ocr_len": 0,
+                            "ocr_len": int(len(str(recovered_ocr or "").strip())),
+                        },
+                        "florence": {
+                            "status": florence_status,
+                            "reason": florence_reason,
+                            "stage": "lite_core",
+                            "attempts": attempts,
+                            "timeout_ms_used": {
+                                "ocr_ms": int(ocr_timeout_ms),
+                                "full_ms": int(timeout_ms),
+                            },
+                            "recovery_attempted": True,
+                            "recovery_succeeded": bool(recovered_nonempty),
                         },
                         "timings": {
-                            "lite_ms": round((time.perf_counter() - lite_start) * 1000.0, 2),
+                            "lite_ms": float(primary_elapsed),
+                            "ocr_recovery_ms": float(recovery_meta.get("elapsed_ms", 0.0) or 0.0),
                         },
                     },
                 }
             except Exception as exc:
+                primary_elapsed = round((time.perf_counter() - lite_start) * 1000.0, 2)
                 return {
                     "caption": "",
                     "ocr_text": "",
@@ -874,7 +1439,7 @@ class FlorenceService:
                         "caption_source": "lite_caption",
                         "error": {"type": "error", "message": str(exc)},
                         "lite": {
-                            "status": "error",
+                            "status": "failed",
                             "reason": "exception",
                             "lite_nonempty": False,
                             "input_wh": input_wh,
@@ -883,8 +1448,27 @@ class FlorenceService:
                             "caption_len": 0,
                             "ocr_len": 0,
                         },
+                        "florence": {
+                            "status": "failed",
+                            "reason": "exception",
+                            "stage": "lite_core",
+                            "attempts": [
+                                {
+                                    "source": "primary_lite_core",
+                                    "status": "error",
+                                    "reason": "exception",
+                                    "elapsed_ms": float(primary_elapsed),
+                                }
+                            ],
+                            "timeout_ms_used": {
+                                "ocr_ms": int(ocr_timeout_ms),
+                                "full_ms": int(timeout_ms),
+                            },
+                            "recovery_attempted": False,
+                            "recovery_succeeded": False,
+                        },
                         "timings": {
-                            "lite_ms": round((time.perf_counter() - lite_start) * 1000.0, 2),
+                            "lite_ms": float(primary_elapsed),
                         },
                     },
                 }

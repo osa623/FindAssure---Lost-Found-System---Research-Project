@@ -253,45 +253,138 @@ class MultiViewFusionService:
         return avg_vec
 
     @staticmethod
+    def _humanize_category(category: str) -> str:
+        raw = str(category or "").strip()
+        if not raw:
+            return "item"
+        aliases = {
+            "Earbuds - Earbuds case": "earbuds case",
+            "Smart Phone": "smart phone",
+            "Student ID": "student ID card",
+            "Laptop/Mobile chargers & cables": "laptop or mobile charger/cable",
+        }
+        return aliases.get(raw, raw.lower())
+
+    @staticmethod
+    def _to_clean_str_list(value: Any) -> List[str]:
+        if isinstance(value, str):
+            text = value.strip()
+            return [text] if text else []
+        if isinstance(value, list):
+            out: List[str] = []
+            for item in value:
+                if not isinstance(item, str):
+                    continue
+                text = item.strip()
+                if text:
+                    out.append(text)
+            return out
+        return []
+
+    @staticmethod
+    def _dedupe_keep_order(values: List[str]) -> List[str]:
+        seen: Set[str] = set()
+        deduped: List[str] = []
+        for raw in values:
+            text = str(raw or "").strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(text)
+        return deduped
+
+    @staticmethod
+    def _join_natural(values: List[str]) -> str:
+        items = [str(v).strip() for v in values if str(v).strip()]
+        if not items:
+            return ""
+        if len(items) == 1:
+            return items[0]
+        if len(items) == 2:
+            return f"{items[0]} and {items[1]}"
+        return f"{', '.join(items[:-1])}, and {items[-1]}"
+
+    @staticmethod
+    def _pick_most_common(values: List[str]) -> Optional[str]:
+        cleaned = [str(v).strip() for v in values if str(v).strip()]
+        if not cleaned:
+            return None
+        counts = Counter(cleaned)
+        ranked = sorted(counts.items(), key=lambda item: (-int(item[1]), -len(item[0]), item[0]))
+        return ranked[0][0]
+
+    def _collect_caption_ocr_tokens(
+        self,
+        scope_views: List[PP2PerViewResult],
+        fallback_tokens: List[str],
+    ) -> List[str]:
+        token_counts: Counter = Counter()
+        for view in scope_views:
+            kept_tokens, _ = self._collect_view_ocr_tokens(getattr(view.extraction, "ocr_text", "") or "")
+            for token in kept_tokens:
+                token_counts[token] += 1
+
+        if not token_counts:
+            return [str(tok).strip() for tok in (fallback_tokens or []) if str(tok).strip()][:2]
+
+        support_needed = 2 if len(scope_views) >= 2 else 1
+        ranked_tokens = sorted(token_counts.items(), key=lambda item: (-int(item[1]), -len(item[0]), item[0]))
+        selected = [tok for tok, count in ranked_tokens if int(count) >= support_needed]
+        if not selected and ranked_tokens:
+            selected = [ranked_tokens[0][0]]
+        return selected[:2]
+
     def build_conservative_caption(
+        self,
         category: str,
         color: str,
         brand: Optional[str],
         ocr_tokens: List[str],
         features: List[str],
+        defects: Optional[List[str]] = None,
+        attachments: Optional[List[str]] = None,
     ) -> str:
         """
-        Build a short factual caption from structured fields only.
+        Build a concise evidence-locked caption (PP1-style quality) from structured fields only.
         """
-        category_text = str(category or "").strip().lower()
+        category_text = self._humanize_category(category)
         color_text = str(color or "").strip()
-        # Kept for API completeness; not injected into caption template for now.
-        _ = str(brand or "").strip()
+        brand_text = str(brand or "").strip()
 
-        clean_tokens: List[str] = []
-        for tok in ocr_tokens or []:
-            text = str(tok or "").strip()
-            if text:
-                clean_tokens.append(text)
-
-        clean_features: List[str] = []
-        for feat in features or []:
-            text = str(feat or "").strip()
-            if text:
-                clean_features.append(text)
-
+        descriptor_parts: List[str] = []
         if color_text:
-            base = f"A {color_text} {category_text}."
-        else:
-            base = f"A {category_text}."
+            descriptor_parts.append(color_text.lower())
+        if brand_text:
+            descriptor_parts.append(brand_text)
+        descriptor_parts.append(category_text)
+        descriptor = " ".join([part for part in descriptor_parts if part]).strip()
+        if not descriptor:
+            descriptor = "item"
 
-        parts = [base]
-        if clean_tokens:
-            parts.append(f"Text: {clean_tokens[0]}.")
-        if clean_features:
-            parts.append(f"Visible: {', '.join(clean_features[:2])}.")
+        plural_like = category_text.endswith("s") or ("earbuds" in category_text)
+        first_sentence = f"{'These' if plural_like else 'This'} {descriptor}."
 
-        return " ".join(parts)
+        feature_values = self._dedupe_keep_order(features or [])
+        defect_values = self._dedupe_keep_order(defects or [])
+        attachment_values = self._dedupe_keep_order(attachments or [])
+        ocr_values = self._dedupe_keep_order([str(tok).strip() for tok in (ocr_tokens or []) if str(tok).strip()])
+
+        evidence_clauses: List[str] = []
+        if feature_values:
+            evidence_clauses.append(f"features {self._join_natural(feature_values[:3])}")
+        if attachment_values:
+            evidence_clauses.append(f"includes {self._join_natural(attachment_values[:2])}")
+        if defect_values:
+            evidence_clauses.append(f"shows {self._join_natural(defect_values[:2])}")
+        if ocr_values:
+            evidence_clauses.append(f"marked with {ocr_values[0]}")
+
+        if not evidence_clauses:
+            return first_sentence
+        return f"{first_sentence} It {self._join_natural(evidence_clauses)}."
 
     def fuse(
         self,
@@ -299,6 +392,7 @@ class MultiViewFusionService:
         vectors: List[np.ndarray],
         item_id: str,
         view_meta_by_index: Optional[Dict[int, Dict[str, Any]]] = None,
+        used_view_indices: Optional[List[int]] = None,
     ) -> PP2FusedProfile:
         """
         Fuses results from multiple views into a single consistent profile.
@@ -467,22 +561,39 @@ class MultiViewFusionService:
         best_color = best_view.extraction.grounded_features.get("color")
         final_color = self._resolve_majority_vote(colors, best_color, "color", merged_attributes)
 
-        # Conservative fused caption from structured fields only.
-        features_for_caption: List[str] = []
-        features_val = merged_attributes.get("features")
-        if isinstance(features_val, str):
-            text = features_val.strip()
-            if text:
-                features_for_caption = [text]
-        elif isinstance(features_val, list):
-            features_for_caption = [str(v).strip() for v in features_val if isinstance(v, str) and str(v).strip()]
-        main_caption = self.build_conservative_caption(
-            category=final_category,
-            color=str(final_color or ""),
-            brand=final_brand,
-            ocr_tokens=merged_ocr_tokens,
-            features=features_for_caption,
+        # Caption evidence scope: prefer verifier-selected decision pair when available.
+        valid_used_indices = sorted(
+            {int(idx) for idx in (used_view_indices or []) if isinstance(idx, int) and 0 <= int(idx) < len(per_view)}
         )
+        used_scope_set = set(valid_used_indices)
+        caption_scope_views = [r for r in per_view if r.view_index in used_scope_set] if used_scope_set else list(per_view)
+
+        scope_brands = [
+            str((r.extraction.grounded_features or {}).get("brand") or "").strip()
+            for r in caption_scope_views
+            if str((r.extraction.grounded_features or {}).get("brand") or "").strip()
+        ]
+        scope_colors = [
+            str((r.extraction.grounded_features or {}).get("color") or "").strip()
+            for r in caption_scope_views
+            if str((r.extraction.grounded_features or {}).get("color") or "").strip()
+        ]
+        caption_brand = self._pick_most_common(scope_brands) or final_brand
+        caption_color = self._pick_most_common(scope_colors) or final_color
+
+        caption_features: List[str] = []
+        caption_attachments: List[str] = []
+        for res in caption_scope_views:
+            grounded = res.extraction.grounded_features or {}
+            caption_features.extend(self._to_clean_str_list(grounded.get("features")))
+            caption_attachments.extend(self._to_clean_str_list(grounded.get("attachments")))
+        if not caption_features:
+            caption_features = self._to_clean_str_list(merged_attributes.get("features"))
+        if not caption_attachments:
+            caption_attachments = self._to_clean_str_list(merged_attributes.get("attachments"))
+        caption_features = self._dedupe_keep_order(caption_features)
+        caption_attachments = self._dedupe_keep_order(caption_attachments)
+        caption_ocr_tokens = self._collect_caption_ocr_tokens(caption_scope_views, merged_ocr_tokens)
 
         # 6. Defects (consensus-based across eligible views)
         eligible_view_count = len(eligible_category_views)
@@ -522,6 +633,16 @@ class MultiViewFusionService:
                 if count >= 2
             ]
             sorted_defects = sorted(consensus_defects)
+
+        main_caption = self.build_conservative_caption(
+            category=final_category,
+            color=str(caption_color or ""),
+            brand=caption_brand,
+            ocr_tokens=caption_ocr_tokens,
+            features=caption_features,
+            defects=sorted_defects,
+            attachments=caption_attachments,
+        )
 
         # 7. Fused Embedding metadata (actual fused-vector math is exposed via compute_fused_vector)
         fused_embedding_id = f"{item_id}_fused"

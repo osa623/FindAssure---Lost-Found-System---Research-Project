@@ -15,13 +15,25 @@ Why projection?
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
+import threading
 from typing import List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
+from app.services.gpu_semaphore import gpu_inference_guard
+from app.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class DINOEmbedder:
+    _shared_model = None
+    _shared_processor = None
+    _shared_model_key = None
+    _shared_using_fp16 = False
+    _shared_lock = threading.Lock()
+
     def __init__(
         self,
         model_name: str = "facebook/dinov2-base",
@@ -40,22 +52,86 @@ class DINOEmbedder:
 
         self.projection_dim = projection_dim
         self.projection_seed = projection_seed
+        self.input_size = int(getattr(settings, "DINO_INPUT_SIZE", 224))
+        self.enable_amp = bool(getattr(settings, "DINO_ENABLE_AMP", True))
+        self.use_fp16 = bool(getattr(settings, "DINO_USE_FP16", True))
+        self._using_fp16 = False
 
         self._processor = None
         self._model = None
         self._proj = None  # np.ndarray (D x projection_dim)
+        self._model_load_lock = threading.Lock()
+
+    def _cache_key(self) -> Tuple[str, str, bool]:
+        return (
+            str(self.model_name),
+            str(self.device),
+            bool(self.device == "cuda" and self.use_fp16),
+        )
 
     def load_model(self) -> None:
         if self._model is not None and self._processor is not None:
+            logger.debug("DINO_MODEL_LOAD_SKIP_ALREADY_LOADED")
             return
-        from transformers import AutoImageProcessor, AutoModel  # type: ignore
-        import torch  # type: ignore
+        lock = getattr(self, "_model_load_lock", None)
+        if lock is None:
+            self._model_load_lock = threading.Lock()
+            lock = self._model_load_lock
+        assert lock is not None
+        with lock:
+            if self._model is not None and self._processor is not None:
+                logger.debug("DINO_MODEL_LOAD_SKIP_ALREADY_LOADED_LOCKED")
+                return
+            cache_key = self._cache_key()
+            with DINOEmbedder._shared_lock:
+                if (
+                    DINOEmbedder._shared_model is not None
+                    and DINOEmbedder._shared_processor is not None
+                    and DINOEmbedder._shared_model_key == cache_key
+                ):
+                    self._model = DINOEmbedder._shared_model
+                    self._processor = DINOEmbedder._shared_processor
+                    self._using_fp16 = bool(DINOEmbedder._shared_using_fp16)
+                    logger.debug(
+                        "DINO_MODEL_REUSE_SHARED model_name=%s device=%s fp16=%s",
+                        self.model_name,
+                        self.device,
+                        self._using_fp16,
+                    )
+                    return
+            logger.debug(
+                "DINO_MODEL_LOAD_START model_name=%s device=%s",
+                self.model_name,
+                self.device,
+            )
+            from transformers import AutoImageProcessor, AutoModel  # type: ignore
+            import torch  # type: ignore
 
-        self._processor = AutoImageProcessor.from_pretrained(self.model_name)
-        self._model = AutoModel.from_pretrained(self.model_name)
-        if self.device:
-            self._model.to(self.device)
-        self._model.eval()
+            self._processor = AutoImageProcessor.from_pretrained(self.model_name)
+            self._model = AutoModel.from_pretrained(self.model_name)
+            if self.device:
+                self._model.to(self.device)
+            if self.device == "cuda" and self.use_fp16:
+                try:
+                    self._model.half()
+                    self._using_fp16 = True
+                except Exception:
+                    self._using_fp16 = False
+                    logger.warning("DINO_MODEL_HALF_FAILED_FALLBACK_FP32")
+            else:
+                self._using_fp16 = False
+            self._model.eval()
+            with DINOEmbedder._shared_lock:
+                DINOEmbedder._shared_model = self._model
+                DINOEmbedder._shared_processor = self._processor
+                DINOEmbedder._shared_model_key = cache_key
+                DINOEmbedder._shared_using_fp16 = bool(self._using_fp16)
+            logger.debug(
+                "DINO_MODEL_LOAD_DONE model_name=%s device=%s fp16=%s",
+                self.model_name,
+                self.device,
+                self._using_fp16,
+            )
 
     def _projection(self, in_dim: int) -> np.ndarray:
         if self._proj is None or self._proj.shape[0] != in_dim:
@@ -66,18 +142,49 @@ class DINOEmbedder:
             self._proj = proj
         return self._proj
 
+    def _prepare_embedding_image(self, image: Image.Image) -> Image.Image:
+        if not isinstance(image, Image.Image):
+            return image
+        target = max(32, int(getattr(self, "input_size", 224)))
+        w, h = image.size
+        if w <= 0 or h <= 0:
+            return image
+
+        scale = float(target) / float(min(w, h))
+        new_w = max(target, int(round(w * scale)))
+        new_h = max(target, int(round(h * scale)))
+        resized = image.resize((new_w, new_h), Image.BILINEAR)
+
+        left = max(0, int(round((new_w - target) / 2.0)))
+        top = max(0, int(round((new_h - target) / 2.0)))
+        right = min(new_w, left + target)
+        bottom = min(new_h, top + target)
+        return resized.crop((left, top, right, bottom))
+
     def embed_768(self, image: Image.Image) -> np.ndarray:
         self.load_model()
         assert self._processor is not None and self._model is not None
 
         import torch  # type: ignore
 
-        inputs = self._processor(images=image, return_tensors="pt")
+        prepared_image = self._prepare_embedding_image(image)
+        inputs = self._processor(images=prepared_image, return_tensors="pt")
         if self.device:
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
+        use_amp_cuda = bool(
+            self.device == "cuda"
+            and torch.cuda.is_available()
+            and bool(getattr(self, "enable_amp", True))
+        )
         with torch.no_grad():
-            outputs = self._model(**inputs)
+            with gpu_inference_guard("forward", "dino"):
+                with torch.autocast(
+                    device_type="cuda",
+                    dtype=torch.float16,
+                    enabled=use_amp_cuda,
+                ):
+                    outputs = self._model(**inputs)
             # DINOv2 returns last_hidden_state: [B, N, D]
             # Use CLS token (index 0).
             vec = outputs.last_hidden_state[:, 0, :].detach().cpu().numpy()[0]

@@ -44,6 +44,10 @@ class PP2PerViewResult(BaseModel):
     quality_score: float
 
 class PP2VerificationResult(BaseModel):
+    mode: str = Field(
+        default="unsupported",
+        description="Verification decision mode: two_view, three_view, or unsupported."
+    )
     cosine_sim_matrix: List[List[float]] = Field(
         ..., 
         description="NxN cosine similarity matrix where N is input view count (2 or 3)"
@@ -95,6 +99,15 @@ class PP2VerificationResult(BaseModel):
             if idx < 0:
                 raise ValueError("used_views indices must be non-negative.")
         return v
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        mode = str(v or "").strip().lower()
+        allowed = {"two_view", "three_view", "unsupported"}
+        if mode not in allowed:
+            raise ValueError(f"mode must be one of {sorted(allowed)}.")
+        return mode
 
     @model_validator(mode="after")
     def validate_dropped_vs_used(self) -> "PP2VerificationResult":

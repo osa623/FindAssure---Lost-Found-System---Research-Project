@@ -468,6 +468,31 @@ class GeminiReasoner:
         """
         return self.extract_category_details(florence_evidence_json, crop_image=crop_image)
 
+    def confirm_pp2_view(self, evidence_json: Dict[str, Any], crop_image: Optional[Any] = None) -> Dict[str, Any]:
+        """
+        PP2 helper that returns a compact, normalized payload for single-view advisory evidence.
+        Timeout behavior is intentionally owned by the PP2 caller.
+        """
+        phase1 = self.run_phase1(evidence_json, crop_image=crop_image)
+        status_in = str(phase1.get("status", "")).strip().lower()
+
+        if status_in == "accepted":
+            status = "success"
+        elif status_in == "rejected":
+            status = "rejected"
+        else:
+            status = "error"
+
+        payload: Dict[str, Any] = {
+            "status": status,
+            "label": phase1.get("label"),
+            "description": phase1.get("final_description"),
+            "message": str(phase1.get("message", "") or ""),
+        }
+        if "error" in phase1:
+            payload["error"] = phase1.get("error")
+        return payload
+
     def run_phase2(self, evidence_bundle_json: Dict[str, Any]) -> Dict[str, Any]:
         prompt = PHASE2_PP2_PROMPT.replace(
             "{{EVIDENCE_BUNDLE_JSON}}",

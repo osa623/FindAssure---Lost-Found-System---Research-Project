@@ -67,6 +67,12 @@ async def lifespan(app: FastAPI):
 
         # Initialize Model Services
         yolo_service = YoloService()
+        try:
+            yolo_service.warmup()
+        except Exception:
+            if yolo_service.model is None:
+                raise
+            logger.warning("YOLO warmup failed; continuing with loaded model.", exc_info=True)
         florence_service = FlorenceService()
         dino_embedder = DINOEmbedder()
         gemini_reasoner = GeminiReasoner()

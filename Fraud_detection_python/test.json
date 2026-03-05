@@ -1,0 +1,31 @@
+{
+  "owner_id": "sankalani",
+  "category": "bag",
+  "answers": [
+    {
+      "question_id": 1,
+      "video_key": "owner_answer_one",
+      "founder_answer": "It was a black backpack with a silver zipper and a laptop inside."
+    },
+    {
+      "question_id": 2,
+      "video_key": "owner_answer_two",
+      "founder_answer": "There was a small scratch on the front pocket."
+    },
+    {
+      "question_id": 3,
+      "video_key": "owner_answer_three",
+      "founder_answer": "I kept a blue notebook and a pen inside the second pocket."
+    },
+    {
+      "question_id": 4,
+      "video_key": "owner_answer_four",
+      "founder_answer": "Inside the laptop sleeve there is a sticker with my initials."
+    },
+    {
+      "question_id": 5,
+      "video_key": "owner_answer_five",
+      "founder_answer": "The bag strap has a tiny tear on the left side."
+    }
+  ]
+}

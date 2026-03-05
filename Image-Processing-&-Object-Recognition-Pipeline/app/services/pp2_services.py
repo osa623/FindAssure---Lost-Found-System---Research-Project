@@ -5,7 +5,7 @@ from app.schemas.pp2_schemas import PP2PerViewResult, PP2VerificationResult, PP2
 class MultiViewVerifier:
     def verify(self, results: List[PP2PerViewResult]) -> PP2VerificationResult:
         """
-        Verifies consistency across 3 views using embeddings and geometric checks.
+        Verifies consistency across multi-view inputs (2 or 3 views) using embeddings and geometric checks.
         """
         # 1. Extract embeddings (assuming 128d or similar)
         # Use first 8 floats as preview if full vector not available, but ideally we utilize full vector in memory
@@ -34,7 +34,7 @@ class MultiViewVerifier:
 class MultiViewFusionService:
     def fuse(self, results: List[PP2PerViewResult]) -> PP2FusedProfile:
         """
-        Aggregates findings from 3 views into a single profile.
+        Aggregates findings from 2 or 3 views into a single profile.
         """
         # Naive fusion: take majority class, merge OCR
         # 1. Category voting
