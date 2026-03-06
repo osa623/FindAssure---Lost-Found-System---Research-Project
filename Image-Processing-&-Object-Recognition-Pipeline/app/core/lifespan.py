@@ -7,6 +7,7 @@ from app.config.settings import settings
 # Core
 from app.core.redis_client import get_redis_client
 from app.core.db import engine, Base
+from app.models import item_models  # noqa: F401
 
 # Services
 from app.services.yolo_service import YoloService
@@ -49,7 +50,8 @@ async def lifespan(app: FastAPI):
 
     # 3. Database Connection Check
     try:
-        logger.info("Database engine configured.")
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database schema initialized for %s", settings.DATABASE_URL)
     except Exception as e:
         logger.error(f"Database configuration warning: {e}")
 

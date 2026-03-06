@@ -9,9 +9,29 @@ export interface ILostRequest extends Document {
   hall_name?: string | null;
   owner_location_confidence_stage: number; // 1: Pretty Sure, 2: Sure, 3: Not Sure, 4: Do not remember surely
   matchedFoundItemIds?: Types.ObjectId[];
+  ownerImageUrl?: string | null;
+  imageMatchResults?: Array<{
+    foundItemId: Types.ObjectId;
+    score: number;
+  }>;
   createdAt: Date;
   updatedAt: Date;
 }
+
+const imageMatchResultSchema = new Schema(
+  {
+    foundItemId: {
+      type: Schema.Types.ObjectId,
+      ref: 'FoundItem',
+      required: true,
+    },
+    score: {
+      type: Number,
+      required: true,
+    },
+  },
+  { _id: false }
+);
 
 const lostRequestSchema = new Schema<ILostRequest>(
   {
@@ -54,6 +74,14 @@ const lostRequestSchema = new Schema<ILostRequest>(
     matchedFoundItemIds: {
       type: [Schema.Types.ObjectId],
       ref: 'FoundItem',
+      default: [],
+    },
+    ownerImageUrl: {
+      type: String,
+      default: null,
+    },
+    imageMatchResults: {
+      type: [imageMatchResultSchema],
       default: [],
     },
   },

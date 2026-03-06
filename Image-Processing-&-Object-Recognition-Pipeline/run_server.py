@@ -13,7 +13,7 @@ if __name__ == "__main__":
     print("Starting Vision Core Server...")
 
     host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 8002))
     reload = os.environ.get("RELOAD", "false").lower() in ("1", "true", "yes")
     workers = int(os.environ.get("WORKERS", 1))
     log_level = os.environ.get("LOG_LEVEL", "info").lower()

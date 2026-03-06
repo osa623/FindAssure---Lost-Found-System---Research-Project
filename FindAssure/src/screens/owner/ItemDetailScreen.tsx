@@ -57,6 +57,18 @@ const ItemDetailScreen = () => {
             <Text style={styles.description}>{foundItem.description}</Text>
           </View>
 
+          {foundItem.imageMatch && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Visual Similarity</Text>
+              <View style={styles.visualMatchCard}>
+                <Image source={{ uri: foundItem.imageUrl }} style={styles.visualMatchImage} />
+                <Text style={styles.visualMatchText}>
+                  {`Visual Similarity: ${Math.round(foundItem.imageMatch.score * 100)}%`}
+                </Text>
+              </View>
+            </View>
+          )}
+
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>📍 Found Location</Text>
             <Text style={styles.locationText}>{formatLocation(foundItem.found_location)}</Text>
@@ -263,6 +275,23 @@ const styles = StyleSheet.create({
   dateText: {
     fontSize: 15,
     color: '#666666',
+  },
+  visualMatchCard: {
+    backgroundColor: '#F6F8FB',
+    borderRadius: 12,
+    padding: 12,
+  },
+  visualMatchImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: 10,
+    backgroundColor: '#E0E0E0',
+    marginBottom: 10,
+  },
+  visualMatchText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#2B4B64',
   },
   actionSection: {
     paddingHorizontal: 20,

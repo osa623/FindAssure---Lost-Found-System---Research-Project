@@ -18,6 +18,18 @@ export const ItemCard: React.FC<ItemCardProps> = ({ item, onPress }) => {
     return locationStr;
   };
 
+  const getImageMatchStyle = (score: number) => {
+    if (score >= 0.8) {
+      return { backgroundColor: '#E4F4EA', color: '#1F7A3D' };
+    }
+
+    if (score >= 0.6) {
+      return { backgroundColor: '#FFF4D6', color: '#9C6A00' };
+    }
+
+    return { backgroundColor: '#ECEFF3', color: '#667085' };
+  };
+
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
       <Image 
@@ -35,6 +47,23 @@ export const ItemCard: React.FC<ItemCardProps> = ({ item, onPress }) => {
         <Text style={styles.description} numberOfLines={2}>
           {item.description}
         </Text>
+        {item.imageMatch && (
+          <View
+            style={[
+              styles.imageMatchBadge,
+              { backgroundColor: getImageMatchStyle(item.imageMatch.score).backgroundColor },
+            ]}
+          >
+            <Text
+              style={[
+                styles.imageMatchText,
+                { color: getImageMatchStyle(item.imageMatch.score).color },
+              ]}
+            >
+              {`${Math.round(item.imageMatch.score * 100)}% visual match`}
+            </Text>
+          </View>
+        )}
         <View style={styles.footer}>
           <Text style={styles.location}>📍 {formatLocation()}</Text>
           <Text style={styles.date}>
@@ -112,6 +141,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  imageMatchBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginBottom: 12,
+  },
+  imageMatchText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
   location: {
     fontSize: 13,

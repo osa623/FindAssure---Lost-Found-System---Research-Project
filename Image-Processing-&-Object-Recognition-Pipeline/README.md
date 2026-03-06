@@ -407,7 +407,7 @@ Safety constraints for diagnostics:
 - Only dimensions, counts, booleans, thresholds, and timings are logged.
 
 Minimal debug run checklist (3 helmet images):
-1. Start API with debug logging: `uvicorn app.main:app --host 0.0.0.0 --port 8000 --log-level debug`
+1. Start API with debug logging: `uvicorn app.main:app --host 0.0.0.0 --port 8002 --log-level debug`
 2. Call `POST /pp2/analyze_multiview` with 3 files and optional header `X-Request-ID: pp2-debug-helmet-001`.
 3. Confirm 3x `PP2_VIEW_YOLO`, 3x `PP2_VIEW_OCR_FIRST_INPUT`, 3x `PP2_VIEW_OCR_FIRST_RESULT`.
 4. If OCR-first fails/timeouts, inspect `raw.florence.status/reason`; if successful, expect nonzero caption/OCR on at least some views.
@@ -1327,10 +1327,12 @@ All 19 verifier tests pass (7 original + 12 new). Zero regressions across the fu
    python run_server.py
    ```
 
+   On startup, the service now auto-creates the SQLAlchemy tables for `items`, `view_evidence`, and `embeddings` using the configured `DATABASE_URL`.
+
    The API will be available at:
-   - **Base URL:** `http://0.0.0.0:8000`
-   - **Swagger UI:** `http://0.0.0.0:8000/docs`
-   - **ReDoc:** `http://0.0.0.0:8000/redoc`
+   - **Base URL:** `http://0.0.0.0:8002`
+   - **Swagger UI:** `http://0.0.0.0:8002/docs`
+   - **ReDoc:** `http://0.0.0.0:8002/redoc`
 
 ---
 
@@ -1396,7 +1398,7 @@ All 19 verifier tests pass (7 original + 12 new). Zero regressions across the fu
 | `PP2_VERIFIER_TWO_VIEW_SMALL_AMBIGUOUS_COS` | No | `None` | Override cosine threshold for `two_view` × `small_ambiguous` group |
 | `PP2_VERIFIER_TWO_VIEW_SMALL_AMBIGUOUS_FAISS` | No | `None` | Override FAISS threshold for `two_view` × `small_ambiguous` group |
 | `HOST` | No | `0.0.0.0` | Uvicorn bind address (for `run_server.py`) |
-| `PORT` | No | `8000` | Uvicorn port (for `run_server.py`) |
+| `PORT` | No | `8002` | Uvicorn port (for `run_server.py`) |
 | `RELOAD` | No | `false` | Enable hot-reload (for `run_server.py`) |
 | `WORKERS` | No | `1` | Uvicorn worker count (for `run_server.py`) |
 | `LOG_LEVEL` | No | `info` | Uvicorn log level (for `run_server.py`) |

@@ -41,22 +41,47 @@ if (missingEnvVars.length > 0) {
 // Server configuration
 const PORT = process.env.PORT || 5001;
 
+const isPreferredNetworkInterface = (name: string): boolean => {
+  const normalized = name.toLowerCase();
+
+  if (
+    normalized.includes('vmware') ||
+    normalized.includes('virtualbox') ||
+    normalized.includes('hyper-v') ||
+    normalized.includes('veth') ||
+    normalized.includes('docker') ||
+    normalized.includes('wsl') ||
+    normalized.includes('loopback')
+  ) {
+    return false;
+  }
+
+  return normalized.includes('wi-fi') || normalized.includes('wifi') || normalized.includes('wireless') || normalized.includes('ethernet');
+};
+
 const getLocalIpv4 = (): string | null => {
   const interfaces = os.networkInterfaces();
+  const fallbackAddresses: string[] = [];
 
-  for (const addresses of Object.values(interfaces)) {
+  for (const [name, addresses] of Object.entries(interfaces)) {
     if (!addresses) continue;
 
     for (const address of addresses) {
       const family = typeof address.family === 'string' ? address.family : address.family === 4 ? 'IPv4' : 'IPv6';
 
-      if (family === 'IPv4' && !address.internal) {
+      if (family !== 'IPv4' || address.internal) {
+        continue;
+      }
+
+      if (isPreferredNetworkInterface(name)) {
         return address.address;
       }
+
+      fallbackAddresses.push(address.address);
     }
   }
 
-  return null;
+  return fallbackAddresses[0] || null;
 };
 
 /**
