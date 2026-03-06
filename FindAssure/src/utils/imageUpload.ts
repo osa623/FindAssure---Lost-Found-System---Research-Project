@@ -1,7 +1,6 @@
 import * as FileSystem from 'expo-file-system';
 import axios from 'axios';
-
-const API_BASE_URL = 'http://192.168.113.106:5001/api';
+import { BASE_URL } from '../config/api.config';
 
 /**
  * Upload image to backend (Cloudinary)
@@ -26,7 +25,7 @@ export const uploadImage = async (imageUri: string): Promise<string> => {
     } as any);
 
     // Upload to backend
-    const response = await axios.post(`${API_BASE_URL}/upload/image`, formData, {
+    const response = await axios.post(`${BASE_URL}/upload/image`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },

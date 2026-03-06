@@ -11,6 +11,7 @@
 export const API_CONFIG = {
   // Current backend IP (update this when your network changes)
   BACKEND_IP: '192.168.8.109',
+  SEMANTIC_ENGINE_URI: '127.0.0.1',
   BACKEND_PORT: 5001,
 
   // AI-Powered Semantic Engine (Python FastAPI backend)
