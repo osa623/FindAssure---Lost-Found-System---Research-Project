@@ -1,5 +1,5 @@
 // FindLostStartScreen – follow the spec
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -9,7 +9,8 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
-  TouchableOpacity
+  TouchableOpacity,
+  ActivityIndicator
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -21,6 +22,8 @@ import { LocationPicker } from '../../components/LocationPicker';
 import { LocationDetail } from '../../constants/locationData';
 import { itemsApi } from '../../api/itemsApi';
 import { ITEM_CATEGORIES, CONFIDENCE_LEVEL_MIN, CONFIDENCE_LEVEL_MAX, CONFIDENCE_LEVEL_DEFAULT } from '../../constants/appConstants';
+import axios from 'axios';
+import { AI_BACKEND_URL } from '../../config/api.config';
 
 type FindLostStartNavigationProp = StackNavigationProp<RootStackParamList, 'FindLostStart'>;
 
@@ -33,6 +36,39 @@ const FindLostStartScreen = () => {
   const [location, setLocation] = useState<LocationDetail | null>(null);
   const [confidenceStage, setConfidenceStage] = useState<number>(2); // 1: Pretty Sure, 2: Sure, 3: Not Sure, 4: Do not remember surely
   const [loading, setLoading] = useState(false);
+
+  // Grammar correction state
+  const [grammarChecking, setGrammarChecking] = useState(false);
+  const [grammarNote, setGrammarNote] = useState<string | null>(null);
+  const grammarTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerGrammarCheck = useCallback((text: string) => {
+    if (grammarTimer.current) clearTimeout(grammarTimer.current);
+    setGrammarNote(null);
+
+    if (!text || text.trim().length < 5) return;
+
+    grammarTimer.current = setTimeout(async () => {
+      setGrammarChecking(true);
+      try {
+        const res = await axios.post(`${AI_BACKEND_URL}/correct-grammar`, { text }, { timeout: 10000 });
+        if (res.data.was_corrected && res.data.corrected_text) {
+          setDescription(res.data.corrected_text);
+          const fixes = res.data.corrections?.length
+            ? res.data.corrections.join(', ')
+            : 'Grammar auto-corrected';
+          setGrammarNote(fixes);
+          setTimeout(() => setGrammarNote(null), 4000);
+        }
+      } catch { /* silently skip if AI backend is unavailable */ }
+      finally { setGrammarChecking(false); }
+    }, 1200);
+  }, []);
+
+  const handleDescriptionChange = useCallback((text: string) => {
+    setDescription(text);
+    triggerGrammarCheck(text);
+  }, [triggerGrammarCheck]);
 
   const handleSearch = async () => {
     if (!user) {
@@ -106,18 +142,30 @@ const FindLostStartScreen = () => {
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Description *</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                placeholder="Describe your lost item in detail..."
-                value={description}
-                onChangeText={setDescription}
-                multiline
-                numberOfLines={6}
-                textAlignVertical="top"
-              />
-              <Text style={styles.helperText}>
-                Include color, brand, and specific item details that can identify item identically.
-              </Text>
+              <View>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  placeholder="Describe your lost item in detail..."
+                  value={description}
+                  onChangeText={handleDescriptionChange}
+                  multiline
+                  numberOfLines={6}
+                  textAlignVertical="top"
+                />
+                {grammarChecking && (
+                  <View style={styles.grammarIndicator}>
+                    <ActivityIndicator size="small" color="#4A90D9" />
+                    <Text style={styles.grammarCheckingText}>Checking grammar...</Text>
+                  </View>
+                )}
+              </View>
+              {grammarNote ? (
+                <Text style={styles.grammarNote}>✓ {grammarNote}</Text>
+              ) : (
+                <Text style={styles.helperText}>
+                  Include color, brand, and specific item details that can identify item identically.
+                </Text>
+              )}
             </View>
 
             <View style={styles.inputGroup}>
@@ -295,6 +343,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#999999',
     marginTop: 6,
+  },
+  grammarIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+  },
+  grammarCheckingText: {
+    fontSize: 11,
+    color: '#4A90D9',
+    marginLeft: 4,
+  },
+  grammarNote: {
+    fontSize: 12,
+    color: '#4CAF50',
+    marginTop: 6,
+    fontWeight: '500',
   },
   confidenceContainer: {
     flexDirection: 'row',
