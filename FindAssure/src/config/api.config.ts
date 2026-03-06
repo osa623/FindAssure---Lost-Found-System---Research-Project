@@ -1,36 +1,32 @@
-/**
- * API Configuration
- * Update the BASE_URL based on your network setup
- */
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
-// Automatically detect the correct API URL based on platform
-// For development, update the IP address when it changes
+const DEFAULT_DEVICE_BACKEND_HOST = '192.168.43.36';
+const DEFAULT_SIMULATOR_BACKEND_HOST = Platform.OS === 'android' ? '10.0.2.2' : '127.0.0.1';
 
-// ⚠️ UPDATE THIS IP ADDRESS TO MATCH YOUR BACKEND SERVER
-// Check backend console output for: "📱 Mobile Access: http://YOUR_IP:5001/api"
-export const API_CONFIG = {
-  // Current backend IP (update this when your network changes)
-  BACKEND_IP: '192.168.131.1',
-  SEMANTIC_ENGINE_URI: '127.0.0.1',
-  BACKEND_PORT: 5001,
-
-  // AI-Powered Semantic Engine (Python FastAPI backend)
-  AI_BACKEND_PORT: 8001,
-  
-  // Timeouts
-  REQUEST_TIMEOUT: 60000, // 60 seconds (AI generation can take 5-15 seconds)
-  
-  // Alternative URLs for different scenarios:
-  // Android Emulator: '10.0.2.2'
-  // iOS Simulator: 'localhost'
-  // Physical Device: Use your computer's local IP
+const trimEnvValue = (value: string | undefined): string | null => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 };
 
-// Construct the full API URL
-export const BASE_URL = `http://${API_CONFIG.BACKEND_IP}:${API_CONFIG.BACKEND_PORT}/api`;
+const configuredBackendHost = trimEnvValue(process.env.EXPO_PUBLIC_BACKEND_HOST);
+const configuredSemanticEngineHost = trimEnvValue(process.env.EXPO_PUBLIC_SEMANTIC_ENGINE_HOST);
+const isPhysicalDevice = Constants.isDevice ?? true;
+const resolvedBackendHost =
+  configuredBackendHost || (isPhysicalDevice ? DEFAULT_DEVICE_BACKEND_HOST : DEFAULT_SIMULATOR_BACKEND_HOST);
+const resolvedSemanticEngineHost = configuredSemanticEngineHost || resolvedBackendHost;
 
-// Health check URL (for testing connectivity)
-export const HEALTH_CHECK_URL = `http://${API_CONFIG.BACKEND_IP}:${API_CONFIG.BACKEND_PORT}/health`;
+export const API_CONFIG = {
+  BACKEND_HOST: resolvedBackendHost,
+  SEMANTIC_ENGINE_HOST: resolvedSemanticEngineHost,
+  BACKEND_PORT: 5001,
+  AI_BACKEND_PORT: 8001,
+  REQUEST_TIMEOUT: 60000,
+  IS_PHYSICAL_DEVICE: isPhysicalDevice,
+  ENV_BACKEND_HOST: configuredBackendHost,
+};
 
-// AI Semantic Engine URL (Python backend for grammar correction, search, etc.)
-export const AI_BACKEND_URL = `http://${API_CONFIG.SEMANTIC_ENGINE_URI}:${API_CONFIG.AI_BACKEND_PORT}`;
+export const API_ORIGIN = `http://${API_CONFIG.BACKEND_HOST}:${API_CONFIG.BACKEND_PORT}`;
+export const BASE_URL = `${API_ORIGIN}/api`;
+export const HEALTH_CHECK_URL = `${API_ORIGIN}/health`;
+export const AI_BACKEND_URL = `http://${API_CONFIG.SEMANTIC_ENGINE_HOST}:${API_CONFIG.AI_BACKEND_PORT}`;

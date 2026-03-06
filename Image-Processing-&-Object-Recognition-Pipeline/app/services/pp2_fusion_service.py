@@ -4,6 +4,7 @@ import string
 from collections import Counter, defaultdict
 from typing import List, Dict, Any, Optional, Set
 from app.schemas.pp2_schemas import PP2PerViewResult, PP2FusedProfile
+from app.domain.color_utils import normalize_color, extract_color_from_text
 
 class MultiViewFusionService:
     _URL_OR_DOMAIN_RE = re.compile(r"(?:\bHTTP\b|\bHTTPS\b|\bWWW\b|(?:^|[^\s])\.(?:COM|NET|LK|ORG|CO)\b)")
@@ -561,6 +562,16 @@ class MultiViewFusionService:
         best_color = best_view.extraction.grounded_features.get("color")
         final_color = self._resolve_majority_vote(colors, best_color, "color", merged_attributes)
 
+        # Fallback: extract color from captions when grounded_features had no color
+        if not final_color:
+            for r in per_view:
+                cap_text = str(getattr(r.extraction, "caption", "") or "").strip()
+                if cap_text:
+                    extracted = extract_color_from_text(cap_text)
+                    if extracted:
+                        final_color = extracted
+                        break
+
         # Caption evidence scope: prefer verifier-selected decision pair when available.
         valid_used_indices = sorted(
             {int(idx) for idx in (used_view_indices or []) if isinstance(idx, int) and 0 <= int(idx) < len(per_view)}
@@ -574,12 +585,23 @@ class MultiViewFusionService:
             if str((r.extraction.grounded_features or {}).get("brand") or "").strip()
         ]
         scope_colors = [
-            str((r.extraction.grounded_features or {}).get("color") or "").strip()
+            normalize_color(str((r.extraction.grounded_features or {}).get("color") or "").strip())
             for r in caption_scope_views
             if str((r.extraction.grounded_features or {}).get("color") or "").strip()
         ]
+        scope_colors = [c for c in scope_colors if c]
         caption_brand = self._pick_most_common(scope_brands) or final_brand
         caption_color = self._pick_most_common(scope_colors) or final_color
+
+        # Fallback: extract color from scope captions if still missing
+        if not caption_color:
+            for r in caption_scope_views:
+                cap_text = str(getattr(r.extraction, "caption", "") or "").strip()
+                if cap_text:
+                    extracted = extract_color_from_text(cap_text)
+                    if extracted:
+                        caption_color = extracted
+                        break
 
         caption_features: List[str] = []
         caption_attachments: List[str] = []
@@ -669,6 +691,12 @@ class MultiViewFusionService:
         """
         if not values:
             return best_value
+
+        # Normalize color values before voting to collapse aliases
+        if field_name == "color":
+            values = [normalize_color(v) or v for v in values]
+            if best_value:
+                best_value = normalize_color(best_value) or best_value
 
         counts = Counter(values)
         total = len(values)

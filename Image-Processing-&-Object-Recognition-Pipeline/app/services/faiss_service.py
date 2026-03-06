@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import shutil
 import threading
 import numpy as np
 import faiss
@@ -71,7 +72,22 @@ class FaissService:
                 
             # Verify consistency
             if self.index.ntotal != len(self.mapping):
-                logger.warning(f"Index count ({self.index.ntotal}) does not match mapping count ({len(self.mapping)}).")
+                logger.error(
+                    f"FAISS consistency mismatch: index has {self.index.ntotal} vectors but mapping has {len(self.mapping)} entries. "
+                    "Backing up corrupt files and rebuilding from scratch."
+                )
+                # Backup corrupt files before resetting
+                for src in (self.index_path, self.mapping_path):
+                    if os.path.exists(src):
+                        bak = src + ".bak"
+                        try:
+                            shutil.copy2(src, bak)
+                            logger.info("Backed up %s -> %s", src, bak)
+                        except OSError:
+                            logger.warning("Failed to backup %s", src, exc_info=True)
+                self.index = faiss.IndexFlatIP(self.dim)
+                self.mapping = {}
+                logger.info("FAISS index and mapping reset to empty.")
 
     def _normalize(self, vector: np.ndarray) -> np.ndarray:
         """Normalize vector to L2 unit length."""
@@ -168,14 +184,28 @@ class FaissService:
         return self.pair_similarity(vec_a, vec_b)
 
     def save(self) -> None:
-        """Save index and mapping to disk."""
+        """Save index and mapping to disk atomically (write-then-rename)."""
         with self.lock:
             if self.index is None:
                 return
                 
             logger.info("Saving FAISS index and mapping to disk...")
-            faiss.write_index(self.index, self.index_path)
-            
-            with open(self.mapping_path, 'w') as f:
-                json.dump(self.mapping, f, indent=2)
-            logger.info("Save complete.")
+            tmp_index = self.index_path + ".tmp"
+            tmp_mapping = self.mapping_path + ".tmp"
+            try:
+                faiss.write_index(self.index, tmp_index)
+                with open(tmp_mapping, 'w') as f:
+                    json.dump(self.mapping, f, indent=2)
+                # Atomic rename (on Windows this replaces if target exists in Python 3.3+)
+                os.replace(tmp_index, self.index_path)
+                os.replace(tmp_mapping, self.mapping_path)
+                logger.info("Save complete.")
+            except Exception:
+                # Clean up temp files on failure
+                for tmp in (tmp_index, tmp_mapping):
+                    if os.path.exists(tmp):
+                        try:
+                            os.remove(tmp)
+                        except OSError:
+                            pass
+                raise

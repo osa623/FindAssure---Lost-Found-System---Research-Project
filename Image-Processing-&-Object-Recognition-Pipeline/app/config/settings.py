@@ -42,6 +42,27 @@ class Settings(BaseSettings):
     FLORENCE_LITE_TINY_BBOX_AREA_RATIO: float = 0.05
     FLORENCE_LITE_SUCCESS_CONFIDENCE: float = 0.7
 
+    # Florence OD Fallback
+    FLORENCE_OD_FALLBACK_ENABLED: bool = True
+    FLORENCE_OD_FALLBACK_MAX_DETECTIONS: int = 5
+    FLORENCE_OD_DEFAULT_CONF: float = 0.5
+
+    # Gemini circuit breaker
+    GEMINI_CB_FAILURE_THRESHOLD: int = 5
+    GEMINI_CB_RECOVERY_TIMEOUT_S: int = 60
+
+    # PP1 label reranking thresholds
+    LABEL_RERANK_MIN_WINNER_SCORE: int = 3
+    LABEL_RERANK_MIN_MARGIN: int = 2
+
+    # PP2 verifier thresholds (override MODE_GROUP_DEFAULTS)
+    PP2_VERIFIER_TWO_VIEW_ANGLE_HARD: float | None = None
+    PP2_VERIFIER_TWO_VIEW_TEXTURE_RICH: float | None = None
+    PP2_VERIFIER_TWO_VIEW_SMALL_AMBIGUOUS: float | None = None
+    PP2_VERIFIER_THREE_VIEW_ANGLE_HARD: float | None = None
+    PP2_VERIFIER_THREE_VIEW_TEXTURE_RICH: float | None = None
+    PP2_VERIFIER_THREE_VIEW_SMALL_AMBIGUOUS: float | None = None
+
     class Config:
         env_file = ".env"
 

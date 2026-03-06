@@ -110,6 +110,10 @@ HOW TO DECIDE (STRICT)
   If a candidate phrase appears verbatim (case-insensitive) in CAPTION or DEFECTS_VQA_TEXT, include it.
 - VISUAL VERIFICATION:
   If the image clearly contradicts any evidence (e.g., evidence says "red" but image is "blue"), REJECT that piece of evidence.
+- COLOR CORRECTION:
+  Cross-check PRIMARY_COLOR against the CAPTION and the image.
+  If the CAPTION mentions a color that differs from PRIMARY_COLOR and the image supports the caption's color, use the caption's color instead.
+  Output the most accurate color in the "color" field. If uncertain, keep PRIMARY_COLOR.
 - OCR RULE:
   If OCR_TEXT is not "None" and FEATURE_LIST contains "text", include "text".
   Only include "brand name" if OCR_TEXT looks like a brand AND FEATURE_LIST contains "brand name"
@@ -119,16 +123,21 @@ STRICT OUTPUT FORMAT (JSON ONLY)
 Return exactly one JSON object with these keys:
 {{
   "description": string,
+  "color": string | null,
   "features": [string],
   "defects": [string],
   "attachments": [string],
-  "key_count": integer | null
+  "key_count": integer | null,
+  "label_change_reason": string | null
 }}
 
 RULES
 - Do NOT mention the person, hands, skin tone, background.
 - If none found in a list, return an empty array for that list.
 - Keep description object-only. If OCR_TEXT is provided, include it exactly in the description.
+- If you believe the provided LABEL is INCORRECT based on the image and evidence, you may change it.
+  In that case, set label_change_reason to a short explanation (e.g. "Image shows earbuds not a wallet").
+  If the label is correct, set label_change_reason to null.
 
 EVIDENCE (authoritative)
 LABEL: {LABEL}
@@ -295,11 +304,34 @@ class GeminiReasoner:
                     return status
         return None
 
+    @staticmethod
+    def _parse_status_from_message(message: str) -> tuple:
+        """Fallback: extract status code and provider status from exception message text."""
+        status_code = None
+        provider_status = None
+        # Match patterns like "503 UNAVAILABLE" or "'code': 503"
+        code_match = re.search(r"\b(4[0-9]{2}|5[0-9]{2})\b", message)
+        if code_match:
+            status_code = int(code_match.group(1))
+        for ps in TRANSIENT_PROVIDER_STATUSES | FATAL_PROVIDER_STATUSES:
+            if ps in message.upper():
+                provider_status = ps
+                break
+        return status_code, provider_status
+
     def _classify_gemini_exception(self, exc: Exception) -> GeminiServiceError:
         status_code_raw = getattr(exc, "status_code", None)
         status_code = int(status_code_raw) if isinstance(status_code_raw, int) else None
         provider_status = self._extract_provider_status(exc)
         message = str(exc)
+
+        # Fallback: parse the message string when structured attrs are missing
+        if status_code is None or provider_status is None:
+            parsed_code, parsed_status = self._parse_status_from_message(message)
+            if status_code is None:
+                status_code = parsed_code
+            if provider_status is None:
+                provider_status = parsed_status
 
         if status_code in TRANSIENT_STATUS_CODES:
             return GeminiTransientError(message, status_code=status_code, provider_status=provider_status)
@@ -439,18 +471,24 @@ class GeminiReasoner:
             data = json.loads(cleaned_json_str)
             
             # Adapt to UnifiedPipeline expected schema
+            gemini_color = data.get("color")
+            if gemini_color and str(gemini_color).strip().lower() not in ("", "unknown", "null", "none"):
+                resolved_color = str(gemini_color).strip()
+            else:
+                resolved_color = color if color != "Unknown" else None
             return {
                 "status": "accepted",
                 "message": "Extracted successfully",
                 "label": label,
-                "color": color if color != "Unknown" else None,
+                "color": resolved_color,
                 "category_details": {
                     "features": data.get("features", []),
                     "defects": data.get("defects", []),
                     "attachments": data.get("attachments", [])
                 },
                 "key_count": data.get("key_count"),
-                "final_description": data.get("description")
+                "final_description": data.get("description"),
+                "label_change_reason": data.get("label_change_reason"),
             }
             
         except json.JSONDecodeError:

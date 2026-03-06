@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from PIL import Image
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import UploadFile
+from app.domain.bbox_utils import clip_bbox
 
 from app.schemas.pp2_schemas import (
     PP2Response,
@@ -23,7 +24,7 @@ from app.schemas.pp2_schemas import (
 )
 
 # Services
-from app.services.yolo_service import YoloService
+from app.services.yolo_service import YoloService, YoloDetection
 from app.services.florence_service import FlorenceService
 from app.services.dino_embedder import DINOEmbedder
 from app.services.pp2_fusion_service import MultiViewFusionService
@@ -31,8 +32,10 @@ from app.services.pp2_multiview_verifier import MultiViewVerifier
 from app.services.storage_service import StorageService
 from app.services.faiss_service import FaissService
 from app.services.gemini_reasoner import GeminiReasoner
+from app.services.detection_arbiter import should_run_florence_od, arbitrate
 from app.config.settings import settings
 from app.domain.category_specs import canonicalize_label
+from app.domain.label_keywords import CATEGORY_KEYWORDS, NEGATIVE_KEYWORDS, NEGATIVE_KEYWORD_WEIGHT
 
 logger = logging.getLogger(__name__)
 
@@ -47,25 +50,9 @@ class MultiViewPipeline:
     CENTER_CROP_RATIO = 0.70
     PASS_REFINEMENT_MIN_CAPTION_WORDS = 4
     PASS_REFINEMENT_MIN_OCR_LEN = 2
-    HINT_KEYWORDS: Dict[str, List[str]] = {
-        "Helmet": ["helmet", "visor", "chin strap", "motorcycle helmet", "bike helmet", "headgear"],
-        "Smart Phone": ["smartphone", "mobile phone", "cell phone", "iphone", "android phone", "phone"],
-        "Laptop": ["laptop", "notebook", "macbook", "ultrabook"],
-        "Earbuds - Earbuds case": ["earbud", "earbuds", "airpods", "earphone case", "charging case", "tws case"],
-        "Wallet": ["wallet", "billfold", "card holder"],
-        "Handbag": ["bag", "handbag", "purse", "tote", "sling bag"],
-        "Backpack": ["backpack", "rucksack", "knapsack", "school bag"],
-        "Key": ["key", "keys", "keychain", "key ring"],
-        "Student ID": ["student id", "id card", "school id", "campus card"],
-        "Laptop/Mobile chargers & cables": [
-            "charger",
-            "charging cable",
-            "usb cable",
-            "type-c cable",
-            "lightning cable",
-            "power adapter",
-        ],
-    }
+    MIN_CONSENSUS_CONFIDENCE = 0.15
+    MIN_SELECTION_CONFIDENCE = 0.10
+    HINT_KEYWORDS: Dict[str, List[str]] = CATEGORY_KEYWORDS
     UMBRELLA_KEYWORDS: List[str] = ["umbrella", "parasol"]
     HINT_PRIORITY: List[str] = [
         "Helmet",
@@ -77,6 +64,8 @@ class MultiViewPipeline:
         "Backpack",
         "Key",
         "Student ID",
+        "Power Bank",
+        "Headphone",
         "Laptop/Mobile chargers & cables",
     ]
 
@@ -139,6 +128,10 @@ class MultiViewPipeline:
         ocr = str(ocr_text or "").strip()
 
         caption_words = re.findall(r"[A-Za-z0-9]+", caption)
+        # An absent/empty caption means we have no descriptive content at all
+        # — treat as weak regardless of OCR (OCR alone gives brand names, not descriptions)
+        if len(caption_words) == 0:
+            return True
         caption_weak = len(caption_words) < int(cls.PASS_REFINEMENT_MIN_CAPTION_WORDS)
 
         ocr_tokens = re.findall(r"[A-Za-z0-9]+", ocr)
@@ -162,6 +155,11 @@ class MultiViewPipeline:
                 continue
             checked_count += 1
             extraction = per_view_results[idx].extraction
+            # If OD caption was adopted, the original extraction had no caption
+            # — treat as weak so Stage 2 detail can produce richer descriptions
+            raw = getattr(extraction, 'raw', None) or {}
+            if raw.get("od_caption_adopted"):
+                continue
             if not self._is_weak_text_evidence(extraction.caption, extraction.ocr_text):
                 return False
         return checked_count > 0
@@ -694,34 +692,43 @@ class MultiViewPipeline:
         ocr_text_norm = self._normalize_hint_text(ocr_text)
         feature_text = self._extract_feature_tokens(grounded_features)
 
-        helmet_caption = any(self._text_has_keyword(caption_text, kw) for kw in self.HINT_KEYWORDS["Helmet"])
-        helmet_ocr = any(self._text_has_keyword(ocr_text_norm, kw) for kw in self.HINT_KEYWORDS["Helmet"])
-        helmet_feature = any(self._text_has_keyword(feature_text, kw) for kw in self.HINT_KEYWORDS["Helmet"])
-        if helmet_caption or helmet_ocr or helmet_feature:
-            return "Helmet", {
-                "caption_hit": helmet_caption,
-                "ocr_hit": helmet_ocr,
-                "feature_hit": helmet_feature,
-            }
-
-        weights = {"caption": 1, "ocr": 3, "feature": 2}
+        weights = {"caption": 1, "ocr": 3, "feature": 1}
         scores: Dict[str, int] = {}
-        caption_any = False
-        ocr_any = False
-        feature_any = False
+        label_signals: Dict[str, Dict[str, bool]] = {}
         for label, keywords in self.HINT_KEYWORDS.items():
             score = 0
+            cap_hit = False
+            ocr_hit = False
+            feat_hit = False
             for keyword in keywords:
                 if self._text_has_keyword(caption_text, keyword):
                     score += weights["caption"]
-                    caption_any = True
+                    cap_hit = True
                 if self._text_has_keyword(ocr_text_norm, keyword):
                     score += weights["ocr"]
-                    ocr_any = True
+                    ocr_hit = True
+                elif len(keyword) >= 3 and keyword.lower() in (ocr_text_norm or ""):
+                    score += weights["ocr"]
+                    ocr_hit = True
                 if self._text_has_keyword(feature_text, keyword):
                     score += weights["feature"]
-                    feature_any = True
+                    feat_hit = True
+            # ── Negative-keyword penalty (mirrors PP1 logic) ──────────
+            neg_kws = NEGATIVE_KEYWORDS.get(label, [])
+            neg_penalty = 0
+            for neg_kw in neg_kws:
+                if self._text_has_keyword(caption_text, neg_kw):
+                    neg_penalty += NEGATIVE_KEYWORD_WEIGHT
+                if self._text_has_keyword(ocr_text_norm, neg_kw):
+                    neg_penalty += NEGATIVE_KEYWORD_WEIGHT
+            score = max(score - neg_penalty, 0)
+
             scores[label] = score
+            label_signals[label] = {
+                "caption_hit": cap_hit,
+                "ocr_hit": ocr_hit,
+                "feature_hit": feat_hit,
+            }
 
         best_score = max(scores.values()) if scores else 0
         if best_score <= 0:
@@ -734,11 +741,8 @@ class MultiViewPipeline:
         priority = {label: idx for idx, label in enumerate(self.HINT_PRIORITY)}
         winners = [label for label, score in scores.items() if score == best_score]
         winners.sort(key=lambda label: (priority.get(label, len(priority)), label))
-        return winners[0], {
-            "caption_hit": caption_any,
-            "ocr_hit": ocr_any,
-            "feature_hit": feature_any,
-        }
+        winner = winners[0]
+        return winner, label_signals[winner]
 
     def infer_canonical_hint(
         self,
@@ -786,6 +790,9 @@ class MultiViewPipeline:
                 if not label:
                     continue
                 conf = float(det.confidence)
+                # Skip noise detections below the confidence floor
+                if conf < self.MIN_CONSENSUS_CONFIDENCE:
+                    continue
                 existing = per_view_best.get(label)
                 if existing is None or conf > existing:
                     per_view_best[label] = conf
@@ -805,8 +812,7 @@ class MultiViewPipeline:
         ranked = sorted(
             label_stats.items(),
             key=lambda item: (
-                -item[1]["coverage"],
-                -item[1]["sum_conf"],
+                -(item[1]["coverage"] * 2.0 + item[1]["sum_conf"]),
                 -item[1]["best_conf"],
                 item[0],
             ),
@@ -817,6 +823,7 @@ class MultiViewPipeline:
         self,
         per_view_detections: List[List[Any]],
         canonical_hints: List[Optional[str]],
+        hint_signals_list: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[Optional[str], str, Dict[str, int]]:
         hint_votes = Counter([hint for hint in canonical_hints if hint])
         if hint_votes:
@@ -828,12 +835,59 @@ class MultiViewPipeline:
                 return winners[0], "hint_majority", {label: int(count) for label, count in hint_votes.items()}
 
         fallback_label, fallback_strategy = self._choose_consensus_label(per_view_detections)
+
+        # ── hint_strong_override: dual-signal hint overrides any YOLO consensus ──
+        # When a view has BOTH caption AND OCR evidence for a different label,
+        # trust the Florence signals regardless of the YOLO fallback strategy.
+        if (
+            hint_signals_list
+            and hint_votes
+        ):
+            for i, hint_label in enumerate(canonical_hints):
+                if not hint_label:
+                    continue
+                signals = hint_signals_list[i] if i < len(hint_signals_list) else {}
+                if (
+                    bool(signals.get("caption_hit", False))
+                    and bool(signals.get("ocr_hit", False))
+                    and self._normalize_label(hint_label) != self._normalize_label(fallback_label)
+                ):
+                    return hint_label, "hint_strong_override", {label: int(count) for label, count in hint_votes.items()}
+
+        # ── Single-hint tiebreak for ambiguous YOLO consensus ──
+        # When YOLO consensus is uncertain (no strict majority) and a single
+        # Florence hint exists, prefer the hint if it appears among any view's detections.
+        if (
+            hint_votes
+            and fallback_strategy != "strict_majority"
+        ):
+            priority = {label: idx for idx, label in enumerate(self.HINT_PRIORITY)}
+            all_det_labels: set = set()
+            for dets in per_view_detections:
+                for det in (dets or []):
+                    canon = self._normalize_label(str(det.label))
+                    if canon:
+                        all_det_labels.add(canon)
+            for hint_label, _ in hint_votes.most_common():
+                hint_canon = self._normalize_label(hint_label)
+                if hint_canon and hint_canon in all_det_labels:
+                    return hint_label, "hint_tiebreak", {label: int(count) for label, count in hint_votes.items()}
+
+            # When no hint matches YOLO detections, still prefer the strongest
+            # hint over weak / absent YOLO consensus
+            if fallback_strategy in ("coverage_conf_fallback", "no_consensus"):
+                for hint_label, _ in hint_votes.most_common():
+                    hint_canon = self._normalize_label(hint_label)
+                    if hint_canon:
+                        return hint_label, "hint_override", {label: int(count) for label, count in hint_votes.items()}
+
         return fallback_label, fallback_strategy, {label: int(count) for label, count in hint_votes.items()}
 
     def _select_detection_for_view(
         self,
         detections: List[Any],
         consensus_label: Optional[str],
+        hint_label: Optional[str] = None,
     ) -> Tuple[Optional[Any], bool, str]:
         """
         Select final detection for a view.
@@ -850,10 +904,26 @@ class MultiViewPipeline:
             det_label = str(det.label)
             det_canonical = self._normalize_label(det_label) or det_label
             if det_canonical == consensus_canonical:
-                matching.append(det)
+                conf = float(getattr(det, "confidence", 0.0))
+                if conf >= self.MIN_SELECTION_CONFIDENCE:
+                    matching.append(det)
         if matching:
             best = max(matching, key=lambda det: float(getattr(det, "confidence", 0.0)))
             return best, False, "consensus_match"
+
+        # ── Hint-aware fallback ──
+        # If no consensus match, check if a hint-matching detection exists.
+        if hint_label:
+            hint_canonical = self._normalize_label(str(hint_label)) or str(hint_label)
+            hint_matching = [
+                det for det in detections
+                if (self._normalize_label(str(det.label)) or str(det.label)) == hint_canonical
+                and float(getattr(det, "confidence", 0.0)) >= self.MIN_SELECTION_CONFIDENCE
+            ]
+            if hint_matching:
+                best_hint = max(hint_matching, key=lambda det: float(getattr(det, "confidence", 0.0)))
+                return best_hint, False, "hint_match"
+
         return detections[0], True, "fallback_top1"
 
     @staticmethod
@@ -868,10 +938,7 @@ class MultiViewPipeline:
         if width <= 0 or height <= 0:
             return None
         x1, y1, x2, y2 = [int(v) for v in bbox]
-        x1 = max(0, min(width, x1))
-        y1 = max(0, min(height, y1))
-        x2 = max(0, min(width, x2))
-        y2 = max(0, min(height, y2))
+        x1, y1, x2, y2 = clip_bbox((x1, y1, x2, y2), width, height)
         if x2 <= x1 or y2 <= y1:
             return None
 
@@ -993,10 +1060,7 @@ class MultiViewPipeline:
             provisional_label = str(provisional_det.label)
             w, h = pil_img.size
             x1, y1, x2, y2 = provisional_det.bbox
-            x1 = max(0, min(w, x1))
-            y1 = max(0, min(h, y1))
-            x2 = max(0, min(w, x2))
-            y2 = max(0, min(h, y2))
+            x1, y1, x2, y2 = clip_bbox((x1, y1, x2, y2), w, h)
             if x2 > x1 and y2 > y1:
                 raw_bbox = (int(x1), int(y1), int(x2), int(y2))
                 has_valid_bbox = True
@@ -1164,6 +1228,110 @@ class MultiViewPipeline:
             stage1_ms_float,
         )
 
+        # ── Florence OD Fallback (per-view) ──────────────────────────
+        florence_od_payload: Dict[str, Any] = {"triggered": False, "reason": "not_checked"}
+        florence_od_ms = 0.0
+        if not early_exit_event.is_set() and getattr(settings, "FLORENCE_OD_FALLBACK_ENABLED", True):
+            should_run, trigger_reason = should_run_florence_od()
+            if should_run:
+                florence_od_start = time.perf_counter()
+                try:
+                    florence_enriched = self.florence.detect_and_describe(pil_img)
+                    arbiter_result = arbitrate(detections, florence_enriched, stage1_extraction)
+                    florence_od_ms = (time.perf_counter() - florence_od_start) * 1000.0
+
+                    if arbiter_result.winner_source == "florence":
+                        provisional_label = arbiter_result.final_label
+                        # Inject a synthetic detection so _select_detection_for_view
+                        # can find the arbiter-corrected label among candidates.
+                        synthetic_det = YoloDetection(
+                            label=arbiter_result.final_label,
+                            confidence=max(arbiter_result.final_confidence, 0.5),
+                            bbox=arbiter_result.final_bbox,
+                        )
+                        detections.insert(0, synthetic_det)
+                        logger.debug(
+                            "PP2_ARBITER_INJECTION request_id=%s view=%d injected_label=%s conf=%.4f",
+                            request_id, view_index, arbiter_result.final_label,
+                            max(arbiter_result.final_confidence, 0.5),
+                        )
+                        # Re-crop and re-run OCR-first with the corrected label
+                        ax1, ay1, ax2, ay2 = arbiter_result.final_bbox
+                        iw, ih = pil_img.size
+                        ax1, ay1 = max(0, ax1), max(0, ay1)
+                        ax2, ay2 = min(iw, ax2), min(ih, ay2)
+                        if ax2 > ax1 and ay2 > ay1:
+                            padded = self._apply_bbox_padding(
+                                (ax1, ay1, ax2, ay2),
+                                image_size=(iw, ih),
+                                pad_ratio=pad_ratio,
+                            ) or (ax1, ay1, ax2, ay2)
+                            stage1_crop = pil_img.crop(padded)
+                            stage1_extraction = self._call_ocr_first_once(
+                                crop=stage1_crop,
+                                canonical_label=provisional_label,
+                                request_id=request_id,
+                                item_id=item_id,
+                                view_index=view_index,
+                            )
+                        # Re-infer hint with updated data
+                        canonical_hint, hint_signals = self._infer_canonical_hint_with_signals(
+                            caption=stage1_extraction.get("caption", ""),
+                            ocr_text=stage1_extraction.get("ocr_text", ""),
+                            grounded_features=stage1_extraction.get("grounded_features", {}),
+                        )
+
+                    florence_od_payload = {
+                        "triggered": True,
+                        "reason": trigger_reason,
+                        "winner_source": arbiter_result.winner_source,
+                        "florence_detections": arbiter_result.florence_detections,
+                        "arbiter_metadata": arbiter_result.metadata,
+                        "florence_od_ms": round(florence_od_ms, 2),
+                    }
+                except Exception as exc:
+                    florence_od_ms = (time.perf_counter() - florence_od_start) * 1000.0
+                    logger.warning(
+                        "PP2_FLORENCE_OD_FALLBACK_ERROR request_id=%s view=%d: %s",
+                        request_id, view_index, exc,
+                    )
+                    florence_od_payload = {
+                        "triggered": True,
+                        "reason": trigger_reason,
+                        "error": str(exc),
+                        "florence_od_ms": round(florence_od_ms, 2),
+                    }
+            else:
+                florence_od_payload = {"triggered": False, "reason": trigger_reason}
+
+        # Store Florence OD metadata in the extraction's raw dict
+        raw_ext = stage1_extraction.get("raw", {}) if isinstance(stage1_extraction, dict) else {}
+        if not isinstance(raw_ext, dict):
+            raw_ext = {}
+        raw_ext["florence_od_fallback"] = florence_od_payload
+        if florence_od_payload.get("winner_source") == "florence":
+            raw_ext["detection_source"] = "florence_override"
+        elif detections:
+            raw_ext["detection_source"] = "yolo"
+        else:
+            raw_ext["detection_source"] = "none"
+        stage1_extraction["raw"] = raw_ext
+
+        # Adopt Florence OD caption when extraction caption is empty
+        ext_caption = str(stage1_extraction.get("caption", "") or "").strip()
+        if not ext_caption and florence_od_payload.get("triggered"):
+            od_dets = florence_od_payload.get("florence_detections") or []
+            for od_det in od_dets:
+                od_cap = str(od_det.get("caption", "") or "").strip()
+                if od_cap:
+                    stage1_extraction["caption"] = od_cap
+                    raw_ext["od_caption_adopted"] = True
+                    logger.info(
+                        "PP2_OD_CAPTION_ADOPTED request_id=%s view=%d caption=%r",
+                        request_id, view_index, od_cap[:80],
+                    )
+                    break
+
         stage1_vector: Optional[List[float]] = None
         stage1_vector_dim: Optional[int] = None
         stage1_skipped = False
@@ -1174,8 +1342,15 @@ class MultiViewPipeline:
         else:
             try:
                 vec = self.dino.embed_128(stage1_crop)
-                stage1_vector = [float(v) for v in list(vec)]
-                stage1_vector_dim = len(stage1_vector)
+                arr = np.asarray(vec, dtype=np.float32)
+                if np.isnan(arr).any() or np.isinf(arr).any() or np.allclose(arr, 0):
+                    logger.warning(
+                        "PP2_STAGE1_EMBEDDING_INVALID request_id=%s item_id=%s view=%d — NaN/Inf/zeros",
+                        request_id, item_id, view_index,
+                    )
+                else:
+                    stage1_vector = [float(v) for v in list(vec)]
+                    stage1_vector_dim = len(stage1_vector)
             except Exception:
                 logger.exception(
                     "PP2_STAGE1_EMBEDDING_FAILED request_id=%s item_id=%s view=%d",
@@ -1197,6 +1372,7 @@ class MultiViewPipeline:
             "detections": detections,
             "stage1_extraction": stage1_extraction,
             "canonical_hint": canonical_hint,
+            "hint_signals": hint_signals,
             "florence_stage1_ms": stage1_ms_float,
             "stage1_vector": stage1_vector,
             "stage1_vector_dim": stage1_vector_dim,
@@ -1322,6 +1498,7 @@ class MultiViewPipeline:
         crop_by_index: Dict[int, Image.Image] = {}
         canonical_label_by_index: Dict[int, str] = {}
         canonical_hint_by_index: Dict[int, Optional[str]] = {}
+        hint_signals_by_index: Dict[int, Dict[str, Any]] = {}
         stage1_ms_by_index: Dict[int, float] = {}
         florence_stage1_total_ms = 0.0
         early_exit_event = threading.Event()
@@ -1489,6 +1666,7 @@ class MultiViewPipeline:
         # 2. Cross-view consensus (hint-first, then YOLO fallback)
         per_view_detections = [entry["detections"] for entry in view_inputs]
         hint_list = [entry.get("canonical_hint") for entry in view_inputs]
+        hint_signals_list = [entry.get("hint_signals") or {} for entry in view_inputs]
         top1_votes = [
             self._normalize_label(str(dets[0].label)) or str(dets[0].label)
             for dets in per_view_detections
@@ -1497,6 +1675,7 @@ class MultiViewPipeline:
         consensus_label, consensus_strategy, hint_votes = self._choose_consensus_label_with_hints(
             per_view_detections,
             hint_list,
+            hint_signals_list=hint_signals_list,
         )
         logger.debug(
             "PP2_LABEL_CONSENSUS top1_votes=%s hint_votes=%s chosen_label=%s strategy=%s",
@@ -1525,9 +1704,12 @@ class MultiViewPipeline:
                 pil_img = Image.new("RGB", (1, 1), color=(0, 0, 0))
             detections = entry.get("detections", [])
             canonical_hint_by_index[i] = entry.get("canonical_hint")
+            hint_signals_by_index[i] = entry.get("hint_signals") or {}
             stage1_ms_by_index[i] = float(entry.get("florence_stage1_ms", 0.0) or 0.0)
 
-            selected_det, label_outlier, selection_mode = self._select_detection_for_view(detections, consensus_label)
+            selected_det, label_outlier, selection_mode = self._select_detection_for_view(
+                detections, consensus_label, hint_label=canonical_hint_by_index.get(i),
+            )
             label_outliers[i] = label_outlier
 
             candidates = []
@@ -1622,6 +1804,7 @@ class MultiViewPipeline:
             # E. Build Stage-1 Result Object (placeholder extraction, real extraction deferred)
             stage1_nonempty = self._is_stage1_nonempty(stage1_extraction)
             stage1_failed = self._is_florence_failed(stage1_extraction)
+            view_status = "skipped_early_exit" if bool(entry.get("stage1_skipped")) else "processed"
             per_view_results.append(PP2PerViewResult(
                 view_index=i,
                 filename=filename,
@@ -1653,7 +1836,8 @@ class MultiViewPipeline:
                     vector_preview=[float(v) for v in vector[:8]],
                     vector_id=f"{item_id}_view_{i}"
                 ),
-                quality_score=quality
+                quality_score=quality,
+                status=view_status,
             ))
             per_view_ms.append(float(entry.get("view_elapsed_ms", 0.0) or 0.0))
 
@@ -1680,7 +1864,79 @@ class MultiViewPipeline:
                 )
 
             if reasons:
-                dropped_reasons_by_index[idx] = "; ".join(reasons)
+                # ── Hint-based rescue ──────────────────────────────────
+                # If this view's Florence caption hint matches the consensus
+                # label, the YOLO mis-classification should not drop it.
+                view_hint = canonical_hint_by_index.get(idx)
+                view_hint_canonical = self._normalize_label(view_hint) if view_hint else None
+                view_hint_signals = hint_signals_by_index.get(idx, {})
+                caption_hit = bool(view_hint_signals.get("caption_hit", False))
+                ocr_hit = bool(view_hint_signals.get("ocr_hit", False))
+                feature_hit = bool(view_hint_signals.get("feature_hit", False))
+                if (
+                    consensus_canonical
+                    and view_hint_canonical == consensus_canonical
+                    and (caption_hit or ocr_hit or feature_hit)
+                ):
+                    logger.info(
+                        "PP2_HINT_RESCUE request_id=%s item_id=%s view=%d hint=%s consensus=%s reasons=%s — rescued by hint",
+                        trace_request_id, item_id, idx, view_hint, consensus_canonical,
+                        "; ".join(reasons),
+                    )
+                    # Override the per_view_result detection to use consensus label
+                    # so downstream verification treats this view as eligible.
+                    old_result = per_view_results[idx]
+                    per_view_results[idx] = PP2PerViewResult(
+                        view_index=old_result.view_index,
+                        filename=old_result.filename,
+                        detection=PP2PerViewDetection(
+                            bbox=old_result.detection.bbox,
+                            cls_name=consensus_label,
+                            confidence=old_result.detection.confidence,
+                            selected_by="hint_rescue",
+                            outlier_view=False,
+                            candidates=old_result.detection.candidates,
+                        ),
+                        extraction=old_result.extraction,
+                        embedding=old_result.embedding,
+                        quality_score=old_result.quality_score,
+                        status=old_result.status,
+                    )
+                    label_outliers[idx] = False
+                else:
+                    # ── consensus_force rescue ──────────────────────────
+                    # When consensus used hint_strong_override and this view
+                    # has no contradicting hint (hint is None), re-label to
+                    # consensus rather than drop.
+                    if (
+                        consensus_strategy == "hint_strong_override"
+                        and view_hint is None
+                    ):
+                        logger.info(
+                            "PP2_CONSENSUS_FORCE request_id=%s item_id=%s view=%d consensus=%s reasons=%s — force-relabeled (no contradicting hint)",
+                            trace_request_id, item_id, idx, consensus_canonical,
+                            "; ".join(reasons),
+                        )
+                        old_result = per_view_results[idx]
+                        per_view_results[idx] = PP2PerViewResult(
+                            view_index=old_result.view_index,
+                            filename=old_result.filename,
+                            detection=PP2PerViewDetection(
+                                bbox=old_result.detection.bbox,
+                                cls_name=consensus_label,
+                                confidence=old_result.detection.confidence,
+                                selected_by="consensus_force",
+                                outlier_view=False,
+                                candidates=old_result.detection.candidates,
+                            ),
+                            extraction=old_result.extraction,
+                            embedding=old_result.embedding,
+                            quality_score=old_result.quality_score,
+                            status=old_result.status,
+                        )
+                        label_outliers[idx] = False
+                    else:
+                        dropped_reasons_by_index[idx] = "; ".join(reasons)
 
         eligible_indices = sorted(
             idx for idx in range(len(per_view_results)) if idx not in dropped_reasons_by_index
@@ -1779,6 +2035,7 @@ class MultiViewPipeline:
             embedding_variants_by_index=embedding_variants_by_index,
             request_id=trace_request_id,
             item_id=item_id,
+            canonical_hints=canonical_hint_by_index,
         )
         verification_payload = verification.model_dump()
         verification_payload["used_views"] = used_views if len(used_views) == 2 else []

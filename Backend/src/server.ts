@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import os from 'os';
 import { createApp } from './app';
 import { connectDB } from './config/db';
 import { initializeFirebaseAdmin } from './config/firebaseAdmin';
@@ -40,6 +41,49 @@ if (missingEnvVars.length > 0) {
 // Server configuration
 const PORT = process.env.PORT || 5001;
 
+const isPreferredNetworkInterface = (name: string): boolean => {
+  const normalized = name.toLowerCase();
+
+  if (
+    normalized.includes('vmware') ||
+    normalized.includes('virtualbox') ||
+    normalized.includes('hyper-v') ||
+    normalized.includes('veth') ||
+    normalized.includes('docker') ||
+    normalized.includes('wsl') ||
+    normalized.includes('loopback')
+  ) {
+    return false;
+  }
+
+  return normalized.includes('wi-fi') || normalized.includes('wifi') || normalized.includes('wireless') || normalized.includes('ethernet');
+};
+
+const getLocalIpv4 = (): string | null => {
+  const interfaces = os.networkInterfaces();
+  const fallbackAddresses: string[] = [];
+
+  for (const [name, addresses] of Object.entries(interfaces)) {
+    if (!addresses) continue;
+
+    for (const address of addresses) {
+      const family = typeof address.family === 'string' ? address.family : address.family === 4 ? 'IPv4' : 'IPv6';
+
+      if (family !== 'IPv4' || address.internal) {
+        continue;
+      }
+
+      if (isPreferredNetworkInterface(name)) {
+        return address.address;
+      }
+
+      fallbackAddresses.push(address.address);
+    }
+  }
+
+  return fallbackAddresses[0] || null;
+};
+
 /**
  * Start the server
  */
@@ -58,13 +102,19 @@ const startServer = async (): Promise<void> => {
 
     // Start listening on all network interfaces (0.0.0.0) for mobile access
     app.listen(PORT, '0.0.0.0', () => {
+      const localIpv4 = getLocalIpv4();
+
       console.log(`\n✅ Server is running on port ${PORT}`);
       console.log(`📍 API Base URL: http://localhost:${PORT}/api`);
       console.log(`🏥 Health Check: http://localhost:${PORT}/health\n`);
 
       if (process.env.NODE_ENV === 'development') {
         console.log('🔧 Running in DEVELOPMENT mode');
-        console.log(`📱 Mobile Access: http://172.20.10.2:${PORT}/api\n`);
+        if (localIpv4) {
+          console.log(`📱 Mobile Access: http://${localIpv4}:${PORT}/api\n`);
+        } else {
+          console.log('📱 Mobile Access: unable to detect local IPv4 address\n');
+        }
       }
     });
   } catch (error) {

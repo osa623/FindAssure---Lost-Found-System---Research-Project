@@ -34,28 +34,51 @@ export interface LocationDetail {
   hall_name?: string | null;
 }
 
+export interface SelectedImageAsset {
+  uri: string;
+  fileName?: string | null;
+  mimeType?: string | null;
+}
+
+export interface FounderImagePreAnalysisResponse {
+  status: 'ok' | 'manual_fallback';
+  preAnalysisToken?: string | null;
+  analysisMode?: 'pp1' | 'pp2';
+  detectedCategory?: string | null;
+  detectedDescription?: string | null;
+  detectedColor?: string | null;
+  searchable?: boolean;
+  message?: string;
+}
+
 export interface FoundItem {
   _id: string;
   imageUrl: string;
   category: string;
   description: string;
-  questions: string[];        // Questions chosen by founder (5 questions)
-  founderAnswers: string[];   // Founder's text answers - DO NOT SHOW to owner in UI
-  founderContact: FounderContact;
+  questions: string[];
+  founderAnswers?: string[];
+  founderContact?: FounderContact;
   found_location: LocationDetail[]; // Array of location details
   status: 'available' | 'pending_verification' | 'claimed';
+  imageMatch?: {
+    score: number;
+  } | null;
   createdAt: string;
   updatedAt?: string;
 }
 
 export interface LostItem {
   _id: string;
-  userId: string;
+  ownerId: string;
   category: string;
   description: string;
-  location: string;
-  confidenceLevel: number;
-  status: 'searching' | 'found' | 'closed';
+  owner_location: string;
+  floor_id?: string | null;
+  hall_name?: string | null;
+  owner_location_confidence_stage: number;
+  matchedFoundItemIds?: string[];
+  ownerImageUrl?: string | null;
   createdAt: string;
   updatedAt?: string;
 }
@@ -123,15 +146,33 @@ export type RootStackParamList = {
   
   // Founder Flow
   ReportFoundStart: undefined;
-  ReportFoundDetails: { imageUri: string };
-  ReportFoundQuestions: { imageUri: string; category: string; description: string };
-  ReportFoundAnswers: { imageUri: string; category: string; description: string; selectedQuestions: string[] };
+  ReportFoundDetails: {
+    images: SelectedImageAsset[];
+    preAnalysisToken?: string | null;
+    category?: string;
+    description?: string;
+    analysisMessage?: string;
+  };
+  ReportFoundQuestions: {
+    images: SelectedImageAsset[];
+    preAnalysisToken?: string | null;
+    category: string;
+    description: string;
+  };
+  ReportFoundAnswers: {
+    images: SelectedImageAsset[];
+    preAnalysisToken?: string | null;
+    category: string;
+    description: string;
+    selectedQuestions: string[];
+  };
   ReportFoundLocation: { 
-    imageUri: string; 
-    category: string; 
-    description: string; 
-    selectedQuestions: string[]; 
-    founderAnswers: string[] 
+    images: SelectedImageAsset[];
+    preAnalysisToken?: string | null;
+    category: string;
+    description: string;
+    selectedQuestions: string[];
+    founderAnswers: string[];
   };
   ReportFoundSuccess: undefined;
   

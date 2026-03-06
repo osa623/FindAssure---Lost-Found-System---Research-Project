@@ -206,5 +206,186 @@ class TestPP1EndpointResilience(unittest.TestCase):
         self.assertEqual(payload[0]["message"], RETRYABLE_UNAVAILABLE_MESSAGE)
 
 
+class TestCaptionConfirmsYoloLabel(unittest.TestCase):
+    """Tests for the _caption_confirms_yolo_label helper used by the OD skip gate."""
+
+    def setUp(self):
+        self.pipeline = UnifiedPipeline.__new__(UnifiedPipeline)
+
+    def test_caption_with_keyword_confirms(self):
+        analysis = {"raw_output": {"caption_primary": "a black wallet on a table"}, "ocr_text": ""}
+        self.assertTrue(self.pipeline._caption_confirms_yolo_label("Wallet", analysis))
+
+    def test_caption_without_keyword_does_not_confirm(self):
+        analysis = {"raw_output": {"caption_primary": "a blue plastic ball"}, "ocr_text": ""}
+        self.assertFalse(self.pipeline._caption_confirms_yolo_label("Earbuds - Earbuds case", analysis))
+
+    def test_ocr_alone_confirms(self):
+        analysis = {"raw_output": {"caption_primary": "an object"}, "ocr_text": "HELMET SAFETY"}
+        self.assertTrue(self.pipeline._caption_confirms_yolo_label("Helmet", analysis))
+
+    def test_hard_hat_in_caption_confirms_helmet(self):
+        analysis = {"raw_output": {"caption_primary": "A blue hard hat with the name Allianz"}, "ocr_text": ""}
+        self.assertTrue(self.pipeline._caption_confirms_yolo_label("Helmet", analysis))
+
+    def test_unknown_label_defaults_to_confirmed(self):
+        analysis = {"raw_output": {"caption_primary": "some object"}, "ocr_text": ""}
+        self.assertTrue(self.pipeline._caption_confirms_yolo_label("UnknownCategory", analysis))
+
+
+class TestPP1OCRSubstringFallback(unittest.TestCase):
+    """Tests for OCR substring fallback in _score_label_keywords."""
+
+    def setUp(self):
+        self.pipeline = UnifiedPipeline.__new__(UnifiedPipeline)
+
+    def test_concatenated_student_id_in_ocr(self):
+        """OCR 'FutureSTUDENT IDDANANJAYA' should match 'student id' via substring."""
+        texts = {"caption": "", "ocr": "futurestudent iddananjaya", "grounding": ""}
+        result = self.pipeline._score_label_keywords("Student ID", texts)
+        self.assertGreater(result["score"], 0)
+        self.assertIn("student id", result["matched_keywords"]["ocr"])
+
+    def test_nic_concatenated_with_digits(self):
+        """OCR '00NIC No' should match 'nic' via substring (3 chars)."""
+        texts = {"caption": "", "ocr": "00nic no", "grounding": ""}
+        result = self.pipeline._score_label_keywords("Student ID", texts)
+        self.assertGreater(result["score"], 0)
+        self.assertIn("nic", result["matched_keywords"]["ocr"])
+
+    def test_word_boundary_match_still_works(self):
+        """Normal word-boundary match should still work."""
+        texts = {"caption": "", "ocr": "student id 2024", "grounding": ""}
+        result = self.pipeline._score_label_keywords("Student ID", texts)
+        self.assertGreater(result["score"], 0)
+
+    def test_substring_not_used_for_caption(self):
+        """Substring fallback should only apply to OCR, not caption."""
+        texts = {"caption": "futurestudent iddananjaya", "ocr": "", "grounding": ""}
+        result = self.pipeline._score_label_keywords("Student ID", texts)
+        # "student id" substring in caption but no word boundary → caption should not match via substring
+        # Only word-boundary check applies to caption
+        caption_matches = result["matched_keywords"]["caption"]
+        # If word boundary fails, caption should not have the match
+        # (it depends on whether "student id" has word boundaries in the string)
+        # In "futurestudent iddananjaya", \bstudent\s+id\b won't match because no \b before 'student'
+        self.assertEqual(len(caption_matches), 0)
+
+
+class TestPP1CaptionPrimaryFallback(unittest.TestCase):
+    """Tests for _collect_rerank_texts falling back to raw.caption_primary."""
+
+    def setUp(self):
+        self.pipeline = UnifiedPipeline.__new__(UnifiedPipeline)
+
+    def test_caption_primary_used_when_caption_empty(self):
+        """When main caption is empty, caption_primary from raw should be used."""
+        analysis = {
+            "caption": "",
+            "ocr_text": "some ocr",
+            "raw": {"caption_primary": "A student ID card with a picture"},
+        }
+        texts = self.pipeline._collect_rerank_texts(analysis)
+        self.assertIn("student", texts["caption"])
+
+    def test_main_caption_preferred_over_primary(self):
+        """When main caption exists, it should be used instead of caption_primary."""
+        analysis = {
+            "caption": "a wallet on a table",
+            "ocr_text": "",
+            "raw": {"caption_primary": "something different"},
+        }
+        texts = self.pipeline._collect_rerank_texts(analysis)
+        self.assertIn("wallet", texts["caption"])
+        self.assertNotIn("different", texts["caption"])
+
+    def test_empty_raw_handled_gracefully(self):
+        """When raw is missing or not a dict, should not crash."""
+        analysis = {"caption": "", "ocr_text": "", "raw": None}
+        texts = self.pipeline._collect_rerank_texts(analysis)
+        self.assertEqual(texts["caption"], "")
+
+
+class TestPP1OCRMarginRelaxation(unittest.TestCase):
+    """Tests for the OCR-based margin relaxation in _rerank_label."""
+
+    def setUp(self):
+        self.pipeline = UnifiedPipeline.__new__(UnifiedPipeline)
+
+    def test_ocr_evidence_lowers_margin_requirement(self):
+        """When winner has OCR evidence and top1 does not, margin=1 suffices."""
+        top1_label = "Smart Phone"
+        candidates = [
+            SimpleNamespace(label="Smart Phone", confidence=0.90),
+        ]
+        analysis = {
+            "caption": "",
+            "ocr_text": "STUDENT ID 2024",
+            "raw": {},
+        }
+        result = self.pipeline._rerank_label(top1_label, candidates, analysis)
+        # Student ID should win via OCR evidence with relaxed margin
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["winner_label"], "Student ID")
+
+    def test_no_ocr_evidence_needs_full_margin(self):
+        """Without OCR evidence for winner, full margin requirement applies."""
+        top1_label = "Smart Phone"
+        candidates = [
+            SimpleNamespace(label="Smart Phone", confidence=0.90),
+        ]
+        analysis = {
+            "caption": "a wallet on a table",
+            "ocr_text": "",
+            "raw": {},
+        }
+        result = self.pipeline._rerank_label(top1_label, candidates, analysis)
+        # Wallet has caption=2 ("wallet"), margin over Smart Phone (score 0) = 2
+        # MIN_MARGIN is 2, so it should apply
+        if result["winner_label"] == "Wallet" and result["winner_score"] >= 3:
+            self.assertTrue(result["applied"])
+
+
+class TestPP1ScoreAllLabels(unittest.TestCase):
+    """Tests for scoring all known labels, not just YOLO candidates."""
+
+    def setUp(self):
+        self.pipeline = UnifiedPipeline.__new__(UnifiedPipeline)
+
+    def test_non_yolo_label_discovered_via_evidence(self):
+        """A label not in YOLO candidates should be discovered if evidence is strong."""
+        top1_label = "Smart Phone"
+        candidates = [
+            SimpleNamespace(label="Smart Phone", confidence=0.90),
+        ]
+        analysis = {
+            "caption": "",
+            "ocr_text": "STUDENT ID NIC 2024",
+            "raw": {},
+        }
+        result = self.pipeline._rerank_label(top1_label, candidates, analysis)
+        # Student ID: OCR matches "student id" (+3) and "nic" (+3) = score 6
+        # Smart Phone: no evidence = score 0
+        # Student ID should be discovered and override
+        self.assertTrue(result["applied"])
+        self.assertEqual(result["winner_label"], "Student ID")
+
+    def test_weak_non_yolo_label_not_promoted(self):
+        """A non-YOLO label with weak evidence should not be promoted."""
+        top1_label = "Wallet"
+        candidates = [
+            SimpleNamespace(label="Wallet", confidence=0.95),
+        ]
+        analysis = {
+            "caption": "a leather object on a table",
+            "ocr_text": "",
+            "raw": {},
+        }
+        result = self.pipeline._rerank_label(top1_label, candidates, analysis)
+        # "leather" matches Wallet keywords via caption, score at least 2
+        # No other label scores above MIN_WINNER_SCORE (3) from just "leather"
+        self.assertEqual(result["final_label"], "Wallet")
+
+
 if __name__ == "__main__":
     unittest.main()

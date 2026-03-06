@@ -176,3 +176,149 @@ class TestFaissService(unittest.TestCase):
             vec_a = np.array([1, 0])
             vec_b = np.array([1, 0])
             self.assertEqual(mock_service.compute_similarity(vec_a, vec_b), 1.0)
+
+
+class TestCategoryGroupAssignment(unittest.TestCase):
+    """Verify all categories resolve to the correct verification group."""
+
+    def test_power_bank_resolves_to_angle_hard(self):
+        group = MultiViewVerifier._resolve_category_group("Power Bank")
+        self.assertEqual(group, MultiViewVerifier.GROUP_ANGLE_HARD)
+
+    def test_headphone_resolves_to_angle_hard(self):
+        group = MultiViewVerifier._resolve_category_group("Headphone")
+        self.assertEqual(group, MultiViewVerifier.GROUP_ANGLE_HARD)
+
+    def test_helmet_still_angle_hard(self):
+        group = MultiViewVerifier._resolve_category_group("Helmet")
+        self.assertEqual(group, MultiViewVerifier.GROUP_ANGLE_HARD)
+
+    def test_wallet_still_texture_rich(self):
+        group = MultiViewVerifier._resolve_category_group("Wallet")
+        self.assertEqual(group, MultiViewVerifier.GROUP_TEXTURE_RICH)
+
+    def test_student_id_still_small_ambiguous(self):
+        group = MultiViewVerifier._resolve_category_group("Student ID")
+        self.assertEqual(group, MultiViewVerifier.GROUP_SMALL_AMBIGUOUS)
+
+    def test_unknown_category_returns_none(self):
+        group = MultiViewVerifier._resolve_category_group("Unknown Thing")
+        self.assertIsNone(group)
+
+    def test_angle_hard_margin_is_012(self):
+        self.assertAlmostEqual(
+            MultiViewVerifier.GROUP_NEAR_MISS_MARGIN[MultiViewVerifier.GROUP_ANGLE_HARD],
+            0.12,
+        )
+
+
+class TestColorRescue(unittest.TestCase):
+    """Tests for the _pair_color_consistent helper and color rescue paths."""
+
+    def setUp(self):
+        self.mock_geo_service = MagicMock()
+        self.verifier = MultiViewVerifier(geometric_service=self.mock_geo_service)
+
+    def _make_view(self, cls_name, color=None, ocr_text=""):
+        return PP2PerViewResult(
+            view_index=0,
+            filename="test.jpg",
+            detection=PP2PerViewDetection(bbox=(0, 0, 10, 10), cls_name=cls_name, confidence=0.9),
+            extraction=PP2PerViewExtraction(
+                caption="a thing",
+                ocr_text=ocr_text,
+                grounded_features={"color": color} if color else {},
+            ),
+            embedding=PP2PerViewEmbedding(dim=2, vector_preview=[1.0, 0.0], vector_id="v1"),
+            quality_score=0.9,
+        )
+
+    def test_pair_color_consistent_same_color(self):
+        views = [self._make_view("Helmet", "red"), self._make_view("Helmet", "dark red")]
+        result = self.verifier._pair_color_consistent(views, 0, 1)
+        self.assertTrue(result)
+
+    def test_pair_color_consistent_different_colors(self):
+        views = [self._make_view("Helmet", "red"), self._make_view("Helmet", "blue")]
+        result = self.verifier._pair_color_consistent(views, 0, 1)
+        self.assertFalse(result)
+
+    def test_pair_color_consistent_missing_color(self):
+        views = [self._make_view("Helmet", None), self._make_view("Helmet", "red")]
+        result = self.verifier._pair_color_consistent(views, 0, 1)
+        self.assertFalse(result)
+
+    def test_2view_angle_hard_color_rescue(self):
+        """Color rescue should pass a 2-view angle_hard near-miss when colors match."""
+        self.mock_geo_service.verify_pair.return_value = {"passed": False}
+        mock_faiss = MagicMock()
+        # FAISS below threshold so OR-logic won't trigger via FAISS
+        mock_faiss.pair_similarity.return_value = 0.40
+
+        views = [self._make_view("Helmet", "red"), self._make_view("Helmet", "dark red")]
+        # Craft vectors with cosine ~0.55 (below 0.60 threshold, above 0.48 floor with margin 0.12)
+        # cos(56.6 deg) ~ 0.55
+        v0 = np.array([1.0, 0.0], dtype=np.float32)
+        v1 = np.array([np.cos(np.radians(56.6)), np.sin(np.radians(56.6))], dtype=np.float32)
+
+        result = self.verifier.verify(
+            per_view_results=views,
+            vectors=[v0, v1],
+            crops=["c1", "c2"],
+            faiss_service=mock_faiss,
+            decision_category="Helmet",
+        )
+        # Should pass via color rescue
+        self.assertTrue(result.passed)
+        self.assertTrue(any("color" in r.lower() for r in result.failure_reasons))
+
+
+class TestHintRescue3View(unittest.TestCase):
+    """Tests for hint rescue in 3-view angle_hard paths."""
+
+    def setUp(self):
+        self.mock_geo_service = MagicMock()
+        self.mock_geo_service.verify_pair.return_value = {"passed": False}
+        self.verifier = MultiViewVerifier(geometric_service=self.mock_geo_service)
+
+    def _make_view(self, cls_name, ocr_text=""):
+        return PP2PerViewResult(
+            view_index=0,
+            filename="test.jpg",
+            detection=PP2PerViewDetection(bbox=(0, 0, 10, 10), cls_name=cls_name, confidence=0.9),
+            extraction=PP2PerViewExtraction(caption="a thing", ocr_text=ocr_text, grounded_features={}),
+            embedding=PP2PerViewEmbedding(dim=2, vector_preview=[1.0, 0.0], vector_id="v1"),
+            quality_score=0.9,
+        )
+
+    def test_3view_angle_hard_near_miss_hint_rescue(self):
+        """3-view: 2 strong + 1 near-miss should pass via hint rescue when OCR rescue fails."""
+        mock_faiss = MagicMock()
+
+        views = [self._make_view("Power Bank"), self._make_view("Power Bank"), self._make_view("Power Bank")]
+
+        # angle_hard 3-view thresholds: cos_th=0.55, faiss_th=0.55, margin=0.12
+        # OR-logic: cos >= 0.55 OR faiss >= 0.55 => strong
+        # Need pair 1-2 with BOTH cos < 0.55 AND faiss < 0.55 => near_miss (if >= 0.55 - 0.12 = 0.43)
+        # v0 along x-axis, v1 at +30deg, v2 at -30deg
+        # => cos(v0,v1)=cos(v0,v2)=0.866 (strong), cos(v1,v2)=0.50 (near_miss)
+        v0 = np.array([1.0, 0.0], dtype=np.float32)
+        v1 = np.array([np.cos(np.radians(30)), np.sin(np.radians(30))], dtype=np.float32)
+        v2 = np.array([np.cos(np.radians(-30)), np.sin(np.radians(-30))], dtype=np.float32)
+
+        # FAISS returns values that keep pair 1-2 below threshold
+        def faiss_sim(a, b):
+            cos = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
+            return cos
+        mock_faiss.pair_similarity.side_effect = faiss_sim
+
+        result = self.verifier.verify(
+            per_view_results=views,
+            vectors=[v0, v1, v2],
+            crops=["c0", "c1", "c2"],
+            faiss_service=mock_faiss,
+            decision_category="Power Bank",
+            canonical_hints={0: "Power Bank", 1: "Power Bank", 2: "Power Bank"},
+        )
+        self.assertTrue(result.passed)
+        self.assertTrue(any("hint" in r.lower() for r in result.failure_reasons))

@@ -24,10 +24,16 @@ type ReportFoundDetailsRouteProp = RouteProp<RootStackParamList, 'ReportFoundDet
 const ReportFoundDetailsScreen = () => {
   const navigation = useNavigation<ReportFoundDetailsNavigationProp>();
   const route = useRoute<ReportFoundDetailsRouteProp>();
-  const { imageUri } = route.params;
+  const {
+    images,
+    preAnalysisToken,
+    category: prefilledCategory,
+    description: prefilledDescription,
+    analysisMessage,
+  } = route.params;
 
- const [category, setCategory] = useState<string>(ITEM_CATEGORIES[0]);
-  const [description, setDescription] = useState('');
+  const [category, setCategory] = useState<string>(prefilledCategory || ITEM_CATEGORIES[0]);
+  const [description, setDescription] = useState(prefilledDescription || '');
 
   const handleConfirm = () => {
     if (!category || !description.trim()) {
@@ -36,8 +42,9 @@ const ReportFoundDetailsScreen = () => {
     }
 
     navigation.navigate('ReportFoundQuestions', {
-      imageUri,
-      category: category,
+      images,
+      preAnalysisToken,
+      category,
       description: description.trim(),
     });
   };
@@ -49,7 +56,27 @@ const ReportFoundDetailsScreen = () => {
     >
       <ScrollView style={styles.scrollView}>
         <View style={styles.content}>
-          <Image source={{ uri: imageUri }} style={styles.image} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageStrip}>
+            {images.map((image, index) => (
+              <Image
+                key={`${image.uri}-${index}`}
+                source={{ uri: image.uri }}
+                style={[styles.image, index > 0 && styles.imageWithGap]}
+                resizeMode="contain"
+              />
+            ))}
+          </ScrollView>
+          <Text style={styles.imageHelperText}>
+            {images.length === 1
+              ? 'Basic analysis will run on this single image.'
+              : 'Enhanced multi-view analysis will run across these images.'}
+          </Text>
+
+          {analysisMessage ? (
+            <View style={styles.analysisMessageBox}>
+              <Text style={styles.analysisMessageText}>{analysisMessage}</Text>
+            </View>
+          ) : null}
 
           <View style={styles.form}>
             <View style={styles.inputGroup}>
@@ -72,7 +99,7 @@ const ReportFoundDetailsScreen = () => {
                 textAlignVertical="top"
               />
               <Text style={styles.helperText}>
-                Please add more specific item details
+                Please add specific details. The manual category/description stay public, while pipeline detections stay internal.
               </Text>
             </View>
 
@@ -100,11 +127,34 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   image: {
-    width: '100%',
+    width: 220,
     height: 250,
     borderRadius: 12,
     backgroundColor: '#E0E0E0',
+  },
+  imageWithGap: {
+    marginLeft: 12,
+  },
+  imageStrip: {
+    marginBottom: 10,
+  },
+  imageHelperText: {
+    fontSize: 13,
+    color: '#666666',
     marginBottom: 20,
+  },
+  analysisMessageBox: {
+    backgroundColor: '#E8F4FD',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4A90E2',
+  },
+  analysisMessageText: {
+    fontSize: 13,
+    color: '#335A78',
+    lineHeight: 18,
   },
   form: {
     backgroundColor: '#FFFFFF',

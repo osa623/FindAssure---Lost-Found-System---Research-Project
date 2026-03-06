@@ -1,6 +1,8 @@
 import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
 import { Request } from 'express';
+import fs from 'fs';
+import path from 'path';
 
 // Configure Cloudinary
 cloudinary.config({
@@ -11,6 +13,9 @@ cloudinary.config({
 
 // Configure Multer for memory storage (we'll upload to Cloudinary from memory)
 const storage = multer.memoryStorage();
+const tempUploadDir = path.join(process.cwd(), 'tmp', 'item-images');
+
+fs.mkdirSync(tempUploadDir, { recursive: true });
 
 const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
   // Accept images only
@@ -26,6 +31,24 @@ export const upload = multer({
   fileFilter: fileFilter,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB max file size
+  },
+});
+
+const tempDiskStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, tempUploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const extension = path.extname(file.originalname || '') || '.jpg';
+    cb(null, `${Date.now()}-${Math.round(Math.random() * 1_000_000_000)}${extension}`);
+  },
+});
+
+export const uploadTempImages = multer({
+  storage: tempDiskStorage,
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024,
   },
 });
 

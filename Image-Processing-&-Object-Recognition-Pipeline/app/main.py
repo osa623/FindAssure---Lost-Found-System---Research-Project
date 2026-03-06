@@ -8,11 +8,15 @@ import logging
 
 from app.core.lifespan import lifespan
 from app.routers import pp2_router
+from app.routers import search_router
+from app.services.storage_service import StorageService
+from app.core.db import get_db
 
 app = FastAPI(title="Vision Core Backend", lifespan=lifespan)
 logger = logging.getLogger(__name__)
 
 app.include_router(pp2_router.router, prefix="/pp2", tags=["Phase 2"])
+app.include_router(search_router.router, prefix="/search", tags=["Search"])
 
 # Configure CORS
 app.add_middleware(
@@ -63,6 +67,18 @@ async def analyze_pp1(
         except Exception:
             logger.exception("PP1 processing failed unexpectedly.")
             raise HTTPException(status_code=500, detail="PP1 processing failed")
+
+        # Persist PP1 results to DB
+        try:
+            db = next(get_db())
+            storage = StorageService(db)
+            for item in result if isinstance(result, list) else [result]:
+                item_id = item.get("item_id")
+                if item_id and item.get("status") in ("accepted", "accepted_degraded"):
+                    storage.store_pp1_result(item_id, item)
+        except Exception:
+            logger.warning("PP1 storage failed (non-fatal)", exc_info=True)
+
         return result
         
     finally:
@@ -71,7 +87,7 @@ async def analyze_pp1(
             try:
                 os.remove(temp_path)
             except Exception:
-                pass
+                logger.debug("Failed to remove temp file %s", temp_path, exc_info=True)
 
 @app.post("/analyze")
 async def analyze_legacy(files: List[UploadFile] = File(...)):

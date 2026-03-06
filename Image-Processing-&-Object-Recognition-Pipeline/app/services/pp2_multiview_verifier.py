@@ -7,6 +7,7 @@ from app.schemas.pp2_schemas import PP2PerViewResult, PP2VerificationResult
 from app.services.pp2_geometric_verifier import GeometricVerifier
 from app.config.settings import settings
 from app.domain.category_specs import canonicalize_label
+from app.domain.color_utils import normalize_color as _shared_normalize_color, bucket_color as _shared_bucket_color
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ class MultiViewVerifier:
     FALLBACK_THRESHOLD_ENTRY = "legacy_pp2_sim_threshold_fallback"
 
     CATEGORY_GROUPS: Dict[str, Set[str]] = {
-        GROUP_ANGLE_HARD: {"Helmet", "Smart Phone", "Laptop", "Earbuds - Earbuds case", "Earbuds"},
+        GROUP_ANGLE_HARD: {"Helmet", "Smart Phone", "Laptop", "Earbuds - Earbuds case", "Earbuds", "Power Bank", "Headphone"},
         GROUP_TEXTURE_RICH: {"Wallet", "Handbag", "Backpack", "Umbrella"},
         GROUP_SMALL_AMBIGUOUS: {"Keys", "Student ID", "Laptop Charger"},
     }
@@ -66,7 +67,7 @@ class MultiViewVerifier:
     }
 
     GROUP_NEAR_MISS_MARGIN: Dict[str, float] = {
-        GROUP_ANGLE_HARD: 0.10,
+        GROUP_ANGLE_HARD: 0.12,
         GROUP_TEXTURE_RICH: 0.08,
         GROUP_SMALL_AMBIGUOUS: 0.05,
     }
@@ -116,23 +117,11 @@ class MultiViewVerifier:
 
     @staticmethod
     def _normalize_color(s: str) -> str:
-        if not isinstance(s, str):
-            return ""
-        normalized = s.lower().strip()
-        normalized = normalized.replace("-", " ").replace("_", " ")
-        normalized = normalized.replace("grey", "gray")
-        normalized = re.sub(r"\s+", " ", normalized).strip()
-        if normalized in {"", "unknown", "n/a", "none"}:
-            return ""
-        return normalized
+        return _shared_normalize_color(s)
 
     @staticmethod
     def _bucket_color(normalized: str) -> str:
-        if not normalized:
-            return ""
-        if normalized in {"black", "dark gray", "charcoal"}:
-            return "dark"
-        return normalized
+        return _shared_bucket_color(normalized)
 
     def semantic_consistency_checks(self, per_view: List[PP2PerViewResult]) -> List[str]:
         """
@@ -187,6 +176,16 @@ class MultiViewVerifier:
                 return group
         return None
 
+    # Map (mode, group) → settings attribute for per-group threshold overrides
+    _SETTINGS_GROUP_OVERRIDE_MAP: Dict[Tuple[str, str], str] = {
+        ("two_view", "angle_hard"): "PP2_VERIFIER_TWO_VIEW_ANGLE_HARD",
+        ("two_view", "texture_rich"): "PP2_VERIFIER_TWO_VIEW_TEXTURE_RICH",
+        ("two_view", "small_ambiguous"): "PP2_VERIFIER_TWO_VIEW_SMALL_AMBIGUOUS",
+        ("three_view", "angle_hard"): "PP2_VERIFIER_THREE_VIEW_ANGLE_HARD",
+        ("three_view", "texture_rich"): "PP2_VERIFIER_THREE_VIEW_TEXTURE_RICH",
+        ("three_view", "small_ambiguous"): "PP2_VERIFIER_THREE_VIEW_SMALL_AMBIGUOUS",
+    }
+
     @classmethod
     def _resolve_group_threshold_from_setting(
         cls,
@@ -198,6 +197,14 @@ class MultiViewVerifier:
             return None
         if group not in cls.MODE_GROUP_DEFAULTS[mode]:
             return None
+
+        # Check for a direct per-group override from settings
+        attr_name = cls._SETTINGS_GROUP_OVERRIDE_MAP.get((mode, group))
+        if attr_name is not None:
+            direct = getattr(settings, attr_name, None)
+            if direct is not None:
+                return cls._clamp01(float(direct))
+
         if base_override is None:
             return cls._clamp01(float(cls.MODE_GROUP_DEFAULTS[mode][group]))
         offset = float(cls.GROUP_OFFSETS_FROM_TEXTURE_BASE.get(group, 0.0))
@@ -378,7 +385,7 @@ class MultiViewVerifier:
         return bool(cos_score >= cos_th and faiss_score >= faiss_th)
 
     @classmethod
-    def _is_angle_hard_ocr_rescue_eligible(
+    def _is_ocr_rescue_eligible(
         cls,
         cos_score: float,
         cos_th: float,
@@ -388,11 +395,28 @@ class MultiViewVerifier:
         group: Optional[str],
     ) -> bool:
         return bool(
-            group == cls.GROUP_ANGLE_HARD
+            group in (cls.GROUP_ANGLE_HARD, cls.GROUP_SMALL_AMBIGUOUS)
             and cos_score >= (cos_th - margin)
             and strong_overlap
             and labels_match_consensus
         )
+
+    def _pair_color_consistent(
+        self,
+        per_view_results: List[PP2PerViewResult],
+        i: int,
+        j: int,
+    ) -> bool:
+        """Check if two views share a consistent bucketed color."""
+        if i >= len(per_view_results) or j >= len(per_view_results):
+            return False
+        color_i = per_view_results[i].extraction.grounded_features.get("color")
+        color_j = per_view_results[j].extraction.grounded_features.get("color")
+        if not color_i or not color_j:
+            return False
+        bucket_i = self._bucket_color(self._normalize_color(str(color_i)))
+        bucket_j = self._bucket_color(self._normalize_color(str(color_j)))
+        return bool(bucket_i and bucket_j and bucket_i == bucket_j)
 
     @staticmethod
     def _cosine_pair(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
@@ -616,6 +640,7 @@ class MultiViewVerifier:
         embedding_variants_by_index: Optional[Dict[int, Dict[str, np.ndarray]]] = None,
         request_id: Optional[str] = None,
         item_id: Optional[str] = None,
+        canonical_hints: Optional[Dict[int, str]] = None,
     ) -> PP2VerificationResult:
         n = len(vectors)
         all_pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
@@ -685,7 +710,7 @@ class MultiViewVerifier:
                 j,
                 canonical_category,
             )
-            ocr_rescue_eligible = self._is_angle_hard_ocr_rescue_eligible(
+            ocr_rescue_eligible = self._is_ocr_rescue_eligible(
                 cos_score=float(metrics.get("selected_cosine", 0.0)),
                 cos_th=cos_th,
                 margin=near_miss_margin,
@@ -857,7 +882,7 @@ class MultiViewVerifier:
                 pair_key[0],
                 pair_key[1],
             )
-            ocr_rescue_eligible = self._is_angle_hard_ocr_rescue_eligible(
+            ocr_rescue_eligible = self._is_ocr_rescue_eligible(
                 cos_score=pair_cos,
                 cos_th=cos_th,
                 margin=near_miss_margin,
@@ -888,6 +913,37 @@ class MultiViewVerifier:
                         f"(ocr_rescue=true, pair={pair_name}, ocr_overlap_tokens={ocr_overlap_tokens}, "
                         f"labels_match_consensus={labels_match_consensus}, {mode_context})."
                     )
+                elif (
+                    pair_cos >= cos_th - near_miss_margin
+                    and labels_match_consensus
+                    and canonical_hints
+                    and any(
+                        v and canonicalize_label(v) == canonical_category
+                        for k, v in canonical_hints.items()
+                        if k in (pair_key[0], pair_key[1])
+                    )
+                ):
+                    passed = True
+                    pair_info["hint_rescue_applied"] = True
+                    reasons.append(
+                        "Salvaged: angle_hard near-miss accepted via hint agreement "
+                        f"(pair={pair_name}, selected_cos={pair_cos:.2f}, "
+                        f"floor={cos_th - near_miss_margin:.2f}, "
+                        f"labels_match_consensus={labels_match_consensus}, {mode_context})."
+                    )
+                elif (
+                    pair_cos >= cos_th - near_miss_margin
+                    and labels_match_consensus
+                    and self._pair_color_consistent(per_view_results, pair_key[0], pair_key[1])
+                ):
+                    passed = True
+                    pair_info["color_rescue_applied"] = True
+                    reasons.append(
+                        "Salvaged: angle_hard near-miss accepted via color consistency "
+                        f"(pair={pair_name}, selected_cos={pair_cos:.2f}, "
+                        f"floor={cos_th - near_miss_margin:.2f}, "
+                        f"labels_match_consensus={labels_match_consensus}, {mode_context})."
+                    )
                 else:
                     passed = False
                     reasons.append(
@@ -905,12 +961,40 @@ class MultiViewVerifier:
                     f"(pair={pair_name}, selected_cos={pair_cos:.2f}, required_cos>={near_miss_floor:.2f}, "
                     f"labels_match_consensus={labels_match_consensus}, has_any_ocr={has_any_ocr}, {mode_context})."
                 )
-            else:
-                passed = False
+            elif ocr_rescue_eligible:
+                passed = True
+                pair_info["ocr_rescue_applied"] = True
+                pair_similarity_metrics[pair_name]["ocr_rescue_applied"] = True
+                if pair_name in geo_scores:
+                    geo_scores[pair_name]["ocr_rescue_applied"] = True
                 reasons.append(
-                    "Not salvaged: two-view mode requires the eligible pair to pass strong thresholds "
-                    f"({_pair_decision_context(pair_name, pair_info)})."
+                    "Salvaged: non-angle-hard near-miss accepted via OCR rescue "
+                    f"(group={group_label}, pair={pair_name}, {mode_context})."
                 )
+            else:
+                _hint_unanimous = False
+                if canonical_hints and labels_match_consensus:
+                    _hint_vals = [
+                        v for k, v in canonical_hints.items()
+                        if k in (pair_key[0], pair_key[1]) and v
+                    ]
+                    if _hint_vals and all(
+                        canonicalize_label(h) == canonical_category for h in _hint_vals
+                    ):
+                        _hint_unanimous = True
+                if pair_cos >= near_miss_floor and labels_match_consensus and _hint_unanimous:
+                    passed = True
+                    reasons.append(
+                        "Salvaged: two-view near-miss accepted via unanimous hint agreement "
+                        f"(pair={pair_name}, selected_cos={pair_cos:.2f}, required_cos>={near_miss_floor:.2f}, "
+                        f"{mode_context})."
+                    )
+                else:
+                    passed = False
+                    reasons.append(
+                        "Not salvaged: two-view mode requires the eligible pair to pass strong thresholds "
+                        f"({_pair_decision_context(pair_name, pair_info)})."
+                    )
         elif three_view_mode:
             weak_count = len(weak_pairs)
             near_count = len(near_miss_pairs)
@@ -928,7 +1012,7 @@ class MultiViewVerifier:
                     near_j,
                     canonical_category,
                 )
-                near_ocr_rescue = self._is_angle_hard_ocr_rescue_eligible(
+                near_ocr_rescue = self._is_ocr_rescue_eligible(
                     cos_score=float(near_info.get("selected_cosine", 0.0)),
                     cos_th=cos_th,
                     margin=near_miss_margin,
@@ -949,6 +1033,31 @@ class MultiViewVerifier:
                             "Salvaged: angle_hard near-miss accepted via OCR consistency "
                             f"(ocr_rescue=true, pair={near_pair}, "
                             f"ocr_overlap_tokens={near_info.get('ocr_overlap_tokens', [])}, {mode_context})."
+                        )
+                    elif (
+                        near_labels_match
+                        and canonical_hints
+                        and any(
+                            v and canonicalize_label(v) == canonical_category
+                            for k, v in canonical_hints.items()
+                            if k in (near_i, near_j)
+                        )
+                    ):
+                        passed = True
+                        near_info["hint_rescue_applied"] = True
+                        reasons.append(
+                            "Salvaged: angle_hard 3-view near-miss accepted via hint agreement "
+                            f"(pair={near_pair}, {mode_context})."
+                        )
+                    elif (
+                        near_labels_match
+                        and self._pair_color_consistent(per_view_results, near_i, near_j)
+                    ):
+                        passed = True
+                        near_info["color_rescue_applied"] = True
+                        reasons.append(
+                            "Salvaged: angle_hard 3-view near-miss accepted via color consistency "
+                            f"(pair={near_pair}, {mode_context})."
                         )
                     else:
                         passed = False
@@ -999,7 +1108,7 @@ class MultiViewVerifier:
                         weak_j,
                         canonical_category,
                     )
-                    weak_ocr_rescue = self._is_angle_hard_ocr_rescue_eligible(
+                    weak_ocr_rescue = self._is_ocr_rescue_eligible(
                         cos_score=float(weak_info.get("selected_cosine", 0.0)),
                         cos_th=cos_th,
                         margin=near_miss_margin,
@@ -1019,6 +1128,31 @@ class MultiViewVerifier:
                             "Salvaged: angle_hard weak pair accepted via OCR consistency "
                             f"(ocr_rescue=true, weak_pair={weak_pair}, "
                             f"ocr_overlap_tokens={weak_info.get('ocr_overlap_tokens', [])}, threshold_entry={threshold_entry})."
+                        )
+                    elif (
+                        weak_labels_match
+                        and canonical_hints
+                        and any(
+                            v and canonicalize_label(v) == canonical_category
+                            for k, v in canonical_hints.items()
+                            if k in (weak_i, weak_j)
+                        )
+                    ):
+                        passed = True
+                        weak_info["hint_rescue_applied"] = True
+                        reasons.append(
+                            "Salvaged: angle_hard 3-view weak pair accepted via hint agreement "
+                            f"(weak_pair={weak_pair}, {mode_context})."
+                        )
+                    elif (
+                        weak_labels_match
+                        and self._pair_color_consistent(per_view_results, weak_i, weak_j)
+                    ):
+                        passed = True
+                        weak_info["color_rescue_applied"] = True
+                        reasons.append(
+                            "Salvaged: angle_hard 3-view weak pair accepted via color consistency "
+                            f"(weak_pair={weak_pair}, {mode_context})."
                         )
                     else:
                         passed = False

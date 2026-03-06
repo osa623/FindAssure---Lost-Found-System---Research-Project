@@ -1,7 +1,6 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { 
-  initializeAuth,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
@@ -10,10 +9,12 @@ import {
   getAuth,
   Auth,
   User as FirebaseUser,
-  browserLocalPersistence
+  initializeAuth,
+  getReactNativePersistence,
 } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axiosClient from '../api/axiosClient';
+import { API_CONFIG, BASE_URL, HEALTH_CHECK_URL } from '../config/api.config';
 
 // Firebase configuration
 const firebaseConfig = {
@@ -29,8 +30,21 @@ const firebaseConfig = {
 // Initialize Firebase
 const app: FirebaseApp = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Auth
-const auth: Auth = getAuth(app);
+const getOrInitializeAuth = (): Auth => {
+  try {
+    return initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage),
+    });
+  } catch (error: any) {
+    if (error?.code === 'auth/already-initialized') {
+      return getAuth(app);
+    }
+
+    throw error;
+  }
+};
+
+const auth: Auth = getOrInitializeAuth();
 
 interface User {
   _id: string;
@@ -94,6 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log('🔄 Auto-refreshing token...');
         const newToken = await firebaseUser.getIdToken(true); // Force refresh
         setToken(newToken);
+        (global as any).authToken = newToken;
         axiosClient.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
         console.log('✅ Token refreshed successfully');
       } catch (error) {
@@ -119,6 +134,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const idToken = await firebaseUser.getIdToken(forceRefresh);
       setToken(idToken);
+      (global as any).authToken = idToken;
 
       // Set token for axios requests
       axiosClient.defaults.headers.common['Authorization'] = `Bearer ${idToken}`;
@@ -141,7 +157,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw error;
       }
 
-      console.error('Error syncing with backend:', error);
+      console.error('Error syncing with backend:', {
+        baseUrl: BASE_URL,
+        healthCheckUrl: HEALTH_CHECK_URL,
+        backendHost: API_CONFIG.BACKEND_HOST,
+        code: error?.code,
+        message: error?.message,
+        status: error?.response?.status,
+        data: error?.response?.data,
+      });
       
       // Provide helpful error messages
       if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
@@ -186,6 +210,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         setUser(null);
         setToken(null);
+        (global as any).authToken = null;
+        delete axiosClient.defaults.headers.common['Authorization'];
         clearTokenRefresh();
       }
     });
@@ -209,6 +235,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 2. Get token
       const idToken = await userCredential.user.getIdToken();
       setToken(idToken);
+      (global as any).authToken = idToken;
 
       // 3. Register with backend (creates MongoDB user with all details)
       const registerData: any = { email, name };
@@ -321,6 +348,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await firebaseSignOut(auth);
       setUser(null);
       setToken(null);
+      (global as any).authToken = null;
+      delete axiosClient.defaults.headers.common['Authorization'];
     } catch (error: any) {
       console.error('Sign out error:', error);
       throw new Error(error.message || 'Sign out failed');
