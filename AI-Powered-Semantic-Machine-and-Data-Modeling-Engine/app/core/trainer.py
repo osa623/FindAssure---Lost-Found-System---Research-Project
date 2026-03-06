@@ -14,6 +14,8 @@ import os
 import pickle
 from datetime import datetime
 from typing import Optional
+from bson import ObjectId
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -159,12 +161,21 @@ async def build_training_dataset(
 
     found_attr_map: dict[str, dict] = {}
     if all_found_ids:
-        cursor = db.found_items.find(
-            {"item_id": {"$in": list(all_found_ids)}},
+        found_items_col = db[settings.FOUND_ITEMS_COLLECTION]
+        found_ids_list = list(all_found_ids)
+        object_ids = [ObjectId(fid) for fid in found_ids_list if ObjectId.is_valid(fid)]
+        cursor = found_items_col.find(
+            {
+                "$or": [
+                    {"item_id": {"$in": found_ids_list}},
+                    {"_id": {"$in": object_ids}},
+                ]
+            },
             {"item_id": 1, "extracted_attributes_json": 1, "description": 1}
         )
         async for doc in cursor:
-            found_attr_map[doc["item_id"]] = doc
+            doc_id = str(doc.get("item_id") or doc.get("_id"))
+            found_attr_map[doc_id] = doc
 
     # Step 5: Build labeled rows
     rows = []

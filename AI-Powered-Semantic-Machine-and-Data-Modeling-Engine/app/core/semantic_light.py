@@ -73,7 +73,7 @@ class LightweightSemanticEngine:
                     "category": item_data['category'],
                     "created_at": datetime.utcnow()
                 }
-                await db.found_items.insert_one(document)
+                await db[settings.FOUND_ITEMS_COLLECTION].insert_one(document)
                 print(f"Saved to MongoDB: {item_data['id']}")
         except Exception as e:
             print(f"MongoDB save failed: {e}")
@@ -88,7 +88,7 @@ class LightweightSemanticEngine:
                 print("MongoDB connection is None")
                 return
             
-            cursor = db.found_items.find().sort("created_at", 1)
+            cursor = db[settings.FOUND_ITEMS_COLLECTION].find({"status": {"$ne": "claimed"}}).sort("_id", 1)
             items = await cursor.to_list(length=None)
             
             if not items:
@@ -101,7 +101,7 @@ class LightweightSemanticEngine:
             self.items_metadata = []
             for item in items:
                 self.items_metadata.append({
-                    "id": item['item_id'],
+                    "id": item.get('item_id') or str(item.get('_id', '')),
                     "description": item['description'],
                     "category": item['category']
                 })

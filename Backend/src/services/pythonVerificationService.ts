@@ -4,6 +4,8 @@ import { Readable } from 'stream';
 
 // Python backend URL
 const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:5000';
+const PYTHON_SUSPICION_BACKEND_URL =
+  process.env.PYTHON_SUSPICION_BACKEND_URL || 'http://127.0.0.1:5005';
 
 export interface PythonVerificationAnswer {
   question_id: number;
@@ -60,26 +62,55 @@ export const verifyOwnershipWithPython = async (
   videoFiles: Map<string, VideoFile>
 ): Promise<PythonVerificationResponse> => {
   try {
-    const formData = new FormData();
+    const buildFormData = (): FormData => {
+      const formData = new FormData();
 
-    // Add JSON data as a string in the 'data' field
-    formData.append('data', JSON.stringify(data));
+      // Add JSON data as a string in the 'data' field
+      formData.append('data', JSON.stringify(data));
 
-    // Add video files with their corresponding keys
-    for (const [videoKey, file] of videoFiles.entries()) {
-      const stream = Readable.from(file.buffer);
-      formData.append(videoKey, stream, {
-        filename: file.originalname,
-        contentType: file.mimetype,
+      // Add video files with their corresponding keys
+      for (const [videoKey, file] of videoFiles.entries()) {
+        const stream = Readable.from(file.buffer);
+        formData.append(videoKey, stream, {
+          filename: file.originalname,
+          contentType: file.mimetype,
+        });
+      }
+
+      return formData;
+    };
+
+    // Build separate payloads because multipart streams are single-use.
+    const verifyFormData = buildFormData();
+    const suspicionFormData = buildFormData();
+
+    // Fire-and-forget: trigger suspicion analysis in parallel and do not block owner verification.
+    void axios
+      .post(
+        `${PYTHON_SUSPICION_BACKEND_URL}/analyze-suspicion`,
+        suspicionFormData,
+        {
+          headers: {
+            ...suspicionFormData.getHeaders(),
+          },
+          timeout: 120000,
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        }
+      )
+      .catch((suspicionError: any) => {
+        console.error(
+          'Error calling suspicion analysis service:',
+          suspicionError?.response?.data || suspicionError?.message || suspicionError
+        );
       });
-    }
 
     const response = await axios.post<PythonVerificationResponse>(
       `${PYTHON_BACKEND_URL}/verify-owner`,
-      formData,
+      verifyFormData,
       {
         headers: {
-          ...formData.getHeaders(),
+          ...verifyFormData.getHeaders(),
         },
         timeout: 120000, // 120 seconds timeout for video processing and AI analysis
         maxBodyLength: Infinity,

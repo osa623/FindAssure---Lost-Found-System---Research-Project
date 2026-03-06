@@ -5,20 +5,24 @@ import json
 import uuid
 import tempfile
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pymongo import MongoClient
+from bson import ObjectId
+import requests
 
 from video_to_text import extract_text
 from local_nlp_checker import LocalNLP
 from gemini_batch_checker import gemini_batch_similarity
 
 MONGO_URI = os.getenv("MONGO_URI")
+SUSPICION_SERVICE_URL = os.getenv("PYTHON_SUSPICION_BACKEND_URL", "http://127.0.0.1:5005")
 
 client = MongoClient(MONGO_URI)
-db = client["fraud_detection_db"]
+db = client["findassure"]
 
-owners_col = db["owners"]
+users_col = db["users"]
 verification_col = db["verification_sessions"]
 behavior_col = db["behavior_sessions"]
 app = Flask(__name__)
@@ -55,22 +59,80 @@ def extract_face_score(face_confidence_result):
         return None
     return sum(overalls) / len(overalls)
 
+def build_user_selector(owner_id):
+    owner_id = str(owner_id).strip()
+    selectors = [{"firebaseUid": owner_id}]
+    if ObjectId.is_valid(owner_id):
+        selectors.append({"_id": ObjectId(owner_id)})
+    return {"$or": selectors}
+
 
 def touch_owner(owner_id):
-    owners_col.update_one(
-        {"owner_id": owner_id},
-        {
-            "$setOnInsert": {
-                "created_at": datetime.utcnow(),
-                "risk_level": "low",
-                "flags": []
-            },
-            "$set": {
-                "last_seen_at": datetime.utcnow()
-            }
-        },
-        upsert=True
+    selector = build_user_selector(owner_id)
+    now = datetime.utcnow()
+
+    result = users_col.update_one(
+        selector,
+        {"$set": {"last_seen_at": now}}
     )
+
+    if result.matched_count == 0:
+        print(f"Warning: user not found for owner_id={owner_id}. Skipping user profile update.")
+        return
+
+    users_col.update_one(
+        {**selector, "risk_level": {"$exists": False}},
+        {"$set": {"risk_level": "low"}}
+    )
+    users_col.update_one(
+        {**selector, "flags": {"$exists": False}},
+        {"$set": {"flags": []}}
+    )
+
+
+def trigger_suspicion_async(data, saved_paths):
+    expected_keys = []
+    for a in data.get("answers", []):
+        key = a.get("video_key")
+        if key:
+            expected_keys.append(str(key))
+
+    if not expected_keys:
+        expected_keys = list(saved_paths.keys())
+
+    files_payload = []
+    for key in expected_keys:
+        path = saved_paths.get(key)
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, "rb") as f:
+                content = f.read()
+            files_payload.append((key, (os.path.basename(path), content, "video/mp4")))
+        except Exception as e:
+            print(f"Warning: failed preparing suspicion upload for {key}: {e}")
+
+    if not files_payload:
+        print("Suspicion trigger skipped: no video files to forward.")
+        return
+
+    form_data = {"data": json.dumps(data)}
+
+    def _run():
+        try:
+            r = requests.post(
+                f"{SUSPICION_SERVICE_URL}/analyze-suspicion",
+                data=form_data,
+                files=files_payload,
+                timeout=60
+            )
+            print(f"Suspicion trigger status={r.status_code}")
+            if r.status_code >= 400:
+                print(f"Suspicion service error ({r.status_code}): {r.text}")
+        except Exception as e:
+            print(f"Error calling suspicion analysis service: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 # -----------------------------
@@ -91,6 +153,9 @@ def verify_owner():
         category = data.get("category")
         answers = data.get("answers", [])
 
+        if not owner_id:
+            return jsonify({"error": "owner_id required"}), 400
+
         if not answers:
             return jsonify({"error": "No answers provided"}), 400
 
@@ -107,6 +172,9 @@ def verify_owner():
             path = os.path.join(TMP_DIR, f"{uuid.uuid4().hex}_{file.filename}")
             file.save(path)
             saved_paths[key] = path
+
+        # Trigger behavior analysis in parallel for direct calls to :5000.
+        trigger_suspicion_async(data, saved_paths)
 
         # -----------------------------
         # FACE CONFIDENCE (ANTI-SPOOF)

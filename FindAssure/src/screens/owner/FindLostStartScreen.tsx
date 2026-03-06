@@ -14,7 +14,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { useAuth } from '../../context/AuthContext';
-import { RootStackParamList } from '../../types/models';
+import { RootStackParamList, FoundItem } from '../../types/models';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { CategoryPicker } from '../../components/CategoryPicker';
 import { LocationPicker } from '../../components/LocationPicker';
@@ -51,8 +51,8 @@ const FindLostStartScreen = () => {
     try {
       setLoading(true);
 
-      // Step A: Save the lost request with location details
-      await itemsApi.reportLostItem({
+      // Step A: Save the lost request and trigger backend AI search in parallel
+      const lostRequestResponse = await itemsApi.reportLostItem({
         category: category,
         description: description.trim(),
         owner_location: location.location,
@@ -61,8 +61,14 @@ const FindLostStartScreen = () => {
         owner_location_confidence_stage: confidenceStage,
       });
 
-      // Step B: Get all found items
-      const foundItems = await itemsApi.getFoundItems();
+      // Step B: Use backend-filtered IDs. Fallback to full list only if AI step failed.
+      let foundItems: FoundItem[] = [];
+      const matchedIds = lostRequestResponse.aiSearch?.matchedFoundItemIds || [];
+      if (lostRequestResponse.aiSearch?.status === 'ok') {
+        foundItems = await itemsApi.getFoundItemsByIds(matchedIds);
+      } else {
+        foundItems = await itemsApi.getFoundItems();
+      }
 
       navigation.navigate('FindLostResults', { foundItems });
     } catch (error: any) {

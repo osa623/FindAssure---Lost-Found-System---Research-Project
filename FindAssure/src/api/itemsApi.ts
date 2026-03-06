@@ -1,6 +1,17 @@
 import axiosClient from './axiosClient';
 import { FoundItem, LostItem, OwnerAnswerInput, AdminOverview } from '../types/models';
 
+export interface LostItemSearchResponse extends LostItem {
+  aiSearch?: {
+    status: 'ok' | 'failed';
+    total_matches: number;
+    matchedFoundItemIds: string[];
+    query_id?: string;
+    impression_id?: string;
+    detail?: string;
+  };
+}
+
 export const itemsApi = {
   // IMAGE UPLOAD
   
@@ -90,8 +101,8 @@ export const itemsApi = {
     floor_id?: string | null;
     hall_name?: string | null;
     owner_location_confidence_stage: number; // 1: Pretty Sure, 2: Sure, 3: Not Sure
-  }): Promise<LostItem> => {
-    const response = await axiosClient.post<LostItem>('/items/lost', data);
+  }): Promise<LostItemSearchResponse> => {
+    const response = await axiosClient.post<LostItemSearchResponse>('/items/lost', data);
     return response.data;
   },
 
@@ -104,6 +115,13 @@ export const itemsApi = {
   // Get a specific found item by ID
   getFoundItemById: async (id: string): Promise<FoundItem> => {
     const response = await axiosClient.get<FoundItem>(`/items/found/${id}`);
+    return response.data;
+  },
+
+  // Get specific found items by a list of IDs
+  getFoundItemsByIds: async (itemIds: string[]): Promise<FoundItem[]> => {
+    if (!itemIds.length) return [];
+    const response = await axiosClient.post<FoundItem[]>('/items/found/batch', { itemIds });
     return response.data;
   },
 

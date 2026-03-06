@@ -11,9 +11,11 @@ from app.core.scorer import inference_rerank
 from app.core.impression_logger import ImpressionLogger
 from app.core.normalizer import LostTextNormalizer
 from app.core.database import get_database
+from app.config import settings
 import logging
 import uuid
 from datetime import datetime
+from bson import ObjectId
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -522,10 +524,11 @@ async def _collect_embedding_pair(db, payload: FeedbackRequest):
         return
 
     # 2. Get the found description
-    found_doc = await db.found_items.find_one(
-        {"item_id": payload.found_id},
-        {"description": 1, "category": 1},
-    )
+    found_items_col = db[settings.FOUND_ITEMS_COLLECTION]
+    query = {"item_id": payload.found_id}
+    if ObjectId.is_valid(payload.found_id):
+        query = {"$or": [{"item_id": payload.found_id}, {"_id": ObjectId(payload.found_id)}]}
+    found_doc = await found_items_col.find_one(query, {"description": 1, "category": 1})
     if not found_doc or not found_doc.get("description"):
         logger.debug("Embedding pair: no found description — skipping")
         return

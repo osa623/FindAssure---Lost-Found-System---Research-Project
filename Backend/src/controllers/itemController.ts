@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import * as itemService from '../services/itemService';
 import * as verificationService from '../services/verificationService';
 import * as geminiService from '../services/geminiService';
+import * as pythonSearchService from '../services/pythonSearchService';
+import * as locationMatchService from '../services/locationMatchService';
 import { User } from '../models/User';
 
 /**
@@ -155,21 +157,128 @@ export const createLostRequest = async (
       return;
     }
 
-    if (owner_location_confidence_stage < 1 || owner_location_confidence_stage > 3) {
-      res.status(400).json({ message: 'Confidence stage must be 1 (Pretty Sure), 2 (Sure), or 3 (Not Sure)' });
+    if (owner_location_confidence_stage < 1 || owner_location_confidence_stage > 4) {
+      res.status(400).json({ message: 'Confidence stage must be 1, 2, 3, or 4' });
       return;
     }
 
-    const lostRequest = await itemService.createLostRequest(req.user.id, {
-      category,
-      description,
-      owner_location,
-      floor_id,
-      hall_name,
-      owner_location_confidence_stage,
-    });
+    const [lostRequestResult, pythonSearchResult] = await Promise.allSettled([
+      itemService.createLostRequest(req.user.id, {
+        category,
+        description,
+        owner_location,
+        floor_id,
+        hall_name,
+        owner_location_confidence_stage,
+      }),
+      pythonSearchService.searchLostItemWithPython({
+        text: description,
+        category,
+        limit: 10,
+        session_id: req.user.id,
+      }),
+    ]);
 
-    res.status(201).json(lostRequest);
+    if (lostRequestResult.status === 'rejected') {
+      throw lostRequestResult.reason;
+    }
+
+    let lostRequest = lostRequestResult.value;
+    let aiSearch: {
+      status: 'ok' | 'failed';
+      total_matches: number;
+      matchedFoundItemIds: string[];
+      location_match?: boolean;
+      matched_locations?: string[];
+      query_id?: string;
+      impression_id?: string;
+      detail?: string;
+    };
+
+    if (pythonSearchResult.status === 'fulfilled') {
+      const aiMatchedItems = await itemService.resolveAiMatchesToFoundItems(
+        pythonSearchResult.value.matches || []
+      );
+
+      const categaryData: locationMatchService.CategoryDataItem[] = aiMatchedItems.map((item) => ({
+        id: item.foundItemId,
+        description_scrore: item.score,
+        found_location: (item.found_location || []).map((loc) => ({
+          location: loc.location,
+          floor_id: loc.floor_id ?? null,
+          hall_name: loc.hall_name ?? null,
+        })),
+      }));
+
+      let finalMatchedFoundItemIds: string[] = aiMatchedItems.map((i) => i.foundItemId);
+      let locationMatchResponse: locationMatchService.FindItemsResponse | null = null;
+
+      if (categaryData.length > 0) {
+        try {
+          locationMatchResponse = await locationMatchService.findItemsByLocation({
+            owner_id: req.user.id,
+            categary_name: category,
+            categary_data: categaryData,
+            description_match_cofidence: 90,
+            owner_location,
+            floor_id: floor_id ?? null,
+            hall_name: hall_name ?? null,
+            owner_location_confidence_stage,
+          });
+
+          const matchedIdsFromLocation = (locationMatchResponse.matched_item_ids || []).map((id) =>
+            String(id)
+          );
+
+          if (matchedIdsFromLocation.length > 0) {
+            const matchedIdSet = new Set(matchedIdsFromLocation);
+            finalMatchedFoundItemIds = finalMatchedFoundItemIds.filter((id) => matchedIdSet.has(id));
+          } else {
+            finalMatchedFoundItemIds = [];
+          }
+        } catch (locationErr: any) {
+          console.error('Location match step failed:', locationErr?.message || locationErr);
+          finalMatchedFoundItemIds = [];
+        }
+      } else {
+        finalMatchedFoundItemIds = [];
+      }
+
+      if (finalMatchedFoundItemIds.length > 0) {
+        const updatedLostRequest = await itemService.updateLostRequestMatches(
+          String(lostRequest._id),
+          finalMatchedFoundItemIds
+        );
+        if (updatedLostRequest) {
+          lostRequest = updatedLostRequest;
+        }
+      }
+
+      aiSearch = {
+        status: 'ok',
+        total_matches: pythonSearchResult.value.total_matches || 0,
+        matchedFoundItemIds: finalMatchedFoundItemIds,
+        location_match: Boolean(locationMatchResponse?.location_match),
+        matched_locations: locationMatchResponse?.matched_locations || [],
+        query_id: pythonSearchResult.value.query_id,
+        impression_id: pythonSearchResult.value.impression_id,
+      };
+    } else {
+      aiSearch = {
+        status: 'failed',
+        total_matches: 0,
+        matchedFoundItemIds: [],
+        detail:
+          pythonSearchResult.reason instanceof Error
+            ? pythonSearchResult.reason.message
+            : 'Python search failed',
+      };
+    }
+
+    res.status(201).json({
+      ...lostRequest.toObject(),
+      aiSearch,
+    });
   } catch (error) {
     next(error);
   }

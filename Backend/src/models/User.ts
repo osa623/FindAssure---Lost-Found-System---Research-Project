@@ -9,6 +9,11 @@ export interface IUser extends Document {
   email: string;
   phone?: string;
   role: UserRole;
+  isSuspended: boolean;
+  suspendedAt?: Date | null;
+  suspendedUntil?: Date | null;
+  suspensionMode?: '3d' | '7d' | 'manual' | null;
+  suspensionReason?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -41,6 +46,28 @@ const userSchema = new Schema<IUser>(
       type: String,
       enum: ['owner', 'admin'],
       default: 'owner',
+    },
+    isSuspended: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    suspendedAt: {
+      type: Date,
+      default: null,
+    },
+    suspendedUntil: {
+      type: Date,
+      default: null,
+    },
+    suspensionMode: {
+      type: String,
+      default: null,
+    },
+    suspensionReason: {
+      type: String,
+      trim: true,
+      default: null,
     },
   },
   {

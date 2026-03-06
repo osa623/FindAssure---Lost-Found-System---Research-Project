@@ -43,6 +43,13 @@ router.get('/users', adminController.getAllUsers);
 router.patch('/users/:id', adminController.updateUser);
 
 /**
+ * @route   PATCH /api/admin/users/:id/suspension
+ * @desc    Suspend or unsuspend a user
+ * @access  Admin only
+ */
+router.patch('/users/:id/suspension', adminController.updateUserSuspension);
+
+/**
  * @route   DELETE /api/admin/users/:id
  * @desc    Delete user from MongoDB and Firebase
  * @access  Admin only

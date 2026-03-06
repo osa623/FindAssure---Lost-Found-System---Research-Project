@@ -40,6 +40,44 @@ class SemanticEngine:
         self.dimension = self.model.get_sentence_embedding_dimension()
         print(f"Model dimension: {self.dimension}")
 
+        # Use Inner Product (IP) index for cosine similarity
+        # Vectors will be normalized, so IP = cosine similarity
+        if os.path.exists(settings.INDEX_PATH):
+            try:
+                print("Loading FAISS index from disk...")
+                self.index = faiss.read_index(settings.INDEX_PATH)
+                print("Index loaded successfully")
+            except Exception:
+                print("Creating fresh FAISS IndexFlatIP (cosine similarity)...")
+                self.index = faiss.IndexFlatIP(self.dimension)
+                # Delete corrupted file
+                try:
+                    os.remove(settings.INDEX_PATH)
+                except Exception:
+                    pass
+        else:
+            print("Initializing new FAISS IndexFlatIP (cosine similarity)...")
+            self.index = faiss.IndexFlatIP(self.dimension)
+
+        # Load or create metadata
+        if os.path.exists(settings.METADATA_PATH):
+            try:
+                print("Loading metadata from cache...")
+                with open(settings.METADATA_PATH, 'rb') as f:
+                    self.items_metadata = pickle.load(f)
+                print(f"Loaded {len(self.items_metadata)} items from cache")
+            except Exception:
+                print("Starting with empty metadata")
+                self.items_metadata = []
+                # Delete corrupted file
+                try:
+                    os.remove(settings.METADATA_PATH)
+                except Exception:
+                    pass
+        else:
+            self.items_metadata = []
+            print("Cache is empty - will load from MongoDB")
+
     def reload_model(self):
         """
         Hot-reload the sentence-transformer model from disk.
@@ -59,45 +97,6 @@ class SemanticEngine:
         except Exception as e:
             print(f"Model reload failed: {e}")
             return False
-        
-        # Use Inner Product (IP) index for cosine similarity
-        # Vectors will be normalized, so IP = cosine similarity
-        if os.path.exists(settings.INDEX_PATH):
-            try:
-                print("Loading FAISS index from disk...")
-                self.index = faiss.read_index(settings.INDEX_PATH)
-                print("Index loaded successfully")
-            except Exception as e:
-                print("Creating fresh FAISS IndexFlatIP (cosine similarity)...")
-                self.index = faiss.IndexFlatIP(self.dimension)  # Inner Product for cosine
-                # Delete corrupted file
-                try:
-                    os.remove(settings.INDEX_PATH)
-                except:
-                    pass
-        else:
-            print("Initializing new FAISS IndexFlatIP (cosine similarity)...")
-            self.index = faiss.IndexFlatIP(self.dimension)  # Better for semantic similarity
-        
-        # Load or create metadata
-        if os.path.exists(settings.METADATA_PATH):
-            try:
-                print("Loading metadata from cache...")
-                with open(settings.METADATA_PATH, 'rb') as f:
-                    self.items_metadata = pickle.load(f)
-                print(f"Loaded {len(self.items_metadata)} items from cache")
-            except Exception as e:
-                print("Starting with empty metadata")
-                self.items_metadata = []
-                # Delete corrupted file
-                try:
-                    os.remove(settings.METADATA_PATH)
-                except:
-                    pass
-        else:
-            self.items_metadata = []
-            if len(self.items_metadata) == 0:
-                print("Cache is empty - will load from MongoDB")
     
     def _save_to_disk(self):
         """Save FAISS index and metadata to disk"""
@@ -166,15 +165,17 @@ class SemanticEngine:
         try:
             db = get_database()
             if db is not None:
+                found_items_col = db[settings.FOUND_ITEMS_COLLECTION]
                 document = {
                     "item_id": item_data['id'],
                     "description": item_data['description'],
                     "category": item_data['category'],
                     "vector": vector.tolist(),  # Store vector for future use
                     "created_at": datetime.utcnow(),
+                    "createdAt": datetime.utcnow(),
                     "index_position": len(self.items_metadata) - 1
                 }
-                await db.found_items.insert_one(document)
+                await found_items_col.insert_one(document)
                 print(f"Saved to MongoDB: {item_data['id']}")
         except Exception as e:
             print(f"MongoDB save failed: {e}")
@@ -204,7 +205,8 @@ class SemanticEngine:
                 print(f"MongoDB not responsive: {ping_error}")
                 return 0
             
-            cursor = db.found_items.find().sort("created_at", 1)
+            found_items_col = db[settings.FOUND_ITEMS_COLLECTION]
+            cursor = found_items_col.find({"status": {"$ne": "claimed"}}).sort("_id", 1)
             items = await cursor.to_list(length=None)
             
             if not items:
@@ -220,15 +222,29 @@ class SemanticEngine:
             # Rebuild index from MongoDB
             for idx, item in enumerate(items):
                 try:
-                    vector = np.array(item['vector'], dtype=np.float32)
+                    description = item.get("description", "")
+                    category = item.get("category", "")
+                    item_id = item.get("item_id") or str(item.get("_id", ""))
+                    if not description or not category or not item_id:
+                        continue
+
+                    if item.get("vector"):
+                        vector = np.array(item["vector"], dtype=np.float32)
+                    else:
+                        # Compatibility path for existing `founditems` docs without embeddings
+                        vector = self.vectorize(description, normalize=False)
+
                     # Normalize vector for cosine similarity
-                    vector = vector / np.linalg.norm(vector)
+                    norm = np.linalg.norm(vector)
+                    if norm == 0:
+                        continue
+                    vector = vector / norm
                     self.index.add(np.array([vector]))
                     
                     self.items_metadata.append({
-                        "id": item['item_id'],
-                        "description": item['description'],
-                        "category": item['category']
+                        "id": item_id,
+                        "description": description,
+                        "category": category
                     })
                 except Exception as item_error:
                     print(f"Failed to load item {idx}: {item_error}")
