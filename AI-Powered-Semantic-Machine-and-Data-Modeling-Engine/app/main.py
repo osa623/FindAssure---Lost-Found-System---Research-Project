@@ -16,6 +16,15 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
+# Add CORS middleware (must be before routes)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.on_event("startup")
 async def startup_event():
     """Startup: Connect to MongoDB, load semantic engine, and initialize AI components."""
@@ -88,15 +97,6 @@ async def shutdown_event():
     logger.info("Shutting down...")
     await close_mongo_connection()
     logger.info("Shutdown complete")
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],  # React ports
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Include API Routes
 app.include_router(routes.router)
