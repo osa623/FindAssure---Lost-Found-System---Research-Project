@@ -4,5 +4,141 @@
   },
   "1": {
     "name": "vec2"
+  },
+  "2": {
+    "item_id": "123babe7-0782-4f56-8540-1d6743d1e7f9",
+    "report_id": "807778bc-4c15-41d0-ab61-2952ced7cb12",
+    "source": "pp1",
+    "label": "Wallet",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "3": {
+    "item_id": "4d0b3218-feb2-45b2-9643-2aca719aa992",
+    "report_id": "7965e440-01e5-4321-8ca0-a398768e5676",
+    "source": "pp1",
+    "label": "Helmet",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "4": {
+    "item_id": "0a2e91d3-d4d1-43c1-9867-74fe4624173b",
+    "report_id": "ea61dc54-8141-4416-b9e6-46b8fe67e2fd",
+    "source": "pp1",
+    "label": "Wallet",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "5": {
+    "item_id": "db9d630c-4769-4078-9c48-276f943217d5",
+    "report_id": "282aa468-af15-46e9-b19e-bc86e4286c78",
+    "source": "pp1",
+    "label": "Smart Phone",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "6": {
+    "item_id": "acba12a7-5d9c-4bc7-9bc4-6d24cddbc725",
+    "report_id": "70294657-d73c-4cbe-80f6-20d22bd1f9b1",
+    "source": "pp1",
+    "label": "Wallet",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "7": {
+    "item_id": "208b1932-d865-4598-af03-200839f34e52",
+    "report_id": "1a995cd7-0e80-46a0-9d20-d379fb3b2a09",
+    "source": "pp1",
+    "label": "Helmet",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "8": {
+    "item_id": "4dd0754f-9cc8-4166-8248-c11f37c440d3",
+    "report_id": "72369930-a955-4860-aebd-16bd67f50147",
+    "source": "pp1",
+    "label": "Helmet",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "9": {
+    "item_id": "9ae418b1-4c81-4512-9dc7-0eb2a01eab63",
+    "report_id": "6039498b-366b-4c70-90d1-8fdeb8670c35",
+    "source": "pp1",
+    "label": "Wallet",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "10": {
+    "item_id": "3d32877b-a7e3-4c67-948a-582e8a9a4dce",
+    "report_id": "8472c96a-44fc-4371-a0e8-35a5120d9cf9",
+    "source": "pp1",
+    "label": "Student ID",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "11": {
+    "item_id": "401bfd40-3282-40de-9f6d-4da36b6ea71a",
+    "report_id": "5453ee0e-8fa4-4786-b1cf-309289389775",
+    "source": "pp1",
+    "label": "Student ID",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "12": {
+    "item_id": "76d3030a-b2d2-4310-aac2-9986d1f55aa5",
+    "report_id": "3b7686fb-bc59-47de-8d3e-7dbec02c060f",
+    "source": "pp1",
+    "label": "Helmet",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "13": {
+    "item_id": "b4230af3-4aa3-4bbf-bfa8-4bed6f4b267a",
+    "report_id": "2b43a7e5-edc9-435c-b304-eb7a206568c0",
+    "source": "pp1",
+    "label": "Helmet",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "14": {
+    "item_id": "dc4522c2-ddd4-415c-8983-15abf47dbe3c",
+    "report_id": "683dd621-8d93-4669-9a95-5d7d67e94c90",
+    "source": "pp1",
+    "label": "Earbuds - Earbuds case",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "15": {
+    "item_id": "671ca2bd-5776-4ca2-9007-7a9d28b62be6",
+    "fused_embedding_id": "671ca2bd-5776-4ca2-9007-7a9d28b62be6_fused",
+    "embedding_id": "671ca2bd-5776-4ca2-9007-7a9d28b62be6_fused",
+    "view_index": null,
+    "best_view_index": 0,
+    "category": "Wallet"
+  },
+  "16": {
+    "item_id": "709ff74f-1978-48f3-a50d-40b74fd4778d",
+    "fused_embedding_id": "709ff74f-1978-48f3-a50d-40b74fd4778d_fused",
+    "embedding_id": "709ff74f-1978-48f3-a50d-40b74fd4778d_fused",
+    "view_index": null,
+    "best_view_index": 0,
+    "category": "Wallet"
+  },
+  "17": {
+    "item_id": "c5f001bd-1011-431b-9fcb-251490e7698e",
+    "report_id": "468fbb09-9626-4b5b-b9eb-41ffed1e7a7e",
+    "source": "pp1",
+    "label": "Earbuds - Earbuds case",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "18": {
+    "item_id": "b62a7976-aabb-4bc6-badc-d1444e31133c",
+    "report_id": "6ccb18c5-c5ca-4408-8dda-583f7e860740",
+    "source": "pp1",
+    "label": "Helmet",
+    "submitted_by": "69a97c520a881c6c545b4715"
+  },
+  "19": {
+    "item_id": "c2f270bb-17ba-4688-aa4a-1be710465986",
+    "fused_embedding_id": "c2f270bb-17ba-4688-aa4a-1be710465986_fused",
+    "embedding_id": "c2f270bb-17ba-4688-aa4a-1be710465986_fused",
+    "view_index": null,
+    "best_view_index": 0,
+    "category": "Wallet"
+  },
+  "20": {
+    "item_id": "ac0bc319-050f-4353-846a-e24b172b00f6",
+    "report_id": "6449b550-bf40-45b3-9e64-529fc9a165a7",
+    "source": "pp1",
+    "label": "Key",
+    "submitted_by": "69a97c520a881c6c545b4715"
   }
 }

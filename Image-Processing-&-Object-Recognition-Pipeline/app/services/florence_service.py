@@ -41,6 +41,7 @@ import time
 from PIL import Image
 
 from app.domain.category_specs import canonicalize_label, CATEGORY_SPECS
+from app.domain.color_utils import normalize_color, extract_color_from_text
 from app.config.settings import settings
 from app.services.gpu_semaphore import gpu_inference_guard
 
@@ -90,6 +91,16 @@ class Detection:
     label: str
     confidence: float
     bbox: Tuple[int, int, int, int]  # x1,y1,x2,y2
+
+
+@dataclass
+class FlorenceDetection:
+    """Enriched detection from Florence OD + per-crop caption/OCR."""
+    label: str
+    confidence: float
+    bbox: Tuple[int, int, int, int]  # x1,y1,x2,y2
+    caption: str
+    ocr_text: str
 
 
 def _safe_str(x: Any) -> str:
@@ -317,7 +328,7 @@ class FlorenceService:
             if req_q is not None:
                 req_q.put_nowait({"cmd": "stop"})
         except Exception:
-            pass
+            logger.debug("Lite worker stop signal failed", exc_info=True)
 
         try:
             if proc is not None and proc.is_alive():
@@ -329,7 +340,7 @@ class FlorenceService:
                     proc.kill()
                     proc.join(timeout=1.0)
         except Exception:
-            pass
+            logger.debug("Lite worker process cleanup failed", exc_info=True)
 
         for q in (req_q, resp_q):
             if q is None:
@@ -337,11 +348,11 @@ class FlorenceService:
             try:
                 q.close()
             except Exception:
-                pass
+                logger.debug("Queue close failed", exc_info=True)
             try:
                 q.cancel_join_thread()
             except Exception:
-                pass
+                logger.debug("Queue cancel_join_thread failed", exc_info=True)
 
         self._lite_worker_proc = None
         self._lite_req_q = None
@@ -542,6 +553,7 @@ class FlorenceService:
                 return out
             return {"_raw_text": generated_text, "_task": task, "result": out}
         except Exception:
+            logger.debug("Florence task post-processing failed for %s", task, exc_info=True)
             return {"_raw_text": generated_text, "_task": task}
 
     # ----------------------------
@@ -583,9 +595,9 @@ class FlorenceService:
                 x1, y1, x2, y2 = [int(c) for c in box]
                 
                 # Florence doesn't give confidence scores for OD in the standard output,
-                # so we assign a default high confidence since it detected it.
-                # Or we could try to extract it if we used a different task, but <OD> is standard.
-                conf = 0.9 
+                # so we assign a conservative default since Florence OD has no built-in
+                # confidence. This avoids artificially inflating downstream decisions.
+                conf = float(getattr(settings, "FLORENCE_OD_DEFAULT_CONF", 0.5))
                 
                 detections.append(Detection(
                     label=canonical,
@@ -596,8 +608,47 @@ class FlorenceService:
             return detections
             
         except Exception as e:
-            print(f"Florence detection error: {e}")
+            logger.warning("Florence detection error: %s", e, exc_info=True)
             return []
+
+    def detect_and_describe(self, image: Image.Image) -> List[FlorenceDetection]:
+        """
+        Full-image Florence OD fallback: run <OD> on the entire image, then
+        for each canonical detection crop the region and extract a detailed
+        caption + OCR.  Returns enriched FlorenceDetection list.
+        """
+        base_detections = self.detect_objects(image)
+        if not base_detections:
+            return []
+
+        max_dets = int(getattr(settings, "FLORENCE_OD_FALLBACK_MAX_DETECTIONS", 5))
+        base_detections = base_detections[:max_dets]
+
+        enriched: List[FlorenceDetection] = []
+        w, h = image.size
+
+        for det in base_detections:
+            x1, y1, x2, y2 = det.bbox
+            x1 = max(0, min(w, x1))
+            y1 = max(0, min(h, y1))
+            x2 = max(0, min(w, x2))
+            y2 = max(0, min(h, y2))
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            crop = image.crop((x1, y1, x2, y2))
+            crop_caption = self.caption(crop, detailed=True)
+            crop_ocr = self.ocr(crop)
+
+            enriched.append(FlorenceDetection(
+                label=det.label,
+                confidence=det.confidence,
+                bbox=(x1, y1, x2, y2),
+                caption=crop_caption,
+                ocr_text=crop_ocr,
+            ))
+
+        return enriched
 
     def caption(self, image: Image.Image, detailed: bool = True, profile: Optional[str] = None) -> str:
         # Try multiple levels of detail if requested
@@ -617,6 +668,7 @@ class FlorenceService:
                 if s:
                     return s
             except Exception:
+                logger.debug("Caption parse fallback failed", exc_info=True)
                 continue
                 
         return ""
@@ -645,6 +697,7 @@ class FlorenceService:
                 return m.group(1).strip()
             return raw.strip()
         except Exception:
+            logger.debug("VQA extraction failed", exc_info=True)
             return ""
 
     def ocr(self, image: Image.Image, profile: Optional[str] = None) -> str:
@@ -676,6 +729,7 @@ class FlorenceService:
 
             return ""
         except Exception:
+            logger.debug("OCR extraction failed", exc_info=True)
             return ""
 
     def ground_phrases(self, image: Image.Image, text: str, profile: Optional[str] = None) -> Dict[str, Any]:
@@ -709,12 +763,18 @@ class FlorenceService:
     @staticmethod
     def _run_with_timeout(fn, timeout_ms: int, *args, **kwargs):
         timeout_sec = max(1, int(timeout_ms)) / 1000.0
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(fn, *args, **kwargs)
-            try:
-                return future.result(timeout=timeout_sec)
-            except FuturesTimeoutError as exc:
-                raise TimeoutError(f"Operation exceeded timeout of {timeout_ms} ms") from exc
+        last_exc = None
+        for attempt in range(2):  # 1 initial + 1 retry
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(fn, *args, **kwargs)
+                try:
+                    return future.result(timeout=timeout_sec)
+                except FuturesTimeoutError as exc:
+                    last_exc = exc
+                    if attempt == 0:
+                        logger.warning("Florence timeout (%dms), retrying once...", timeout_ms)
+                        continue
+        raise TimeoutError(f"Operation exceeded timeout of {timeout_ms} ms after retry") from last_exc
 
     def _run_ocr_recovery_once(
         self,
@@ -880,6 +940,15 @@ class FlorenceService:
         color_vqa = self.vqa(crop, color_q, profile=profile_key).strip() or None
         if color_vqa and color_vqa.lower() == "unknown":
             color_vqa = None
+
+        # Normalize color and cross-check with caption
+        if color_vqa:
+            color_vqa = normalize_color(color_vqa) or color_vqa
+        caption_color = extract_color_from_text(final_caption) if final_caption else None
+        if caption_color and color_vqa and caption_color != normalize_color(color_vqa):
+            color_vqa = caption_color
+        elif caption_color and not color_vqa:
+            color_vqa = caption_color
 
         reason = self._lite_reason(final_caption, ocr_text)
         lite_nonempty = self._is_lite_nonempty(final_caption, ocr_text)
@@ -1197,6 +1266,14 @@ class FlorenceService:
                 color_vqa = str(color_ans or "").strip() or None
                 if isinstance(color_vqa, str) and color_vqa.lower() == "unknown":
                     color_vqa = None
+                # Normalize color and cross-check with caption
+                if color_vqa:
+                    color_vqa = normalize_color(color_vqa) or color_vqa
+                caption_color_ocr_first = extract_color_from_text(caption_text) if caption_text else None
+                if caption_color_ocr_first and color_vqa and caption_color_ocr_first != normalize_color(color_vqa):
+                    color_vqa = caption_color_ocr_first
+                elif caption_color_ocr_first and not color_vqa:
+                    color_vqa = caption_color_ocr_first
             except TimeoutError as exc:
                 raw["color_error"] = {"type": "timeout", "message": str(exc)}
             except Exception as exc:
@@ -1262,6 +1339,7 @@ class FlorenceService:
                     if m:
                         key_count = int(m.group(1))
                 except Exception:
+                    logger.debug("Key count parse failed (lite)", exc_info=True)
                     key_count = None
                 timings["key_count_ms"] = round((time.perf_counter() - key_count_start) * 1000.0, 2)
 
@@ -1480,16 +1558,19 @@ class FlorenceService:
         raw_caption = self.caption(crop, detailed=(profile_key != "fast"), profile=profile_key)
         sanitized_caption, _ = _sanitize_caption(raw_caption)
         
-        # B) Guided VQA (Object-only)
-        guide_prompt = (
-            "Describe ONLY the main object (ignore the person/hand and background) in 2–4 sentences. "
-            "Include: object type, material (if visible), primary color/shade, shape, any logos/text (if visible), "
-            "any attachments/accessories (only separate add-ons like a metal ring, lanyard, tag, or remote fob — if clearly visible), and any visible wear/defects "
-            "(scratches, dents, cracks, stains, rust, bends). If something is not visible, say 'not visible'. "
-            "Do NOT mention the person, hand, skin, gender, or race. Do NOT guess. Do NOT treat holes/slots/built-in parts as attachments."
-        )
-        guided_val = self.vqa(crop, guide_prompt, profile=profile_key) if profile_key != "fast" else ""
-        sanitized_guided, _ = _sanitize_caption(guided_val)
+        # B) Guided VQA (Object-only) — skip if caption is already substantial
+        guided_val = ""
+        sanitized_guided = ""
+        if profile_key != "fast" and len(sanitized_caption.split()) < 12:
+            guide_prompt = (
+                "Describe ONLY the main object (ignore the person/hand and background) in 2–4 sentences. "
+                "Include: object type, material (if visible), primary color/shade, shape, any logos/text (if visible), "
+                "any attachments/accessories (only separate add-ons like a metal ring, lanyard, tag, or remote fob — if clearly visible), and any visible wear/defects "
+                "(scratches, dents, cracks, stains, rust, bends). If something is not visible, say 'not visible'. "
+                "Do NOT mention the person, hand, skin, gender, or race. Do NOT guess. Do NOT treat holes/slots/built-in parts as attachments."
+            )
+            guided_val = self.vqa(crop, guide_prompt, profile=profile_key)
+            sanitized_guided, _ = _sanitize_caption(guided_val)
         
         # Selection Logic: Prefer guided if it's substantial, else fallback to sanitized caption
         # Guided is usually better for "object only" constraint.
@@ -1504,32 +1585,59 @@ class FlorenceService:
             final_caption = sanitized_guided if len(sanitized_guided) > len(sanitized_caption) else sanitized_caption
             caption_source = "fallback"
 
-        # 2. OCR
-        ocr_text = self.ocr(crop, profile=profile_key)
+        # Caption quality gate: flag generic captions so downstream stages
+        # (reranking, Gemini) can lower their weight on caption evidence.
+        caption_is_generic = _is_generic_caption(final_caption)
 
-        # 3. Color VQA
-        color_q = (
-            "What is the primary color of the OBJECT (not the background)? "
-            "Answer with a short phrase including shade/tone if visible (e.g., 'dark gray', 'navy blue', 'matte black'). "
-            "If unsure, answer 'unknown'."
-        )
-        color_vqa = self.vqa(crop, color_q, profile=profile_key).strip() or None
-        if color_vqa and color_vqa.lower() == "unknown":
-            color_vqa = None
+        # 2-4. Run OCR, Color VQA, and Key Count VQA in parallel (CPU I/O overlap
+        # while GPU semaphore serializes the actual inference).
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        # 4. Key Count (Conditional)
-        key_count: Optional[int] = None
-        if canonical_label == "Key":
+        def _ocr_task():
+            return self.ocr(crop, profile=profile_key)
+
+        def _color_vqa_task():
+            color_q = (
+                "What is the primary color of the OBJECT (not the background)? "
+                "Answer with a short phrase including shade/tone if visible (e.g., 'dark gray', 'navy blue', 'matte black'). "
+                "If unsure, answer 'unknown'."
+            )
+            val = self.vqa(crop, color_q, profile=profile_key).strip() or None
+            if val and val.lower() == "unknown":
+                val = None
+            return val
+
+        def _key_count_task():
+            if canonical_label != "Key":
+                return None
             kc_q = "How many separate keys are visible in this image? Answer with a single integer."
             kc_ans = self.vqa(crop, kc_q, profile=profile_key)
             m = re.search(r"\\b(\\d+)\\b", kc_ans)
             if m:
                 try:
-                    key_count = int(m.group(1))
+                    return int(m.group(1))
                 except Exception:
-                    key_count = 1
-            else:
-                key_count = 1
+                    logger.debug("Key count int parse failed", exc_info=True)
+                    return 1
+            return 1
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            fut_ocr = pool.submit(_ocr_task)
+            fut_color = pool.submit(_color_vqa_task)
+            fut_key = pool.submit(_key_count_task)
+
+        ocr_text = fut_ocr.result()
+        color_vqa = fut_color.result()
+        key_count: Optional[int] = fut_key.result()
+
+        # Normalize color and cross-check with caption
+        if color_vqa:
+            color_vqa = normalize_color(color_vqa) or color_vqa
+        caption_color_full = extract_color_from_text(final_caption) if final_caption else None
+        if caption_color_full and color_vqa and caption_color_full != normalize_color(color_vqa):
+            color_vqa = caption_color_full
+        elif caption_color_full and not color_vqa:
+            color_vqa = caption_color_full
 
         spec_key = canonicalize_label(canonical_label) if canonical_label else None
 
@@ -1561,6 +1669,7 @@ class FlorenceService:
                 "caption_primary": raw_caption,
                 "caption_guided": guided_val,
                 "caption_source": caption_source,
+                "caption_is_generic": caption_is_generic,
                 "ocr": ocr_text,
                 "color_vqa": color_vqa,
                 "defects_vqa": "None",
@@ -1655,6 +1764,7 @@ class FlorenceService:
             "caption_primary": raw_caption,
             "caption_guided": guided_val,
             "caption_source": caption_source,
+            "caption_is_generic": caption_is_generic,
             "ocr": ocr_text,
             "color_vqa": color_vqa,
             "defects_vqa": defects_vqa_ans,

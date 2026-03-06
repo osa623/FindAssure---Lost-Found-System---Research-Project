@@ -42,6 +42,7 @@ class PP2PerViewResult(BaseModel):
     extraction: PP2PerViewExtraction
     embedding: PP2PerViewEmbedding
     quality_score: float
+    status: str = Field(default="processed", description="View processing status: processed | skipped_early_exit | error")
 
 class PP2VerificationResult(BaseModel):
     mode: str = Field(

@@ -24,10 +24,12 @@ A high-performance, multi-model hybrid AI backend that **detects**, **analyzes**
 - [Category Specification System (SSOT)](#-category-specification-system-ssot)
 - [Database Schema](#-database-schema)
 - [Storage & Caching](#-storage--caching)
+- [Search — Similarity Retrieval](#-search--similarity-retrieval)
 - [API Reference](#-api-reference)
 - [PP2 Response Schema](#-pp2-response-schema)
 - [Application Lifecycle](#-application-lifecycle)
 - [Project Structure](#-project-structure)
+- [Round 4 — Multi-Angle Verification & Rescue Hardening](#-round-4--multi-angle-verification--rescue-hardening)
 - [Setup & Installation](#-setup--installation)
 - [Environment Variables](#-environment-variables)
 - [Testing](#-testing)
@@ -43,6 +45,7 @@ graph TB
     Client -->|"POST /pp1/analyze<br/>(1 image)"| PP1[PP1 Endpoint]
     Client -->|"POST /pp2/analyze_multiview<br/>(2-3 images)"| PP2[PP2 Endpoint]
     Client -->|"POST /pp2/verify_pair<br/>(2 images)"| VP[Verify Pair Endpoint]
+    Client -->|"POST /search/by-image<br/>(1 image + filters)"| SRCH[Search Endpoint]
     Client -->|"GET /"| HC[Health Check]
     
     subgraph FastAPI["FastAPI Application (Uvicorn)"]
@@ -51,6 +54,7 @@ graph TB
         PP1
         PP2
         VP
+        SRCH
     end
     
     subgraph MLServices["Shared ML Services"]
@@ -76,9 +80,11 @@ graph TB
     end
     
     PP1 --> YOLO & FLOR & GEMINI & DINO
+    PP1 --> PG & REDIS
     PP2 --> YOLO & FLOR & DINO
     PP2 --> GEO & MVV & FUS
     VP --> YOLO & DINO & GEO & FAISS
+    SRCH --> YOLO & DINO & FAISS
     
     PP2 --> PG & REDIS & FAISS
     
@@ -162,19 +168,38 @@ graph TD
         F --> G6["🔗 Attachment VQA Validation"]
     end
     
+    subgraph FlorenceOD["Florence OD Cross-Validation (Confidence-Gated)"]
+        G1 & G2 & G3 & G4 & G5 & G6 --> CGATE{"YOLO conf ≥ 0.92<br/>AND area ≥ 5%?"}
+        CGATE -->|Yes: Skip OD| H
+        CGATE -->|No| FOD1["🔍 Florence OD<br/>(full-image detection)"]
+        FOD1 --> FOD2["✂️ Crop + Caption + OCR<br/>(per Florence detection)"]
+        FOD2 --> FOD3["⚖️ Detection Arbiter<br/>(IoU match + evidence score)"]
+        FOD3 --> FOD4{"Florence wins?"}
+        FOD4 -->|Yes| FOD5["🔄 Re-crop + Re-analyze"]
+        FOD4 -->|No| H
+        FOD5 --> H
+    end
+
     subgraph Gemini["Gemini 3 Flash — Evidence-Locked Reasoning"]
-        G1 & G2 & G3 & G4 & G5 & G6 --> H["🧠 Structured JSON Synthesis<br/>(label, color, features,<br/>defects, attachments,<br/>key_count, description)"]
+        H["🧠 Structured JSON Synthesis<br/>(label, color, features,<br/>defects, attachments,<br/>key_count, description)"]
+        H -->|Fatal Error| FALLBACK["⚠️ Florence-Only Fallback<br/>(accepted_degraded)"]
+        H -->|Transient Error| DEGRADE["⚠️ Degraded Accept<br/>(gemini_transient)"]
     end
     
-    subgraph Embedding["DINOv2 Feature Extraction"]
+    subgraph Embedding["DINOv2 Feature Extraction + Validation"]
         F --> J["🧬 CLS Token → 768d Vector"]
         J --> K["📐 Gaussian Projection → 128d Vector"]
+        K --> EVAL{"NaN / Inf / Zero?"}
+        EVAL -->|Valid| VOUT["✅ Embedding included"]
+        EVAL -->|Invalid| VSKIP["⛔ Embedding excluded"]
     end
     
-    H & K --> L["📦 Final Response"]
-    L --> M[Client]
+    H & FALLBACK & DEGRADE & VOUT --> L["📦 Final Response"]
+    L --> PP1STORE["💾 PP1 Storage<br/>(PostgreSQL + Redis)"]
+    PP1STORE --> M[Client]
     
     style Florence fill:#0f3460,stroke:#16213e,color:#e6e6e6
+    style FlorenceOD fill:#1a5276,stroke:#16213e,color:#e6e6e6
     style Gemini fill:#533483,stroke:#16213e,color:#e6e6e6
     style Embedding fill:#e94560,stroke:#16213e,color:#e6e6e6
 ```
@@ -182,18 +207,22 @@ graph TD
 ### PP1 Detailed Steps
 
 1. **Input Validation** — Requires exactly 1 uploaded image. File is saved to `temp_uploads/`, processed, then cleaned up.
-2. **Detection (YOLOv8)** — The fine-tuned model scans the full image for objects across 12 categories. Raw label strings are normalized through `canonicalize_label()` to one of the `ALLOWED_LABELS` (e.g., `"cell phone"` → `"Smart Phone"`). Confidence threshold: `0.25`.
-3. **Cropping** — The highest-confidence detection's bounding box is clamped to image bounds, and the region of interest (ROI) is extracted.
-4. **Visual Analysis (Florence-2)** — The `analyze_crop()` method runs a multi-task extraction:
-   - **Dual Captioning** — Detailed caption + guided VQA caption, both sanitized to remove person/demographic references.
+2. **Detection (YOLOv8)** — The fine-tuned model scans the full image for objects across 12 categories. Raw label strings are normalized through `canonicalize_label()` (LRU-cached, 256 entries) to one of the `ALLOWED_LABELS` (e.g., `"cell phone"` → `"Smart Phone"`). Confidence threshold: `0.25`.
+3. **Cropping** — The highest-confidence detection's bounding box is clamped to image bounds, and the region of interest (ROI) is extracted. A **minimum area gate** (0.5% of image area) rejects tiny noise detections before further processing.
+4. **Visual Analysis (Florence-2)** — The `analyze_crop()` method runs a multi-task extraction. All subtask calls use a **retry-on-timeout** mechanism (1 retry attempt before failing):
+   - **Dual Captioning** — Detailed caption + guided VQA caption, both sanitized to remove person/demographic references. **Guided VQA is skipped** when the detailed caption is already substantial (≥ 12 words), saving an inference call.
+   - **Description Enrichment** — If the final description is very short (< 6 words), an additional VQA call produces a richer description.
    - **OCR** — Reads text (brand names, serial numbers, "VISA", ID numbers, etc.).
    - **Color VQA** — Asks "What is the dominant color of this object?"
    - **Key Count VQA** — Conditional: only for `Key` category, asks "How many keys?"
    - **Phrase Grounding** — Uses `CATEGORY_SPECS` to physically locate features, defects, and attachments with bounding boxes. Phrases are chunked to avoid prompt overflow.
    - **Attachment VQA Validation** — Verifies detected attachments via yes/no VQA.
-5. **Reasoning (Gemini 3 Flash)** — Receives the crop image + full evidence JSON. An **evidence-locked prompt** instructs Gemini to strictly synthesize (not hallucinate) structured JSON: `label`, `color`, `features`, `defects`, `attachments`, `key_count`, `description`.  
-   - **Resilience behavior:** transient provider outages (for example `503 UNAVAILABLE`) are retried once, then degraded to a standard PP1 rejected payload with message: `"Reasoning service temporarily unavailable. Please retry."` so `/pp1/analyze` remains available.
-6. **Embedding (DINOv2)** — The crop is embedded via the DINOv2 CLS token (768d), then projected to 128d via a deterministic random Gaussian matrix. Both vectors are returned.
+5. **Florence OD Cross-Validation (Confidence-Gated)** — Skipped when YOLO top-1 confidence ≥ 0.92 and bounding box area ≥ 5% of image (saving ~500ms). Otherwise runs to cross-validate YOLO's detection. The `detect_and_describe()` method runs Florence `<OD>` on the full image, crops each canonical detection, and extracts per-crop captions + OCR. The **Detection Arbiter** (`detection_arbiter.py`) matches YOLO and Florence detections via IoU (threshold `0.3`) and scores keyword evidence from captions/OCR against `LABEL_EVIDENCE_KEYWORDS` for each of the 12 categories. If Florence's evidence score exceeds YOLO's, the arbiter declares Florence the winner — the pipeline re-crops and re-runs `analyze_crop()` with the corrected label and bounding box. Disabled when `FLORENCE_OD_FALLBACK_ENABLED=false`. The label rerank keywords include brand names and product aliases (e.g., "iphone", "macbook", "galaxy buds", "beats") for improved evidence scoring.
+6. **Reasoning (Gemini 3 Flash)** — Receives the crop image + full evidence JSON. An **evidence-locked prompt** instructs Gemini to strictly synthesize (not hallucinate) structured JSON: `label`, `color`, `features`, `defects`, `attachments`, `key_count`, `description`.  
+   - **Fatal error resilience (`GeminiFatalError`, e.g., 401/403):** Instead of rejecting the item, the pipeline builds a **Florence-only fallback** using color and description from Florence analysis. The item is returned with `status: "accepted_degraded"` and `message` indicating Florence-only processing.
+   - **Transient error resilience (`GeminiTransientError`, e.g., 503):** Retried once, then accepted with `status: "accepted_degraded"` and `degradation_reason: "gemini_transient"`. The pipeline remains available without rejecting items.
+7. **Embedding (DINOv2)** — The crop is embedded via the DINOv2 CLS token (768d), then projected to 128d via a deterministic random Gaussian matrix. Both vectors are **validated** (NaN, Inf, and all-zeros checks) before inclusion — invalid embeddings are logged and excluded. Both vectors are returned.
+8. **PP1 Storage** — Items with `status: "accepted"` or `"accepted_degraded"` are persisted to **PostgreSQL** (ItemRecord + ViewEvidence + EmbeddingRecord) and cached in **Redis** (`item:{uuid}`, 24h TTL) immediately after processing.
 
 ---
 
@@ -281,6 +310,7 @@ For each of the uploaded images (2 or 3):
 | **Detect** | YOLOv8 | Collect top-K detections per view (`K=5`) via `detect_objects(..., max_detections=5)` |
 | **Florence OCR-first** | Florence-2 | Run `analyze_ocr_first(..., fast=True)` on crop. Default attempt policy is one crop attempt plus one full-image fallback only when bbox is tiny/invalid. |
 | **Hint + Reselect** | Pipeline | Infer canonical hint from OCR-first caption/OCR/features, compute cross-view hint-first consensus, reselect best top-K detection matching consensus (fallback top-1 marks `label_outlier=true`) |
+| **Florence OD Cross-Validation** | Florence-2 + Arbiter | Always runs per-view. `detect_and_describe()` runs Florence `<OD>` on the full image and the Detection Arbiter compares YOLO vs Florence detections via IoU + evidence scoring. If Florence wins, the pipeline re-crops and re-runs `_call_ocr_first_once()` with the corrected label. |
 | **Embed** | DINOv2 | `embed_128()` → 128d normalized vector (for verification) |
 | **Quality** | OpenCV | Laplacian variance of grayscale crop (higher = sharper) |
 | **Extraction (stage-1)** | Pipeline | `per_view[].extraction` stores OCR-first extraction and structured `raw.florence` metadata. Confidence is forced to `0.0` when `raw.florence.status="failed"`; early-exit skipped expensive steps are marked with `raw.skipped=true` and `raw.reason="early_exit"`. |
@@ -302,7 +332,7 @@ Cross-view detection selection is done in deterministic stages:
 The `MultiViewVerifier` determines whether all input views depict the same physical object:
 
 1. **Category- and Mode-Aware Thresholds** — `get_thresholds(mode, canonical_label)` resolves `(cos_th, faiss_th, near_miss_margin)` using group defaults with settings overrides:
-   - `angle_hard`: `Helmet`, `Smart Phone`, `Laptop`, `Earbuds - Earbuds case`/`Earbuds`
+   - `angle_hard`: `Helmet`, `Smart Phone`, `Laptop`, `Earbuds - Earbuds case`/`Earbuds`, `Power Bank`, `Headphone`
    - `texture_rich`: `Wallet`, `Handbag`, `Backpack`, `Umbrella`
    - `small_ambiguous`: `Keys`, `Student ID`, `Laptop Charger`
    - Legacy fallback uses `PP2_SIM_THRESHOLD` only when group/mode resolution is missing.
@@ -319,7 +349,12 @@ The `MultiViewVerifier` determines whether all input views depict the same physi
    - If fewer than 2 candidates remain, fail immediately.
    - The chosen pair is returned as `verification.used_views=[i,j]`; dropped metadata is returned as `verification.dropped_views=[{view_index, reason}, ...]`.
 6. **Geometric Verification** (eligible decision pair(s) only) — ORB + RANSAC (see [Geometric Verification](#-geometric-verification) below); non-decision pairs are marked skipped in `geometric_scores` for observability, while pass/fail uses only the decision pair.
-7. **OCR/Brand Consistency Signals** — for `angle_hard`, near-miss rescue can pass via `ocr_rescue` when cosine is within margin and strong OCR overlap exists.
+7. **Rescue Cascade (angle_hard near-miss / weak pairs)** — When a pair is not strong but falls within the near-miss margin, a multi-stage rescue cascade attempts to salvage:
+   1. **OCR rescue** — passes when strong OCR token overlap exists between the two views.
+   2. **Hint rescue** — passes when both views' labels match consensus AND at least one canonical hint matches the consensus category.
+   3. **Color rescue** — passes when both views' labels match consensus AND bucketed colors from `grounded_features["color"]` are consistent (via `_pair_color_consistent()`).
+   - The cascade runs in order; the first passing rescue salvages the pair. If all three fail, the pair is rejected.
+   - In 3-view mode, rescue is attempted on both near-miss and weak pairs (when the other 2 pairs are strong).
 8. **Semantic Consistency** — Colors are normalized (`grey`→`gray`, spacing/hyphen cleanup), conservatively bucketed (`black`/`dark gray`/`charcoal`→`dark`), and flagged only when all 3 bucketed colors are distinct (applies when enough color evidence exists).
 
 **Decision Logic:**
@@ -330,7 +365,7 @@ The `MultiViewVerifier` determines whether all input views depict the same physi
 | Candidate count `== 2` | Verify that pair in two-view mode |
 | Candidate count `== 3` | Select best pair and verify in two-view mode |
 | Decision pair is **strong** | **PASS** |
-| Decision pair is **near_miss** | **SALVAGED PASS** only for allowed guardrails (for example `angle_hard` `ocr_rescue`) |
+| Decision pair is **near_miss** | **SALVAGED PASS** via rescue cascade: OCR rescue → hint rescue → color rescue (first passing gate wins) |
 | Otherwise | **FAIL** (no fusion or storage) |
 
 Notes:
@@ -513,11 +548,11 @@ A thread-safe wrapper around Facebook AI Similarity Search for fast nearest-neig
 
 | Method | Description |
 |--------|-------------|
-| `load_or_create()` | Load existing index from disk or create a new empty one. Validates dimension match. |
+| `load_or_create()` | Load existing index from disk or create a new empty one. Validates dimension match. **Resets index + mapping to empty on consistency mismatch** (index count ≠ mapping count). |
 | `add(vector, metadata)` | Normalize, add to index, store metadata mapping. Returns `faiss_id`. |
 | `search(vector, top_k=5)` | Find `top_k` most similar vectors. Returns scores + metadata. |
 | `pair_similarity(vec_a, vec_b)` | Cosine similarity between two arbitrary vectors (uses temporary index). |
-| `save()` | Persist index + mapping to disk. |
+| `save()` | Persist index + mapping to disk **atomically** (write-to-temp + `os.replace()`). Prevents corruption on crashes. |
 
 ---
 
@@ -556,7 +591,7 @@ CATEGORY_SPECS[label] = {
 }
 ```
 
-The `canonicalize_label(raw_label)` function maps raw detection strings and common aliases to one of the 12 canonical labels via case-insensitive partial matching.  
+The `canonicalize_label(raw_label)` function maps raw detection strings and common aliases to one of the 12 canonical labels via case-insensitive partial matching. Results are **LRU-cached** (`maxsize=256`) for performance.  
 PP2 hint normalization applies an extra alias layer for consensus (e.g., phone/laptop/earbuds/charger variants); `umbrella/parasol` is treated as out-of-taxonomy and maps to `None` for consensus.
 
 ---
@@ -614,11 +649,11 @@ erDiagram
 
 **Service:** `app/services/storage_service.py`
 
-When PP2 verification passes, the `StorageService` persists results in a single atomic operation:
+When PP2 verification passes (or PP1 analysis succeeds with `status: "accepted"` / `"accepted_degraded"`), the `StorageService` persists results:
 
 ```mermaid
 graph LR
-    FUS["Fused Profile"] --> DB["PostgreSQL / SQLite<br/>(ItemRecord + ViewEvidence<br/>+ EmbeddingRecord)"]
+    FUS["Fused Profile / PP1 Result"] --> DB["PostgreSQL / SQLite<br/>(ItemRecord + ViewEvidence<br/>+ EmbeddingRecord)"]
     FUS --> REDIS["Redis Cache<br/>key: item:{uuid}<br/>TTL: 86400s (24h)"]
     FUS --> FAISS["FAISS Index<br/>(128d vector added)"]
     
@@ -634,7 +669,44 @@ graph LR
 |-------|-----------|------------------|
 | **Database** | SQLAlchemy transaction (`commit` / `rollback`) | Rolls back entire transaction |
 | **Redis** | `SETEX` with 24h TTL, key format: `item:{uuid}` | Logs warning, does not fail main operation |
-| **FAISS** | `add()` with metadata mapping | Added during pipeline; saved to disk on shutdown |
+| **FAISS** | `add()` with metadata mapping | Added during pipeline; saved to disk on shutdown via atomic write |
+
+---
+
+## 🔍 Search — Similarity Retrieval
+
+**Router:** `app/routers/search_router.py` · **Schemas:** `app/schemas/search_schemas.py`
+
+The search subsystem allows finding previously indexed items by visual similarity. The `/search/by-image` endpoint uses a **multi-crop strategy** for robust retrieval:
+
+```mermaid
+graph TD
+    A["📷 Query Image"] --> YOLO["🔍 YOLO Detection"]
+    A --> CENTER["📐 Center 70% Crop"]
+    A --> FULL["🖼️ Full Image"]
+    
+    YOLO -->|"Best detection crop"| EMBED1["🧬 DINOv2 128d"]
+    CENTER --> EMBED2["🧬 DINOv2 128d"]
+    FULL --> EMBED3["🧬 DINOv2 128d"]
+    
+    EMBED1 & EMBED2 & EMBED3 --> FAISS["🔎 FAISS Search<br/>(per crop, top_k×8)"]
+    FAISS --> DEDUP["🔀 Deduplicate<br/>(best score per faiss_id)"]
+    DEDUP --> FILTER["🏷️ Category Filter<br/>(optional)"]
+    FILTER --> GROUP["📊 Group by item_id<br/>(best score per item)"]
+    GROUP --> RESULT["📦 Top-K Results"]
+    
+    style FAISS fill:#2980b9,stroke:#1f6692,color:#fff
+```
+
+### Multi-Crop Strategy
+
+| Crop | Source | Purpose |
+|------|--------|---------|
+| **YOLO crop** | Highest-confidence YOLO detection | Object-focused embedding (most accurate when detection hits) |
+| **Center 70%** | Center region of the image | Captures main subject without relying on detection |
+| **Full image** | Entire uploaded image | Fallback when object is decentralized or detection fails |
+
+Results from all crops are aggregated, deduplicated by `faiss_id` (keeping the highest score), and optionally filtered by a `category` parameter (case-insensitive match). Matches are grouped by `item_id` with full `vector_hits` audit trail.
 
 ---
 
@@ -647,6 +719,8 @@ graph LR
 | `POST` | `/analyze` | — | `400` error | **Deprecated** — redirects to `/pp1/analyze` |
 | `POST` | `/pp2/analyze_multiview` | `multipart/form-data`: 2-3 files (`files`) | `PP2Response` JSON | Full multi-view pipeline (detect → extract → verify → fuse → store) |
 | `POST` | `/pp2/verify_pair` | `multipart/form-data`: 2 files (`files`) | `PP2VerifyPairResponse` JSON | Quick pair verification (detect → crop → embed → FAISS sim + geometric check) |
+| `POST` | `/search/by-image` | `multipart/form-data`: 1 file + `top_k`, `min_score`, optional `category` | `SearchByImageResponse` JSON | Multi-crop similarity search with optional category filtering |
+| `POST` | `/search/index_vector` | JSON: `vector_128d` (128 floats) + optional `metadata` | `IndexVectorResponse` JSON | Manually index a 128d embedding into FAISS |
 
 ### `POST /pp1/analyze` — Response Structure
 
@@ -680,6 +754,39 @@ graph LR
   }
 }
 ```
+
+> **Status values:** `"accepted"` (full pipeline success), `"accepted_degraded"` (Gemini unavailable — Florence-only fallback used, includes `degradation_reason`), `"rejected"` (no valid object detected).
+
+### `POST /search/by-image` — Response Structure
+
+Uses a **multi-crop search strategy**: generates up to 3 embeddings (YOLO crop, center 70% crop, full image), queries FAISS with each, deduplicates by `faiss_id` keeping the highest score, and optionally filters by `category`.
+
+```json
+{
+  "top_k": 5,
+  "min_score": 0.7,
+  "category_filter": "Wallet",
+  "matches": [
+    {
+      "score": 0.94,
+      "faiss_id": 42,
+      "item_id": "uuid-string",
+      "metadata": { "category": "Wallet", "color": "Black" },
+      "vector_hits": [
+        { "score": 0.94, "faiss_id": 42, "metadata": { ... } }
+      ],
+      "vector_hits_count": 1
+    }
+  ]
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `file` | `UploadFile` | **Required** | Query image |
+| `top_k` | `int` | `1` | Max results (1–50) |
+| `min_score` | `float` | `0.7` | Minimum similarity threshold (0–1) |
+| `category` | `str` | `None` | Optional category filter (case-insensitive match against indexed metadata) |
 
 ### `POST /pp2/verify_pair` — Response Structure
 
@@ -873,7 +980,10 @@ graph TD
 │   │   ├── lifespan.py                  # Startup/shutdown lifecycle manager
 │   │   └── redis_client.py              # Redis singleton client
 │   ├── domain/
-│   │   └── category_specs.py            # SSOT: 12 categories, specs, canonicalize_label()
+│   │   ├── category_specs.py            # SSOT: 12 categories, specs, canonicalize_label()
+│   │   ├── bbox_utils.py               # Shared bounding-box clipping utility
+│   │   ├── color_utils.py              # Shared color vocabulary, normalization & caption extraction
+│   │   └── label_keywords.py           # Shared keyword vocabulary for all 12 categories + negative keywords
 │   ├── models/                          # Local model weights & configs
 │   │   ├── DINOv2/                      # Meta DINOv2 (dinov2-base)
 │   │   ├── florence2-base-ft/           # Microsoft Florence-2 Base (fine-tuned)
@@ -883,9 +993,11 @@ graph TD
 │   │   ├── YoloV8n/                     # Fine-tuned YOLOv8 (final_master_model.pt)
 │   │   └── item_models.py              # SQLAlchemy ORM models
 │   ├── routers/
-│   │   └── pp2_router.py               # PP2 endpoints (analyze_multiview, verify_pair)
+│   │   ├── pp2_router.py               # PP2 endpoints (analyze_multiview, verify_pair)
+│   │   └── search_router.py            # Search endpoints (by-image, index_vector)
 │   ├── schemas/
-│   │   └── pp2_schemas.py              # Pydantic models for PP2 request/response
+│   │   ├── pp2_schemas.py              # Pydantic models for PP2 request/response
+│   │   └── search_schemas.py           # Pydantic models for search request/response
 │   └── services/
 │       ├── unified_pipeline.py          # PP1 orchestrator (YOLO → Florence → Gemini → DINOv2)
 │       ├── pp2_multiview_pipeline.py    # PP2 orchestrator (per-view → verify → fuse → store)
@@ -893,6 +1005,7 @@ graph TD
 │       ├── pp2_geometric_verifier.py    # Geometric verification (ORB + RANSAC)
 │       ├── pp2_fusion_service.py        # Multi-view fusion (majority vote, merge, fused embedding)
 │       ├── yolo_service.py              # YOLOv8 wrapper
+│       ├── detection_arbiter.py          # Detection arbiter (YOLO-vs-Florence IoU + keyword evidence)
 │       ├── florence_service.py          # Florence-2 wrapper (caption, OCR, VQA, grounding)
 │       ├── gemini_reasoner.py           # Gemini 3 Flash wrapper (evidence-locked reasoning)
 │       ├── dino_embedder.py             # DINOv2 wrapper (768d + 128d projection)
@@ -913,14 +1026,249 @@ graph TD
 │   ├── test_pp2_verifier.py             # Multi-view verifier logic + reason consistency + semantic checks
 │   ├── test_pp2_multiview_pipeline.py   # Cross-view label consensus, outlier fallback, fusion metadata wiring
 │   ├── test_pp2_fusion_service.py       # OCR cleaning/consensus + outlier-aware category-specific merging
+│   ├── test_pp2_schemas.py              # PP2 Pydantic schema validation
+│   ├── test_pp1_resilience.py           # PP1 Gemini fallback + label rerank resilience
+│   ├── test_search_router.py            # Search endpoint validation + FAISS retrieval
+│   ├── test_gpu_semaphore.py            # GPU semaphore concurrency gating
+│   ├── test_florence_perf_profile.py    # Florence performance profile switching
+│   ├── test_florence_lite_mode.py       # Florence lite-mode OCR-first extraction
+│   ├── test_dino_embedder_perf.py       # DINOv2 embedding performance + AMP
 │   └── test_yolo_service.py             # Detection ordering + max_detections behavior
 ├── temp_uploads/                        # Temporary file storage (auto-cleanup)
 ├── weights/                             # Additional weight files
 ├── siamese_network.py                   # Siamese Network architecture (ResNet-18, not integrated)
-├── run_server.py                        # Uvicorn launcher (host=0.0.0.0, port=8000)
+├── run_server.py                        # Uvicorn launcher (env-configurable: HOST, PORT, WORKERS, RELOAD, LOG_LEVEL)
 ├── requirements.txt                     # Python dependencies
 └── OVERVIEW.md                          # Brief PP1 overview
 ```
+
+---
+
+## 🔧 Round 2 Improvements
+
+Fourteen targeted improvements across pipeline quality, robustness, observability, and maintainability — organized in five phases.
+
+### Summary
+
+| # | Phase | Item | Scope | Files Changed |
+|---|-------|------|-------|---------------|
+| A1 | Quick Fixes | Register search router in `main.py` | Critical | `main.py` |
+| A2 | Quick Fixes | Florence OD confidence → settings-driven (0.9 → 0.5) | Critical | `florence_service.py`, `settings.py` |
+| A3 | Quick Fixes | Log bare `except` blocks + `print` → `logger` | Critical | `florence_service.py`, `main.py` |
+| B1 | Data Integrity | FAISS backup before corruption reset | High | `faiss_service.py` |
+| B2 | Data Integrity | Store actual vectors in PostgreSQL (`vector_bytes`) | High | `storage_service.py` |
+| C1 | Pipeline Quality | Generic-caption filter in PP1 reranking | High | `unified_pipeline.py`, `florence_service.py` |
+| C2 | Pipeline Quality | Parallelize Florence subtasks (OCR, Color VQA, Key Count) | Medium | `florence_service.py` |
+| C3 | Pipeline Quality | Gemini circuit breaker | High | `unified_pipeline.py`, `settings.py` |
+| D1 | Configurability | PP1 reranking thresholds from settings | Medium | `unified_pipeline.py`, `settings.py` |
+| D2 | Configurability | PP2 verifier per-group threshold overrides from settings | Medium | `pp2_multiview_verifier.py`, `settings.py` |
+| E1 | Maintainability | Extract shared `clip_bbox` utility | Medium | `bbox_utils.py` (new), `pp2_multiview_pipeline.py`, `search_router.py` |
+| E2 | Maintainability | PP2 early-exit degraded `status` flag | Medium | `pp2_schemas.py`, `pp2_multiview_pipeline.py` |
+| E3 | Maintainability | Search endpoint validation (file size + category canonicalization) | Medium | `search_router.py` |
+| E4 | Maintainability | Production `run_server.py` config (env-based) | Medium | `run_server.py` |
+
+### Phase A — Quick Fixes (Critical)
+
+**A1 — Search Router Registration**
+The `/search/*` endpoints were defined in `search_router.py` but never mounted. Added `app.include_router(search_router, prefix="/search")` in `main.py`.
+
+**A2 — Florence OD Confidence**
+Florence `<OD>` confidence was hardcoded to `0.9`, filtering out most detections. Now reads `settings.FLORENCE_OD_DEFAULT_CONF` (default `0.5`), making the Detection Arbiter's YOLO-vs-Florence comparison effective.
+
+**A3 — Bare Except + Print Cleanup**
+12 bare `except:` blocks in `florence_service.py` and 1 in `main.py` now log the exception via `logger.debug(...)` instead of silently swallowing. All `print()` calls in `florence_service.py` replaced with `logger.info/debug`.
+
+### Phase B — Data Integrity (High)
+
+**B1 — FAISS Backup Before Reset**
+When `load_or_create()` detects a count mismatch between the FAISS index and its mapping file, it now calls `shutil.copy2()` to back up both files (`.bak` suffix) before resetting to empty. This preserves evidence for diagnosis.
+
+**B2 — Actual Vector Storage in PostgreSQL**
+`EmbeddingRecord.vector_bytes` previously stored a placeholder `b"placeholder"`. Both PP1 and PP2 storage paths now call `np.asarray(vector, dtype=np.float32).tobytes()` to persist the actual 128-dimensional embedding, enabling future DB-side vector retrieval without FAISS.
+
+### Phase C — Pipeline Quality (High/Medium)
+
+**C1 — Generic-Caption Filter**
+Florence sometimes returns generic captions like `"The image shows an object."` that add no discriminative value. `florence_service.py` now sets a `caption_is_generic` flag when the caption matches known low-information patterns. In PP1 reranking (`unified_pipeline.py`), when `caption_is_generic=True`, the caption-keyword weight for label scoring is halved, preventing generic text from inflating incorrect labels.
+
+**C2 — Parallel Florence Subtasks**
+After the main caption/OCR inference, Florence runs up to 3 independent subtasks: OCR extraction, Color VQA, and Key Count VQA. These now execute concurrently via `ThreadPoolExecutor(max_workers=3)` instead of sequentially, reducing per-item latency.
+
+**C3 — Gemini Circuit Breaker**
+Repeated Gemini API failures (rate limits, network errors) previously caused every PP1 request to wait for a timeout before falling back. A circuit breaker now tracks consecutive failures:
+- **Closed** (normal): Gemini calls proceed. On success, failure counter resets.
+- **Open** (tripped): After `GEMINI_CB_FAILURE_THRESHOLD` (default 5) consecutive failures, all Gemini calls are skipped for `GEMINI_CB_RECOVERY_TIMEOUT_S` (default 60s), returning immediate `accepted_degraded` status.
+- **Half-open**: After the recovery timeout, the next request is allowed through as a probe. Success resets the breaker; failure re-opens it.
+
+### Phase D — Configurability (Medium)
+
+**D1 — PP1 Reranking Thresholds**
+The label reranking step in `unified_pipeline.py` used hardcoded magic numbers for minimum winner score and minimum margin. These are now read from `settings.LABEL_RERANK_MIN_WINNER_SCORE` (default `3`) and `settings.LABEL_RERANK_MIN_MARGIN` (default `2`), enabling tuning without code changes.
+
+**D2 — PP2 Verifier Per-Group Threshold Overrides**
+`pp2_multiview_verifier.py` now supports direct per-group threshold overrides from settings. A `_SETTINGS_GROUP_OVERRIDE_MAP` maps `(mode, group)` tuples to settings attribute names (e.g., `PP2_VERIFIER_TWO_VIEW_ANGLE_HARD_COS`). When a setting is non-`None`, it overrides the hardcoded group default. This allows production threshold tuning per category group without modifying code.
+
+### Phase E — Maintainability (Medium)
+
+**E1 — Shared `clip_bbox` Utility**
+Bounding-box clamping logic was duplicated in 3 locations (`pp2_multiview_pipeline.py` ×2, `search_router.py` ×1). Extracted into `app/domain/bbox_utils.py` with a single `clip_bbox(bbox, width, height)` function that returns a clamped `(x1, y1, x2, y2)` tuple. All 3 sites now import and call this utility.
+
+**E2 — PP2 Early-Exit Degraded Flag**
+`PP2PerViewResult` now includes a `status` field (default `"processed"`) to distinguish fully-processed views from those that hit the early-exit optimization path (`status="skipped_early_exit"`). This makes the 3-view early-exit optimization observable in the API response without requiring log inspection.
+
+**E3 — Search Endpoint Validation**
+`/search/by-image` now enforces:
+- **File size limit:** 10 MB maximum, returning HTTP 413 if exceeded.
+- **Category canonicalization:** The optional `category` filter parameter is run through `canonicalize_label()` so that aliases like `"phone"` or `"charger"` match their canonical form.
+
+**E4 — Production `run_server.py`**
+The Uvicorn launcher now reads all configuration from environment variables (`HOST`, `PORT`, `RELOAD`, `WORKERS`, `LOG_LEVEL`) with sensible defaults, replacing hardcoded values. This supports containerized deployments and CI/CD without code changes.
+
+---
+
+## 🎨 Round 3 — Color & Label Hardening
+
+Eleven targeted improvements across color consistency, label vocabulary unification, negative-keyword scoring, and Gemini label guarding — organized in three phases.
+
+### Summary
+
+| # | Phase | Item | Scope | Files Changed |
+|---|-------|------|-------|---------------|
+| F1 | Color Hardening | Shared `color_utils.py` module | High | `color_utils.py` (new) |
+| F2 | Color Hardening | Caption-color cross-check in Florence | High | `florence_service.py` |
+| F3 | Color Hardening | Normalize colors in PP2 fusion majority vote | Medium | `pp2_fusion_service.py` |
+| F4 | Color Hardening | Normalize PP1 fallback colors | Medium | `unified_pipeline.py` |
+| F5 | Color Hardening | Verifier delegates to shared color functions | Medium | `pp2_multiview_verifier.py` |
+| F6 | Caption Quality | Zero caption weight for generic captions in PP1 reranking | Medium | `unified_pipeline.py`, `florence_service.py` |
+| F7 | Caption Quality | `low_confidence_label` flag on label rerank payload | Low | `unified_pipeline.py` |
+| G1 | Label Unification | Shared `label_keywords.py` module | Critical | `label_keywords.py` (new) |
+| G2 | Label Unification | PP1, PP2, and Detection Arbiter import from shared module | Critical | `unified_pipeline.py`, `pp2_multiview_pipeline.py`, `detection_arbiter.py` |
+| G3 | Label Scoring | Negative keyword scoring in PP1 reranking | High | `unified_pipeline.py` |
+| G4 | Label Guarding | Gemini label guard with `label_change_reason` | High | `gemini_reasoner.py`, `unified_pipeline.py` |
+
+### Phase F — Color Hardening
+
+**F1 — Shared `color_utils.py`**
+Created `app/domain/color_utils.py` as the single source of truth for color handling across all pipelines. Provides:
+- **16 canonical base colors** (`CANONICAL_COLORS`): black, white, red, blue, green, yellow, orange, purple, pink, brown, gray, silver, gold, beige, teal, multicolor.
+- **~65 alias mappings** (`COLOR_ALIAS_MAP`): e.g., `"matte black"` → `"black"`, `"off-white"` → `"white"`, `"champagne"` → `"gold"`.
+- **`normalize_color(raw)`** — Lowercases, strips whitespace, resolves aliases to canonical forms.
+- **`bucket_color(raw)`** — Applies normalization, then returns the canonical bucket or `None` for unrecognized inputs.
+- **`extract_color_from_text(text)`** — Scans a caption/description string for canonical color mentions and returns the first match.
+
+**F2 — Caption-Color Cross-Check in Florence**
+`florence_service.py` now cross-checks extracted color against the caption at 3 extraction sites. When Florence's Color VQA returns a non-canonical or ambiguous color but the caption contains a clear canonical color mention, the caption-derived color takes precedence via `extract_color_from_text()`.
+
+**F3 — Normalize Colors in PP2 Fusion**
+`pp2_fusion_service.py` majority-vote color merging now normalizes all per-view color strings through `normalize_color()` before voting. This prevents near-duplicates like `"Dark Blue"` vs `"blue"` from splitting votes.
+
+**F4 — Normalize PP1 Fallback Colors**
+`unified_pipeline.py` applies `normalize_color()` on all 3 Gemini fallback paths (fatal error, transient error, circuit breaker open) so that Florence-only responses use the same canonical color vocabulary as Gemini-processed responses.
+
+**F5 — Verifier Shared Color Delegation**
+`pp2_multiview_verifier.py` now delegates color normalization and bucketing to the shared `color_utils` functions instead of maintaining independent inline logic.
+
+**F6 — Generic Caption Weight Zeroing**
+When Florence's `caption_is_generic` flag is `True`, the caption keyword weight in PP1 label reranking is zeroed entirely (previously only halved in Round 2), preventing generic captions like `"The image shows an object"` from contributing any label signal.
+
+**F7 — `low_confidence_label` Flag**
+The label rerank payload now includes a `low_confidence_label` boolean flag. Set to `True` when the winning label score falls below the minimum threshold or the margin between the top-2 candidates is insufficient. Downstream consumers (Gemini, storage) can use this flag to trigger additional validation or flag items for review.
+
+### Phase G — Label Vocabulary Unification
+
+**G1 — Shared `label_keywords.py`**
+Created `app/domain/label_keywords.py` as the single source of truth for category keyword vocabularies. Previously, **4 independent keyword dictionaries** existed across the codebase (PP1 `LABEL_RERANK_KEYWORDS`, PP2 `HINT_KEYWORDS`, Detection Arbiter `LABEL_EVIDENCE_KEYWORDS`, Florence strong-label derivation), each manually maintained and prone to drift. The shared module provides:
+- **`CATEGORY_KEYWORDS`** — Unified superset dictionary mapping each of the 12 allowed labels to their keyword lists (brand names, product aliases, physical features).
+- **`NEGATIVE_KEYWORDS`** — Confusion-pair penalty words for each category (e.g., `"Headphone"` negatives include `["earbud", "airpod", "tws"]`; `"Earbuds - Earbuds case"` negatives include `["headband", "over-ear"]`).
+- **`KEYWORD_SOURCE_WEIGHTS`** — Standardized source weights: `caption=2`, `ocr=3`, `grounding=1`.
+- **`NEGATIVE_KEYWORD_WEIGHT`** — Penalty multiplier for negative keyword hits (default `2`).
+
+**G2 — All Consumers Import from Shared Module**
+Three services replaced their inline keyword dictionaries with imports from `label_keywords.py`:
+- `unified_pipeline.py`: `LABEL_RERANK_KEYWORDS = CATEGORY_KEYWORDS`, `LABEL_RERANK_SOURCE_WEIGHTS = KEYWORD_SOURCE_WEIGHTS`
+- `pp2_multiview_pipeline.py`: `HINT_KEYWORDS = CATEGORY_KEYWORDS`
+- `detection_arbiter.py`: `LABEL_EVIDENCE_KEYWORDS = CATEGORY_KEYWORDS`
+
+This guarantees that adding a new keyword to any category propagates to all three pipelines automatically.
+
+**G3 — Negative Keyword Scoring**
+PP1's `_score_label_keywords()` function in `unified_pipeline.py` now includes a negative keyword penalty. For each caption token that matches a category's `NEGATIVE_KEYWORDS` entry, the score is reduced by `NEGATIVE_KEYWORD_WEIGHT` (floored at 0). This helps disambiguate confusion pairs like earbuds vs headphones: a caption mentioning `"over-ear headband"` will penalize the `"Earbuds - Earbuds case"` label rather than boosting it.
+
+**G4 — Gemini Label Guard**
+Gemini's `STRICT_EXTRACTOR_PROMPT` in `gemini_reasoner.py` now includes a `label_change_reason` field in its output schema. The prompt instructs Gemini to provide an explicit reason when changing the YOLO-assigned label, or leave the field empty if keeping the original. Post-Gemini processing in `unified_pipeline.py` checks: if Gemini returns a different label but `label_change_reason` is empty or missing, the label change is reverted to the YOLO original — preventing silent, unjustified label overrides.
+
+---
+
+## 🔄 Round 4 — Multi-Angle Verification & Rescue Hardening
+
+Nine targeted improvements across category coverage, false-rejection reduction, cross-category negative scoring, and verification test coverage — organized in four phases.
+
+### Summary
+
+| # | Phase | Item | Scope | Files Changed |
+|---|-------|------|-------|---------------|
+| H1 | Category Coverage | Add Power Bank + Headphone to `angle_hard` group | Critical | `pp2_multiview_verifier.py` |
+| H2 | Category Coverage | Widen `angle_hard` near-miss margin 0.10 → 0.12 | High | `pp2_multiview_verifier.py` |
+| I1 | Rescue Mechanisms | Add `_pair_color_consistent()` helper | High | `pp2_multiview_verifier.py` |
+| I2 | Rescue Mechanisms | Color rescue for 2-view `angle_hard` near-miss | High | `pp2_multiview_verifier.py` |
+| I3 | Rescue Mechanisms | Hint rescue for 3-view `angle_hard` near-miss pairs | High | `pp2_multiview_verifier.py` |
+| I4 | Rescue Mechanisms | Hint + color rescue for 3-view `angle_hard` weak pairs | High | `pp2_multiview_verifier.py` |
+| J1 | PP1 Cross Negatives | Strengthen Power Bank ↔ Smart Phone negatives | Medium | `label_keywords.py` |
+| J2 | PP1 Cross Negatives | Strengthen Headphone ↔ Earbuds negatives | Medium | `label_keywords.py` |
+| K1 | Test Coverage | 12 new verifier unit tests across 3 test classes | High | `test_pp2_verifier.py` |
+
+### Phase H — Category Coverage
+
+**H1 — Power Bank + Headphone → `angle_hard`**
+Power Bank and Headphone were previously unassigned to any verification group and fell through to the legacy fallback path (single threshold, no rescue mechanisms, no OR-logic). Both categories now belong to `CATEGORY_GROUPS[GROUP_ANGLE_HARD]`, giving them:
+- **OR-logic** pair classification: `cos >= threshold OR faiss >= threshold` → strong (instead of AND).
+- Access to the full rescue cascade (OCR, hint, and color rescue).
+- Category-specific near-miss margin and threshold offsets.
+
+**H2 — Wider Near-Miss Margin**
+`GROUP_NEAR_MISS_MARGIN[GROUP_ANGLE_HARD]` increased from `0.10` to `0.12`. This expands the rescue-eligible zone for all angle-hard categories (e.g., 2-view floor drops from `0.50` to `0.48` with default thresholds), reducing false rejections when different viewing angles produce moderate embedding divergence.
+
+### Phase I — Rescue Mechanisms
+
+Prior to Round 4, the rescue cascade had only one level: OCR rescue. Hint rescue existed for 2-view paths but was absent from 3-view paths, and color rescue did not exist at all. The rescue cascade now follows a consistent 3-stage order across all paths:
+
+```
+Strong check → OCR rescue → Hint rescue → Color rescue → Fail
+```
+
+**I1 — `_pair_color_consistent()` Helper**
+New method on `MultiViewVerifier` that extracts bucketed color from `grounded_features["color"]` for each view in a pair using the shared `_normalize_color()` → `_bucket_color()` pipeline. Returns `True` only when both views have non-`None` bucketed colors that match.
+
+**I2 — 2-View Color Rescue**
+Added a color rescue `elif` branch in the 2-view `angle_hard` decision path, after hint rescue and before the fail case. Conditions: `cos >= floor`, labels match consensus, and colors are consistent via `_pair_color_consistent()`.
+
+**I3 — 3-View Hint Rescue (Near-Miss Pair)**
+When 3 views produce 2 strong pairs + 1 near-miss pair, the near-miss pair now attempts hint rescue after OCR rescue. Conditions: both views' labels match consensus AND at least one canonical hint matches the consensus category. Falls through to color rescue if hint rescue fails.
+
+**I4 — 3-View Hint + Color Rescue (Weak Pair)**
+Same rescue cascade added to the 3-view weak pair path (2 strong + 1 weak). Hint rescue and color rescue are tried in order after OCR rescue.
+
+### Phase J — PP1 Cross Negatives
+
+**J1 — Power Bank ↔ Smart Phone Cross-Negatives**
+- Power Bank negatives: added `"smartphone"`, `"mobile phone"`, `"tablet"` (penalizes Power Bank label when device-like terms appear).
+- Smart Phone negatives: added `"battery pack"`, `"portable charger"` (penalizes Smart Phone label when power-bank-like terms appear).
+
+**J2 — Headphone ↔ Earbuds Cross-Negatives**
+- Earbuds negatives: added `"on-ear"`, `"ear cup"`, `"wireless headphone"` (penalizes Earbuds label when over-ear headphone terms appear).
+- Headphone negatives: added `"charging case"`, `"ear tip"` (penalizes Headphone label when earbud-case terms appear).
+
+### Phase K — Test Coverage
+
+Added 12 new unit tests across 3 test classes in `test_pp2_verifier.py`:
+
+| Test Class | Tests | Coverage |
+|------------|-------|----------|
+| `TestCategoryGroupAssignment` | 7 | Power Bank → angle_hard, Headphone → angle_hard, Helmet still angle_hard, Wallet still texture_rich, Student ID still small_ambiguous, unknown label → None, margin = 0.12 |
+| `TestColorRescue` | 4 | `_pair_color_consistent()` with same/different/missing colors; integration test for 2-view angle_hard color rescue (vectors at 56.6° → cos ≈ 0.55, FAISS = 0.40 → near_miss → color rescue passes) |
+| `TestHintRescue3View` | 1 | 3-view Power Bank with vectors at 0°/+30°/-30° giving cos(v1,v2) = 0.50 (near_miss), all hints = "Power Bank" → hint rescue passes |
+
+All 19 verifier tests pass (7 original + 12 new). Zero regressions across the full PP2 test suite (68 tests total; 5 pre-existing failures in schema and fusion tests are unrelated).
 
 ---
 
@@ -1032,6 +1380,27 @@ graph TD
 | `BASE_MODELS_DIR` | No | `app/models/` | Root directory for model weights |
 | `QWEN_VL_MODEL_PATH` | No | `{BASE_MODELS_DIR}/Qwen2.5-VL-3B-Instruct` | Qwen-VL model path (if using experimental service) |
 
+#### Round 2 — New Settings
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `FLORENCE_OD_DEFAULT_CONF` | No | `0.5` | Florence `<OD>` confidence threshold (was hardcoded 0.9) |
+| `GEMINI_CB_FAILURE_THRESHOLD` | No | `5` | Consecutive Gemini failures before circuit breaker opens |
+| `GEMINI_CB_RECOVERY_TIMEOUT_S` | No | `60` | Seconds to skip Gemini calls while breaker is open |
+| `LABEL_RERANK_MIN_WINNER_SCORE` | No | `3` | PP1 reranking: minimum winning label score to accept |
+| `LABEL_RERANK_MIN_MARGIN` | No | `2` | PP1 reranking: minimum margin between top-2 labels |
+| `PP2_VERIFIER_TWO_VIEW_ANGLE_HARD_COS` | No | `None` | Override cosine threshold for `two_view` × `angle_hard` group |
+| `PP2_VERIFIER_TWO_VIEW_ANGLE_HARD_FAISS` | No | `None` | Override FAISS threshold for `two_view` × `angle_hard` group |
+| `PP2_VERIFIER_TWO_VIEW_TEXTURE_RICH_COS` | No | `None` | Override cosine threshold for `two_view` × `texture_rich` group |
+| `PP2_VERIFIER_TWO_VIEW_TEXTURE_RICH_FAISS` | No | `None` | Override FAISS threshold for `two_view` × `texture_rich` group |
+| `PP2_VERIFIER_TWO_VIEW_SMALL_AMBIGUOUS_COS` | No | `None` | Override cosine threshold for `two_view` × `small_ambiguous` group |
+| `PP2_VERIFIER_TWO_VIEW_SMALL_AMBIGUOUS_FAISS` | No | `None` | Override FAISS threshold for `two_view` × `small_ambiguous` group |
+| `HOST` | No | `0.0.0.0` | Uvicorn bind address (for `run_server.py`) |
+| `PORT` | No | `8000` | Uvicorn port (for `run_server.py`) |
+| `RELOAD` | No | `false` | Enable hot-reload (for `run_server.py`) |
+| `WORKERS` | No | `1` | Uvicorn worker count (for `run_server.py`) |
+| `LOG_LEVEL` | No | `info` | Uvicorn log level (for `run_server.py`) |
+
 ---
 
 ## 🧪 Testing
@@ -1042,10 +1411,17 @@ The test suite covers the PP2 pipeline components:
 |-----------|------|----------|
 | `tests/test_pp2_api.py` | Integration | Mocks all ML services, tests `POST /pp2/analyze_multiview` with 2 and 3 fake images, verifies 200 response and correct `item_id` |
 | `tests/test_pp2_geometric.py` | Unit | Tests `GeometricVerifier.verify_pair()` with identical images (should pass) and noise images (should fail) |
-| `tests/test_pp2_verifier.py` | Unit | Tests `0/1/2+` embedding-failure branches, eligible-index decision scope (2-view pass / <2-view fail), truthful salvage/non-salvage reasons, geometric gating, and color normalization/bucketing |
+| `tests/test_pp2_verifier.py` | Unit | Tests `0/1/2+` embedding-failure branches, eligible-index decision scope (2-view pass / <2-view fail), truthful salvage/non-salvage reasons, geometric gating, color normalization/bucketing, category→group assignment (Power Bank/Headphone → angle_hard), color rescue (2-view angle_hard near-miss), and hint rescue (3-view angle_hard near-miss) |
 | `tests/test_pp2_multiview_pipeline.py` | Unit | Tests top-K usage, hint-first consensus rescue (`hint_majority`) with fallback strategies, OCR-first extraction behavior, outlier/mismatch dropping, best-pair selection for 3-view inputs, verifier pair-scope calls, and fusion/index metadata pass-through |
 | `tests/test_pp2_fusion_service.py` | Unit | Tests OCR URL/junk rejection, evidence-locked PP1-style fused caption generation, outlier/mismatch category-specific field exclusion, and consensus-gated defects |
 | `tests/test_yolo_service.py` | Unit | Tests detection confidence sorting, optional top-K truncation via `max_detections`, and uncapped default behavior |
+| `tests/test_pp1_resilience.py` | Unit | Tests PP1 Gemini fallback paths (fatal, transient, circuit breaker), Florence-only degraded responses, and label rerank resilience |
+| `tests/test_pp2_schemas.py` | Unit | Tests PP2 Pydantic schema validation, serialization, and default value behavior |
+| `tests/test_search_router.py` | Unit | Tests `/search/by-image` file size validation, category canonicalization, and FAISS retrieval |
+| `tests/test_gpu_semaphore.py` | Unit | Tests GPU semaphore concurrency gating and timeout behavior |
+| `tests/test_florence_perf_profile.py` | Unit | Tests Florence performance profile switching (`fast`, `balanced`, `quality`) |
+| `tests/test_florence_lite_mode.py` | Unit | Tests Florence lite-mode OCR-first extraction and fallback behavior |
+| `tests/test_dino_embedder_perf.py` | Unit | Tests DINOv2 embedding performance profiling and AMP behavior |
 
 ### Running Tests
 

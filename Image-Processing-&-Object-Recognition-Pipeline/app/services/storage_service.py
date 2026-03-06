@@ -1,6 +1,7 @@
 import json
 import logging
 import uuid
+import numpy as np
 from sqlalchemy.orm import Session
 from app.models.item_models import ItemRecord, ViewEvidence, EmbeddingRecord
 from app.core.redis_client import get_redis_client
@@ -55,12 +56,16 @@ class StorageService:
             # Note: fused_vector is typically a numpy array or list
             dim = len(fused_vector) if fused_vector is not None else 0
             
+            vec_bytes = None
+            if fused_vector is not None:
+                vec_bytes = np.asarray(fused_vector, dtype=np.float32).tobytes()
+
             embedding_record = EmbeddingRecord(
                 item_id=item_id_uuid,
                 view_index=None,  # Represents the fused/master view
                 dim=dim,
                 faiss_id=faiss_id,
-                vector_bytes=None  # Optional: could store bytes(fused_vector) if needed
+                vector_bytes=vec_bytes,
             )
             self.db.add(embedding_record)
 
@@ -87,4 +92,89 @@ class StorageService:
         except Exception as e:
             self.db.rollback()
             logger.error(f"Database storage failed for item {item_id}: {e}")
+            return {"stored": False, "error": str(e)}
+
+    def store_pp1_result(self, item_id, result: dict) -> dict:
+        """
+        Stores a PP1 single-image analysis result into PostgreSQL and caches in Redis.
+        """
+        try:
+            if isinstance(item_id, str):
+                item_id_uuid = uuid.UUID(item_id)
+            else:
+                item_id_uuid = item_id
+
+            item_record = ItemRecord(
+                id=item_id_uuid,
+                category=result.get("label", "Unknown"),
+                best_view_index=0,
+                attributes_json={
+                    "label": result.get("label"),
+                    "color": result.get("color"),
+                    "ocr_text": result.get("ocr_text"),
+                    "final_description": result.get("final_description"),
+                    "category_details": result.get("category_details", {}),
+                    "key_count": result.get("key_count"),
+                    "tags": result.get("tags", []),
+                    "confidence": result.get("confidence"),
+                    "status": result.get("status"),
+                    "detection_source": (result.get("raw") or {}).get("detection_source"),
+                },
+                defects_json=result.get("category_details", {}).get("defects", {}),
+            )
+            self.db.add(item_record)
+
+            evidence = ViewEvidence(
+                item_id=item_id_uuid,
+                view_index=0,
+                filename=result.get("image", {}).get("filename", ""),
+                caption=result.get("final_description") or "",
+                ocr_text=result.get("ocr_text") or "",
+                quality_score=float(result.get("confidence", 0.0)),
+                bbox_json=[{"bbox": result.get("bbox"), "label": result.get("label")}] if result.get("bbox") else [],
+                grounded_json=result.get("category_details", {}).get("features", []),
+            )
+            self.db.add(evidence)
+
+            embeddings = result.get("embeddings", {})
+            vec_128 = embeddings.get("vector_128d", [])
+
+            vec_bytes = None
+            if vec_128:
+                vec_bytes = np.asarray(vec_128, dtype=np.float32).tobytes()
+
+            embedding_record = EmbeddingRecord(
+                item_id=item_id_uuid,
+                view_index=0,
+                dim=len(vec_128),
+                faiss_id=None,
+                vector_bytes=vec_bytes,
+            )
+            self.db.add(embedding_record)
+
+            self.db.commit()
+
+            cache_key = f"item:{str(item_id_uuid)}"
+            try:
+                if self.redis_client:
+                    cache_payload = {
+                        "label": result.get("label"),
+                        "color": result.get("color"),
+                        "final_description": result.get("final_description"),
+                        "status": result.get("status"),
+                    }
+                    self.redis_client.setex(
+                        name=cache_key,
+                        time=86400,
+                        value=json.dumps(cache_payload, default=str),
+                    )
+            except Exception as e:
+                logger.warning(f"Redis cache set failed for {cache_key}: {e}")
+                cache_key = None
+
+            return {"stored": True, "cache_key": cache_key}
+
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"PP1 database storage failed for item {item_id}: {e}")
             return {"stored": False, "error": str(e)}

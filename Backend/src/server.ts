@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import os from 'os';
 import { createApp } from './app';
 import { connectDB } from './config/db';
 import { initializeFirebaseAdmin } from './config/firebaseAdmin';
@@ -40,6 +41,24 @@ if (missingEnvVars.length > 0) {
 // Server configuration
 const PORT = process.env.PORT || 5001;
 
+const getLocalIpv4 = (): string | null => {
+  const interfaces = os.networkInterfaces();
+
+  for (const addresses of Object.values(interfaces)) {
+    if (!addresses) continue;
+
+    for (const address of addresses) {
+      const family = typeof address.family === 'string' ? address.family : address.family === 4 ? 'IPv4' : 'IPv6';
+
+      if (family === 'IPv4' && !address.internal) {
+        return address.address;
+      }
+    }
+  }
+
+  return null;
+};
+
 /**
  * Start the server
  */
@@ -58,13 +77,19 @@ const startServer = async (): Promise<void> => {
 
     // Start listening on all network interfaces (0.0.0.0) for mobile access
     app.listen(PORT, '0.0.0.0', () => {
+      const localIpv4 = getLocalIpv4();
+
       console.log(`\n✅ Server is running on port ${PORT}`);
       console.log(`📍 API Base URL: http://localhost:${PORT}/api`);
       console.log(`🏥 Health Check: http://localhost:${PORT}/health\n`);
 
       if (process.env.NODE_ENV === 'development') {
         console.log('🔧 Running in DEVELOPMENT mode');
-        console.log(`📱 Mobile Access: http://172.20.10.2:${PORT}/api\n`);
+        if (localIpv4) {
+          console.log(`📱 Mobile Access: http://${localIpv4}:${PORT}/api\n`);
+        } else {
+          console.log('📱 Mobile Access: unable to detect local IPv4 address\n');
+        }
       }
     });
   } catch (error) {

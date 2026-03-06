@@ -1,4 +1,5 @@
 from typing import List, Optional
+from functools import lru_cache
 
 ALLOWED_LABELS: List[str] = [
     "Wallet",
@@ -24,6 +25,7 @@ def require_allowed_label(label: str) -> None:
     if not is_allowed_label(label):
         raise ValueError(f"Label '{label}' is not allowed. Allowed labels are: {', '.join(ALLOWED_LABELS)}")
 
+@lru_cache(maxsize=256)
 def canonicalize_label(label: str) -> Optional[str]:
     """
     Best-effort mapping of a raw label to one of the ALLOWED_LABELS.
@@ -70,6 +72,9 @@ def canonicalize_label(label: str) -> Optional[str]:
         
     if "headphone" in l or "headset" in l:
         return "Headphone"
+
+    if "nic" == l or "national id" in l or "identity card" in l:
+        return "Student ID"
         
     if "id" in l or "card" in l:
         return "Student ID"
