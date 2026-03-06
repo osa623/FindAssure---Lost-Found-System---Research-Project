@@ -9,6 +9,7 @@ class Settings:
     # MongoDB Configuration (loaded from .env — no hardcoded credentials)
     MONGODB_URL: str = os.getenv("MONGODB_URL", "")
     DATABASE_NAME: str = os.getenv("DATABASE_NAME", "lost_and_found")
+    FOUND_ITEMS_COLLECTION: str = os.getenv("FOUND_ITEMS_COLLECTION", "founditems")
 
     # Paths (Relative to project root)
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

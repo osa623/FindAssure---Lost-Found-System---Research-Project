@@ -13,14 +13,16 @@ from xai_explainer import explain_with_shap
 from gemini_reasoner import gemini_reason
 
 from pymongo import MongoClient
+from bson import ObjectId
 from datetime import datetime
 
 MONGO_URI = os.getenv("MONGO_URI")
 
 client = MongoClient(MONGO_URI)
-db = client["fraud_detection_db"]
+db = client["findassure"]
 
-owners_col = db["owners"]
+users_col = db["users"]
+owners_col = db["owners"]  # legacy fallback reads only
 verification_col = db["verification_sessions"]
 behavior_col = db["behavior_sessions"]
 
@@ -71,20 +73,33 @@ def calculate_ear(eye):
     C = np.linalg.norm(eye[0] - eye[3])
     return (A + B) / (2.0 * C)
 
+def build_user_selector(owner_id):
+    owner_id = str(owner_id).strip()
+    selectors = [{"firebaseUid": owner_id}]
+    if ObjectId.is_valid(owner_id):
+        selectors.append({"_id": ObjectId(owner_id)})
+    return {"$or": selectors}
+
 def touch_owner(owner_id):
-    owners_col.update_one(
-        {"owner_id": owner_id},
-        {
-            "$setOnInsert": {
-                "created_at": datetime.utcnow(),
-                "risk_level": "low",
-                "flags": []
-            },
-            "$set": {
-                "last_seen_at": datetime.utcnow()
-            }
-        },
-        upsert=True
+    selector = build_user_selector(owner_id)
+    now = datetime.utcnow()
+
+    result = users_col.update_one(
+        selector,
+        {"$set": {"last_seen_at": now}}
+    )
+
+    if result.matched_count == 0:
+        print(f"Warning: user not found for owner_id={owner_id}. Skipping user profile update.")
+        return
+
+    users_col.update_one(
+        {**selector, "risk_level": {"$exists": False}},
+        {"$set": {"risk_level": "low"}}
+    )
+    users_col.update_one(
+        {**selector, "flags": {"$exists": False}},
+        {"$set": {"flags": []}}
     )
 
 # =====================================================
@@ -178,11 +193,20 @@ def analyze_suspicion():
     # -------------------------------------------------
     # Collect videos
     # -------------------------------------------------
-    video_files = [
-        request.files[k]
-        for k in request.files
-        if k.startswith("owner_answer_")
-    ]
+    expected_keys = []
+    for a in data.get("answers", []):
+        key = a.get("video_key")
+        if key:
+            expected_keys.append(str(key))
+
+    if expected_keys:
+        video_files = [request.files[k] for k in expected_keys if k in request.files]
+    else:
+        video_files = [
+            request.files[k]
+            for k in request.files
+            if k.startswith("owner_answer_")
+        ]
 
     if not video_files:
         return jsonify({"error": "No owner answer videos provided"}), 400
@@ -325,8 +349,8 @@ def analyze_suspicion():
 # =====================
 @app.route("/fraud-summary/<owner_id>", methods=["GET"])
 def fraud_summary(owner_id):
-    owner_id = owner_id.strip().lower()
-    result = analyze_fraud_for_owner(owner_id,owners_col, verification_col, behavior_col)
+    owner_id = owner_id.strip()
+    result = analyze_fraud_for_owner(owner_id, users_col, verification_col, behavior_col, owners_col)
 
     if not result:
         return jsonify({"error": "Owner not found"}), 404
@@ -341,8 +365,20 @@ def fraud_summary(owner_id):
 def fraud_summary_all():
     results = []
 
+    owner_ids = set()
+
+    for u in users_col.find({"role": "owner"}, {"_id": 1, "firebaseUid": 1}):
+        if u.get("_id"):
+            owner_ids.add(str(u["_id"]))
+        if u.get("firebaseUid"):
+            owner_ids.add(str(u["firebaseUid"]).strip())
+
     for o in owners_col.find({}, {"owner_id": 1}):
-        r = analyze_fraud_for_owner(o["owner_id"], owners_col, verification_col, behavior_col)
+        if "owner_id" in o and o["owner_id"]:
+            owner_ids.add(str(o["owner_id"]).strip())
+
+    for owner_id in owner_ids:
+        r = analyze_fraud_for_owner(owner_id, users_col, verification_col, behavior_col, owners_col)
         if r:
             results.append(r)
 

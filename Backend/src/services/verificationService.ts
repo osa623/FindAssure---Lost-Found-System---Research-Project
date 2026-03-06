@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { Verification, IVerification, VerificationStatus, IVerificationAnswer } from '../models/Verification';
 import { FoundItem } from '../models/FoundItem';
+import { LostRequest } from '../models/LostRequest';
 import { verifyOwnershipWithPython, PythonVerificationRequest, PythonVerificationResponse, VideoFile } from './pythonVerificationService';
 
 export interface OwnerAnswerInput {
@@ -56,10 +57,34 @@ export const createVerification = async (
     };
   });
 
+  // Try to link the verification with the owner's related lost request
+  // so we can store the original lost description in this same record.
+  const ownerObjectId = new Types.ObjectId(data.ownerId);
+  const foundItemObjectId = new Types.ObjectId(data.foundItemId);
+
+  let linkedLostRequest = await LostRequest.findOne({
+    ownerId: ownerObjectId,
+    matchedFoundItemIds: foundItemObjectId,
+  }).sort({ createdAt: -1 });
+
+  // Fallback: latest lost request from this owner
+  if (!linkedLostRequest) {
+    linkedLostRequest = await LostRequest.findOne({ ownerId: ownerObjectId }).sort({ createdAt: -1 });
+  }
+
   // Create verification record
   const verification = await Verification.create({
-    foundItemId: new Types.ObjectId(data.foundItemId),
-    ownerId: new Types.ObjectId(data.ownerId),
+    foundItemId: foundItemObjectId,
+    ownerId: ownerObjectId,
+    ownerLostRequestId: linkedLostRequest?._id || null,
+    ownerLostDescription: linkedLostRequest?.description || null,
+    foundItemSnapshot: {
+      category: foundItem.category,
+      description: foundItem.description,
+      imageUrl: foundItem.imageUrl,
+      found_location: foundItem.found_location || [],
+      status: foundItem.status,
+    },
     answers,
     status: 'pending',
     similarityScore: null,

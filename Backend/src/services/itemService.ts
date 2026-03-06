@@ -27,6 +27,21 @@ export interface CreateLostRequestData {
   owner_location_confidence_stage: number;
 }
 
+export interface AiSearchMatchInput {
+  id?: string;
+  description?: string;
+  category?: string;
+  score?: number;
+}
+
+export interface AiMatchedFoundItem {
+  foundItemId: string;
+  category: string;
+  description: string;
+  score: number;
+  found_location: ILocationDetail[];
+}
+
 /**
  * Create a new found item
  */
@@ -126,6 +141,123 @@ export const createLostRequest = async (
   });
 
   return lostRequest;
+};
+
+/**
+ * Resolve local FoundItem IDs from Python semantic matches.
+ * First tries direct Mongo ObjectId IDs, then exact category+description fallback.
+ */
+export const resolveFoundItemIdsFromAiMatches = async (
+  matches: AiSearchMatchInput[]
+): Promise<string[]> => {
+  if (!matches || matches.length === 0) return [];
+
+  const resolvedIds = new Set<string>();
+
+  const objectIds = matches
+    .map((m) => m.id)
+    .filter((id): id is string => Boolean(id && Types.ObjectId.isValid(id)))
+    .map((id) => new Types.ObjectId(id));
+
+  if (objectIds.length > 0) {
+    const docs = await FoundItem.find({
+      _id: { $in: objectIds },
+      status: { $ne: 'claimed' },
+    }).select('_id');
+
+    docs.forEach((doc) => resolvedIds.add(String(doc._id)));
+  }
+
+  const unresolvedTextMatches = matches.filter(
+    (m) =>
+      Boolean(m.description) &&
+      !resolvedIds.has(m.id || '')
+  );
+
+  for (const match of unresolvedTextMatches) {
+    const doc = await FoundItem.findOne({
+      description: match.description,
+      ...(match.category ? { category: match.category } : {}),
+      status: { $ne: 'claimed' },
+    }).select('_id');
+
+    if (doc?._id) {
+      resolvedIds.add(String(doc._id));
+    }
+  }
+
+  return Array.from(resolvedIds);
+};
+
+/**
+ * Resolve AI match payloads to local FoundItem records with score/location.
+ */
+export const resolveAiMatchesToFoundItems = async (
+  matches: AiSearchMatchInput[]
+): Promise<AiMatchedFoundItem[]> => {
+  if (!matches || matches.length === 0) return [];
+
+  const resolved: AiMatchedFoundItem[] = [];
+  const seen = new Set<string>();
+
+  const toScore = (value?: number): number => {
+    if (typeof value !== 'number' || Number.isNaN(value)) return 0;
+    // Python may return 0..1 or 0..100, normalize to 0..100
+    return value <= 1 ? Math.round(value * 100) : Math.round(value);
+  };
+
+  for (const match of matches) {
+    let doc: IFoundItem | null = null;
+
+    if (match.id && Types.ObjectId.isValid(match.id)) {
+      doc = await FoundItem.findOne({
+        _id: new Types.ObjectId(match.id),
+        status: { $ne: 'claimed' },
+      });
+    }
+
+    if (!doc && match.description) {
+      doc = await FoundItem.findOne({
+        description: match.description,
+        ...(match.category ? { category: match.category } : {}),
+        status: { $ne: 'claimed' },
+      });
+    }
+
+    if (!doc) continue;
+
+    const foundItemId = String(doc._id);
+    if (seen.has(foundItemId)) continue;
+    seen.add(foundItemId);
+
+    resolved.push({
+      foundItemId,
+      category: doc.category,
+      description: doc.description,
+      score: toScore(match.score),
+      found_location: doc.found_location || [],
+    });
+  }
+
+  return resolved;
+};
+
+/**
+ * Update matched found item IDs for a lost request.
+ */
+export const updateLostRequestMatches = async (
+  lostRequestId: string,
+  matchedFoundItemIds: string[]
+): Promise<ILostRequest | null> => {
+  const objectIds = matchedFoundItemIds
+    .filter((id) => Types.ObjectId.isValid(id))
+    .map((id) => new Types.ObjectId(id));
+
+  return LostRequest.findByIdAndUpdate(
+    lostRequestId,
+    { matchedFoundItemIds: objectIds },
+    { new: true }
+  );
 };
 
 /**

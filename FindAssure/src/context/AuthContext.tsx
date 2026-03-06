@@ -58,6 +58,21 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const getSuspensionErrorMessage = (error: any): string | null => {
+  const status = error?.response?.status;
+  if (status !== 403) return null;
+
+  const backendMessage = String(error?.response?.data?.message || '').toLowerCase();
+  if (!backendMessage.includes('suspend')) return null;
+
+  const suspendedUntil = error?.response?.data?.suspendedUntil;
+  if (suspendedUntil) {
+    return `You cannot access the app right now. Your account is suspended until ${new Date(suspendedUntil).toLocaleString()}. Please contact us.`;
+  }
+
+  return 'You cannot access the app right now. Your account is suspended. Please contact us.';
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
@@ -96,7 +111,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Sync user with backend
-  const syncUserWithBackend = async (firebaseUser: FirebaseUser, forceRefresh = false) => {
+  const syncUserWithBackend = async (
+    firebaseUser: FirebaseUser,
+    forceRefresh = false,
+    throwOnError = false
+  ) => {
     try {
       const idToken = await firebaseUser.getIdToken(forceRefresh);
       setToken(idToken);
@@ -109,6 +128,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(response.data);
       
     } catch (error: any) {
+      const suspensionMessage = getSuspensionErrorMessage(error);
+      if (suspensionMessage) {
+        if (throwOnError) {
+          throw new Error(suspensionMessage);
+        }
+        console.warn('Suspended user sync blocked');
+        return;
+      }
+
+      if (throwOnError) {
+        throw error;
+      }
+
       console.error('Error syncing with backend:', error);
       
       // Provide helpful error messages
@@ -237,7 +269,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       
       // 2. Sync with backend
-      await syncUserWithBackend(userCredential.user);
+      await syncUserWithBackend(userCredential.user, false, true);
       
       // 3. Setup token refresh if keepLoggedIn is enabled
       if (keepLogin) {
@@ -247,6 +279,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
     } catch (error: any) {
       console.error('Sign in error:', error);
+
+      const suspensionMessage = getSuspensionErrorMessage(error);
+      if (suspensionMessage) {
+        try {
+          await firebaseSignOut(auth);
+        } catch (_) {}
+        throw new Error(suspensionMessage);
+      }
       
       // Handle specific error cases with user-friendly messages
       if (error.code === 'auth/user-not-found') {

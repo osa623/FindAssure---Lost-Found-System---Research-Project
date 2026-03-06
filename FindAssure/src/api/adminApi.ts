@@ -20,6 +20,21 @@ export const adminApi = {
     return response.data;
   },
 
+  // Suspend or unsuspend user
+  updateUserSuspension: async (
+    id: string,
+    isSuspended: boolean,
+    reason?: string,
+    suspendFor?: '3d' | '7d' | 'manual'
+  ): Promise<User> => {
+    const response = await axiosClient.patch<User>(`/admin/users/${id}/suspension`, {
+      isSuspended,
+      reason,
+      suspendFor,
+    });
+    return response.data;
+  },
+
   // Delete user (removes from both MongoDB and Firebase)
   deleteUser: async (id: string): Promise<{ message: string; deletedUser: { id: string; email: string; name: string } }> => {
     const response = await axiosClient.delete(`/admin/users/${id}`);

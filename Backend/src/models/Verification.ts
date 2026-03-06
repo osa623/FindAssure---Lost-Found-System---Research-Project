@@ -13,6 +13,19 @@ export interface IVerificationAnswer {
 export interface IVerification extends Document {
   foundItemId: Types.ObjectId;
   ownerId: Types.ObjectId;
+  ownerLostRequestId?: Types.ObjectId | null;
+  ownerLostDescription?: string | null;
+  foundItemSnapshot?: {
+    category?: string;
+    description?: string;
+    imageUrl?: string;
+    found_location?: Array<{
+      location: string;
+      floor_id?: string | null;
+      hall_name?: string | null;
+    }>;
+    status?: string;
+  } | null;
   answers: IVerificationAnswer[];
   status: VerificationStatus;
   similarityScore: number | null;
@@ -62,6 +75,21 @@ const verificationSchema = new Schema<IVerification>(
       required: true,
       index: true,
     },
+    ownerLostRequestId: {
+      type: Schema.Types.ObjectId,
+      ref: 'LostRequest',
+      default: null,
+      index: true,
+    },
+    ownerLostDescription: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    foundItemSnapshot: {
+      type: Schema.Types.Mixed,
+      default: null,
+    },
     answers: {
       type: [verificationAnswerSchema],
       required: true,
@@ -94,5 +122,6 @@ const verificationSchema = new Schema<IVerification>(
 // Compound index for efficient querying
 verificationSchema.index({ foundItemId: 1, ownerId: 1 });
 verificationSchema.index({ status: 1, createdAt: -1 });
+verificationSchema.index({ ownerId: 1, status: 1, createdAt: -1 });
 
 export const Verification = mongoose.model<IVerification>('Verification', verificationSchema);

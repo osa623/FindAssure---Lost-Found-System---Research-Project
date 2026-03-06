@@ -1,5 +1,5 @@
 // AdminUsersScreen – User Management for Admin
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import { 
   View, 
   Text, 
@@ -10,13 +10,14 @@ import {
   TouchableOpacity,
   ActivityIndicator 
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList, User } from '../../types/models';
 import { adminApi } from '../../api/adminApi';
 import { PrimaryButton } from '../../components/PrimaryButton';
 
 type AdminUsersNavigationProp = StackNavigationProp<RootStackParamList, 'AdminUsers'>;
+const POLL_INTERVAL_MS = 10000;
 
 const AdminUsersScreen = () => {
   const navigation = useNavigation<AdminUsersNavigationProp>();
@@ -25,26 +26,48 @@ const AdminUsersScreen = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [suspendingUserId, setSuspendingUserId] = useState<string | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async (silent: boolean = false) => {
     try {
       const usersData = await adminApi.getAllUsers();
       setUsers(usersData);
+      setLastUpdatedAt(new Date());
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to load users');
+      if (!silent) {
+        Alert.alert('Error', error.message || 'Failed to load users');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
-
-  useEffect(() => {
-    fetchUsers();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+
+      const run = async () => {
+        if (!isActive) return;
+        await fetchUsers(true);
+      };
+
+      void run();
+      const intervalId = setInterval(() => {
+        void run();
+      }, POLL_INTERVAL_MS);
+
+      return () => {
+        isActive = false;
+        clearInterval(intervalId);
+      };
+    }, [fetchUsers])
+  );
 
   const handleRefresh = () => {
     setRefreshing(true);
-    fetchUsers();
+    fetchUsers(false);
   };
 
   const handleDeleteUser = (user: User) => {
@@ -87,12 +110,83 @@ const AdminUsersScreen = () => {
     }
   };
 
+  const handleToggleSuspension = (user: User) => {
+    if (user.role === 'admin') {
+      Alert.alert('Protected User', 'Admin users cannot be suspended.');
+      return;
+    }
+
+    const willSuspend = !user.isSuspended;
+    if (willSuspend) {
+      Alert.alert(
+        'Suspend Duration',
+        `Choose suspension period for ${user.name || user.email}`,
+        [
+          { text: '3 Days', onPress: () => confirmToggleSuspension(user, true, '3d') },
+          { text: '7 Days', onPress: () => confirmToggleSuspension(user, true, '7d') },
+          { text: 'Until Unsuspend', onPress: () => confirmToggleSuspension(user, true, 'manual') },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Unsuspend User',
+      `Unsuspend ${user.name || user.email}?\n\nThis user will be allowed to use the app again.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unsuspend',
+          style: 'default',
+          onPress: () => confirmToggleSuspension(user, false),
+        },
+      ]
+    );
+  };
+
+  const confirmToggleSuspension = async (
+    user: User,
+    willSuspend: boolean,
+    suspendFor?: '3d' | '7d' | 'manual'
+  ) => {
+    setSuspendingUserId(user._id);
+    try {
+      const updatedUser = await adminApi.updateUserSuspension(
+        user._id,
+        willSuspend,
+        willSuspend && user.isSuspicious
+          ? 'Suspended by admin due to suspicious fraud behavior'
+          : undefined,
+        suspendFor
+      );
+
+      setUsers(prevUsers =>
+        prevUsers.map(u => (u._id === user._id ? { ...u, ...updatedUser } : u))
+      );
+
+      Alert.alert(
+        'Success',
+        willSuspend
+          ? `${user.name || user.email} has been suspended${suspendFor === '3d' ? ' for 3 days' : suspendFor === '7d' ? ' for 7 days' : ''}.`
+          : `${user.name || user.email} has been unsuspended.`
+      );
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update suspension status');
+    } finally {
+      setSuspendingUserId(null);
+    }
+  };
+
   const renderUserCard = (user: User) => {
     const isDeleting = deletingUserId === user._id;
+    const isSuspending = suspendingUserId === user._id;
     const isAdmin = user.role === 'admin';
+    const isSuspicious = Boolean(user.isSuspicious || user.suspiciousSeverity === 'critical');
+    const isSuspended = Boolean(user.isSuspended);
 
     return (
-      <View key={user._id} style={styles.userCard}>
+      <View key={user._id} style={[styles.userCard, isSuspicious && styles.suspiciousUserCard]}>
         <View style={styles.userInfo}>
           <View style={styles.userHeader}>
             <Text style={styles.userName}>{user.name || 'No Name'}</Text>
@@ -106,6 +200,36 @@ const AdminUsersScreen = () => {
           
           <Text style={styles.userEmail}>{user.email}</Text>
           {user.phone && <Text style={styles.userPhone}>📱 {user.phone}</Text>}
+
+          {isSuspended && (
+            <View style={[styles.suspiciousBadge, styles.suspendedBadge]}>
+              <Text style={styles.suspiciousText}>SUSPENDED</Text>
+            </View>
+          )}
+
+          {isSuspended && user.suspendedUntil && (
+            <Text style={styles.reasonText}>
+              Until: {new Date(user.suspendedUntil).toLocaleString()}
+            </Text>
+          )}
+
+          {!isSuspended && isSuspicious && (
+            <View style={[styles.suspiciousBadge, styles.criticalBadge]}>
+              <Text style={styles.suspiciousText}>SUSPICIOUS - CRITICAL</Text>
+            </View>
+          )}
+
+          {!!user.fraudRiskScore && (
+            <Text style={styles.riskText}>
+              Fraud Risk: {Math.round((user.fraudRiskScore || 0) * 100)}%
+            </Text>
+          )}
+
+          {isSuspicious && !!(user.suspiciousReason || user.fraudReasons?.length) && (
+            <Text style={styles.reasonText} numberOfLines={2}>
+              Reason: {user.suspiciousReason || user.fraudReasons?.[0]}
+            </Text>
+          )}
           
           <Text style={styles.userDate}>
             Joined: {new Date(user.createdAt).toLocaleDateString()}
@@ -115,12 +239,31 @@ const AdminUsersScreen = () => {
         <View style={styles.actionButtons}>
           {!isAdmin && (
             <TouchableOpacity
-              style={[styles.deleteButton, isDeleting && styles.deleteButtonDisabled]}
+              style={[
+                styles.suspendButton,
+                isSuspending && styles.actionButtonDisabled,
+              ]}
+              onPress={() => handleToggleSuspension(user)}
+              disabled={isSuspending || isDeleting}
+            >
+              {isSuspending ? (
+                <ActivityIndicator size="small" color="#C62828" />
+              ) : (
+                <Text style={styles.suspendButtonText}>
+                  {isSuspended ? 'Unsuspend' : 'Suspend'}
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
+
+          {!isAdmin && (
+            <TouchableOpacity
+              style={[styles.deleteButton, (isDeleting || isSuspending) && styles.actionButtonDisabled]}
               onPress={() => handleDeleteUser(user)}
-              disabled={isDeleting}
+              disabled={isDeleting || isSuspending}
             >
               {isDeleting ? (
-                <ActivityIndicator size="small" color="#FFF" />
+                <ActivityIndicator size="small" color="#C62828" />
               ) : (
                 <Text style={styles.deleteButtonText}>Delete</Text>
               )}
@@ -157,6 +300,10 @@ const AdminUsersScreen = () => {
           <View style={styles.header}>
             <Text style={styles.title}>User Management</Text>
             <Text style={styles.subtitle}>Total Users: {users.length}</Text>
+            <Text style={styles.subtitle}>
+              Live updates every {Math.floor(POLL_INTERVAL_MS / 1000)}s
+              {lastUpdatedAt ? ` • Last: ${lastUpdatedAt.toLocaleTimeString()}` : ''}
+            </Text>
           </View>
 
           <View style={styles.statsContainer}>
@@ -278,6 +425,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
   },
+  suspiciousUserCard: {
+    backgroundColor: '#FFEBEE',
+    borderWidth: 1,
+    borderColor: '#F5C2C7',
+  },
   userInfo: {
     marginBottom: 12,
   },
@@ -326,20 +478,68 @@ const styles = StyleSheet.create({
   actionButtons: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
+    gap: 8,
+  },
+  suspiciousBadge: {
+    marginTop: 6,
+    marginBottom: 4,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  criticalBadge: {
+    backgroundColor: '#B71C1C',
+  },
+  suspendedBadge: {
+    backgroundColor: '#424242',
+  },
+  suspiciousText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  riskText: {
+    fontSize: 12,
+    color: '#C62828',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  reasonText: {
+    fontSize: 12,
+    color: '#666666',
+    marginTop: 2,
+  },
+  suspendButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    minWidth: 96,
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#C62828',
+  },
+  suspendButtonText: {
+    color: '#C62828',
+    fontSize: 14,
+    fontWeight: '600',
   },
   deleteButton: {
-    backgroundColor: '#E53935',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#C62828',
     paddingHorizontal: 24,
     paddingVertical: 10,
     borderRadius: 8,
     minWidth: 100,
     alignItems: 'center',
   },
-  deleteButtonDisabled: {
+  actionButtonDisabled: {
     backgroundColor: '#CCCCCC',
   },
   deleteButtonText: {
-    color: '#FFFFFF',
+    color: '#C62828',
     fontSize: 14,
     fontWeight: '600',
   },

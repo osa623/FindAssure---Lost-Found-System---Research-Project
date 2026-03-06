@@ -12,6 +12,10 @@ declare global {
         email: string;
         name?: string;
         role: 'owner' | 'founder' | 'admin';
+        isSuspended?: boolean;
+        suspendedUntil?: Date | null;
+        suspensionMode?: '3d' | '7d' | 'manual' | null;
+        suspensionReason?: string | null;
       };
     }
   }
@@ -71,7 +75,35 @@ export const requireAuth = async (
       email: user.email,
       name: user.name,
       role: user.role,
+      isSuspended: user.isSuspended,
+      suspendedUntil: (user as any).suspendedUntil || null,
+      suspensionMode: (user as any).suspensionMode || null,
+      suspensionReason: user.suspensionReason,
     };
+
+    if (user.isSuspended) {
+      const suspendedUntil = (user as any).suspendedUntil ? new Date((user as any).suspendedUntil) : null;
+      const isExpired = suspendedUntil ? suspendedUntil.getTime() <= Date.now() : false;
+      if (isExpired) {
+        user.isSuspended = false;
+        (user as any).suspendedAt = null;
+        (user as any).suspendedUntil = null;
+        (user as any).suspensionMode = null;
+        user.suspensionReason = null;
+        await user.save();
+      } else {
+        const message = suspendedUntil
+          ? `Account is suspended until ${suspendedUntil.toISOString()}.`
+          : 'Account is suspended. Please contact admin.';
+
+        res.status(403).json({
+          message,
+          reason: user.suspensionReason || null,
+          suspendedUntil,
+        });
+        return;
+      }
+    }
 
     next();
   } catch (error: any) {
@@ -156,6 +188,10 @@ export const optionalAuth = async (
           email: user.email,
           name: user.name,
           role: user.role,
+          isSuspended: user.isSuspended,
+          suspendedUntil: (user as any).suspendedUntil || null,
+          suspensionMode: (user as any).suspensionMode || null,
+          suspensionReason: user.suspensionReason,
         };
       }
     } catch (tokenError) {

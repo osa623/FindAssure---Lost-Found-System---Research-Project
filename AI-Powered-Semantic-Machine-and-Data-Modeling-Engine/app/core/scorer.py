@@ -11,6 +11,7 @@ Components:
 """
 
 import hashlib
+from bson import ObjectId
 import logging
 import math
 import os
@@ -19,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +240,6 @@ def _load_calibrator():
         return _calibrator
     _calibrator_loaded = True
     try:
-        from app.config import settings
         cal_path = os.path.join(settings.RERANKER_MODELS_DIR, "calibrator.pkl")
         if os.path.exists(cal_path):
             with open(cal_path, "rb") as f:
@@ -957,12 +958,20 @@ async def inference_rerank(
     attr_map: dict[str, dict] = {}
     if db is not None:
         try:
-            cursor = db.found_items.find(
-                {"item_id": {"$in": found_ids}},
-                {"item_id": 1, "extracted_attributes_json": 1, "description": 1, "category": 1, "created_at": 1},
+            found_items_col = db[settings.FOUND_ITEMS_COLLECTION]
+            object_ids = [ObjectId(fid) for fid in found_ids if ObjectId.is_valid(fid)]
+            cursor = found_items_col.find(
+                {
+                    "$or": [
+                        {"item_id": {"$in": found_ids}},
+                        {"_id": {"$in": object_ids}},
+                    ]
+                },
+                {"item_id": 1, "description": 1, "category": 1, "created_at": 1, "createdAt": 1, "extracted_attributes_json": 1},
             )
             async for doc in cursor:
-                attr_map[doc["item_id"]] = doc
+                doc_id = str(doc.get("item_id") or doc.get("_id"))
+                attr_map[doc_id] = doc
         except Exception as e:
             logger.warning(f"Batch attribute fetch failed: {e}")
 
@@ -972,8 +981,9 @@ async def inference_rerank(
         if not c.get("description") and enriched.get("description"):
             c["description"] = enriched["description"]
         # Carry created_at for time-decay feature
-        if enriched.get("created_at"):
-            c["created_at"] = enriched["created_at"]
+        created_at = enriched.get("created_at") or enriched.get("createdAt")
+        if created_at:
+            c["created_at"] = created_at
 
     # Step 4: Compute features
     for c in candidates:

@@ -6,6 +6,18 @@ export interface User {
   email: string;
   phone: string;
   role: 'owner' | 'admin'; // Only owners and admins register
+  isSuspended?: boolean;
+  suspendedAt?: string | null;
+  suspendedUntil?: string | null;
+  suspensionMode?: '3d' | '7d' | 'manual' | null;
+  suspensionReason?: string | null;
+  isSuspicious?: boolean;
+  suspiciousSeverity?: 'none' | 'warning' | 'critical';
+  fraudRiskScore?: number;
+  fraudRiskLevel?: 'low' | 'medium' | 'high';
+  fraudReasons?: string[];
+  fraudFlags?: string[];
+  suspiciousReason?: string | null;
   createdAt: string;
   updatedAt?: string;
 }

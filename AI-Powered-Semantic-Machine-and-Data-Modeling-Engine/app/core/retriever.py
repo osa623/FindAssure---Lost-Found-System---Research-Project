@@ -7,6 +7,7 @@ import logging
 from typing import Optional
 
 import numpy as np
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,7 @@ class CandidateRetriever:
         try:
             query: dict = {
                 "$text": {"$search": search_string},
+                "status": {"$ne": "claimed"},
             }
             if category:
                 query["category"] = {"$regex": f"^{category}$", "$options": "i"}
@@ -110,8 +112,9 @@ class CandidateRetriever:
                 "score": {"$meta": "textScore"},
             }
 
+            found_items_col = db[settings.FOUND_ITEMS_COLLECTION]
             cursor = (
-                db.found_items.find(query, projection)
+                found_items_col.find(query, projection)
                 .sort([("score", {"$meta": "textScore"})])
                 .limit(top_k)
             )
@@ -120,7 +123,7 @@ class CandidateRetriever:
             candidates = []
             for doc in docs:
                 candidates.append({
-                    "found_id": doc.get("item_id", str(doc.get("_id", ""))),
+                    "found_id": str(doc.get("item_id") or doc.get("_id", "")),
                     "description": doc.get("description", ""),
                     "category": doc.get("category", ""),
                     "vector_score": 0.0,

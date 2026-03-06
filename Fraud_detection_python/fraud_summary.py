@@ -1,15 +1,34 @@
+from bson import ObjectId
+
+
 # =====================
 # HELPERS
 # =====================
 def safe_avg(values):
     return sum(values) / len(values) if values else None
 
+def build_user_selector(owner_id):
+    owner_id = str(owner_id).strip()
+    selectors = [{"firebaseUid": owner_id}]
+    if ObjectId.is_valid(owner_id):
+        selectors.append({"_id": ObjectId(owner_id)})
+    return {"$or": selectors}
+
+def find_owner_profile(owner_id, users_col, owners_col=None):
+    owner = users_col.find_one(build_user_selector(owner_id))
+    if owner:
+        return owner
+    if owners_col is not None:
+        return owners_col.find_one({"owner_id": owner_id})
+    return None
+
 
 # =====================
 # CORE FRAUD ENGINE
 # =====================
-def analyze_fraud_for_owner(owner_id,owners_col, verification_col, behavior_col):
-    owner = owners_col.find_one({"owner_id": owner_id})
+def analyze_fraud_for_owner(owner_id, users_col, verification_col, behavior_col, owners_col=None):
+    owner_id = str(owner_id).strip()
+    owner = find_owner_profile(owner_id, users_col, owners_col)
     if not owner:
         return None
 
@@ -91,8 +110,8 @@ def analyze_fraud_for_owner(owner_id,owners_col, verification_col, behavior_col)
             "avg_identity_confidence": avg_identity,
             "avg_behavior_suspicion": avg_behavior
         },
-        "last_seen_at": owner.get("last_seen_at"),
-        "flags": owner.get("flags"),
+        "last_seen_at": owner.get("last_seen_at") or owner.get("updatedAt"),
+        "flags": owner.get("flags", []),
         "is_active": owner.get("is_active", True),
         "is_suspicious": owner.get("is_suspicious", is_suspicious),
     }

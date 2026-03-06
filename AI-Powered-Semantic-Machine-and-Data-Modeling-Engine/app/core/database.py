@@ -66,14 +66,16 @@ async def connect_to_mongo(max_retries: int = 3, retry_delay: int = 2) -> bool:
             # ----------------------------------------------------------------
             # Core collection indexes (original)
             # ----------------------------------------------------------------
-            await mongodb.db.found_items.create_index([("item_id", ASCENDING)], unique=True)
-            await mongodb.db.found_items.create_index([("category", ASCENDING)])
-            await mongodb.db.found_items.create_index([("created_at", DESCENDING)])
+            found_items_col = mongodb.db[settings.FOUND_ITEMS_COLLECTION]
+            await found_items_col.create_index([("item_id", ASCENDING)], unique=True, sparse=True)
+            await found_items_col.create_index([("category", ASCENDING)])
+            await found_items_col.create_index([("created_at", DESCENDING)])
+            await found_items_col.create_index([("createdAt", DESCENDING)])
 
             # Full-text index on found_items for BM25-style keyword search
             # Covers description + searchable_tokens (added by batch extractor)
             try:
-                await mongodb.db.found_items.create_index(
+                await found_items_col.create_index(
                     [("description", TEXT), ("searchable_tokens", TEXT)],
                     name="found_items_text_search"
                 )
