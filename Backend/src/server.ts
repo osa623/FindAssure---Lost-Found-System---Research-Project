@@ -1,11 +1,15 @@
 import dotenv from 'dotenv';
 import os from 'os';
+import path from 'path';
 import { createApp } from './app';
 import { connectDB } from './config/db';
 import { initializeFirebaseAdmin } from './config/firebaseAdmin';
 
 // Load environment variables
-dotenv.config();
+dotenv.config({
+  path: path.resolve(__dirname, '../.env'),
+  override: true,
+});
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
@@ -39,7 +43,7 @@ if (missingEnvVars.length > 0) {
 }
 
 // Server configuration
-const PORT = process.env.PORT || 5001;
+const PORT = Number(process.env.PORT || 5001);
 
 const getLocalIpv4 = (): string | null => {
   const interfaces = os.networkInterfaces();
@@ -48,7 +52,7 @@ const getLocalIpv4 = (): string | null => {
     if (!addresses) continue;
 
     for (const address of addresses) {
-      const family = typeof address.family === 'string' ? address.family : address.family === 4 ? 'IPv4' : 'IPv6';
+      const family = String(address.family);
 
       if (family === 'IPv4' && !address.internal) {
         return address.address;
@@ -98,17 +102,6 @@ const startServer = async (): Promise<void> => {
   }
 };
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('❌ Uncaught Exception:', error);
-  process.exit(1);
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
-});
-
 // Start the server
 startServer();
+

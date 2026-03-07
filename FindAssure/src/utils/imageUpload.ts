@@ -1,4 +1,3 @@
-import * as FileSystem from 'expo-file-system';
 import axios from 'axios';
 import { BASE_URL } from '../config/api.config';
 
@@ -27,8 +26,9 @@ export const uploadImage = async (imageUri: string): Promise<string> => {
     // Upload to backend
     const response = await axios.post(`${BASE_URL}/upload/image`, formData, {
       headers: {
-        'Content-Type': 'multipart/form-data',
+        'Accept': 'application/json',
       },
+      timeout: 120000,
     });
 
     if (response.data && response.data.imageUrl) {
