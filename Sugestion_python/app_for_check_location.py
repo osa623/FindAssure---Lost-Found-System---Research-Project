@@ -75,13 +75,16 @@ class LocationMatcher:
         hall = owner.get("hall_name")
         stage = owner.get("owner_location_confidence_stage", 1)
         category_data = owner.get("categary_data", [])
+        floor_int = self._to_int_floor(floor)
 
         if hall:
-            matched = self.building_matcher.match_with_hall(owner_loc, floor, hall, stage)
+            # Hall matching requires floor context; fall back to provided floor if parse failed.
+            floor_for_match = floor_int if floor_int is not None else floor
+            matched = self.building_matcher.match_with_hall(owner_loc, floor_for_match, hall, stage)
             loc_type = "building_with_hall"
 
-        elif floor:
-            matched = self.building_matcher.match_with_floor(owner_loc, floor, stage)
+        elif floor_int is not None:
+            matched = self.building_matcher.match_with_floor(owner_loc, floor_int, stage)
             loc_type = "building_with_floor"
 
         elif self._is_building_location(owner_loc):
@@ -93,11 +96,11 @@ class LocationMatcher:
             matched = self.ground_matcher.match(owner_loc, stage)
             loc_type = "ground_location"
 
-        matched_ids = self._filter_items(category_data, owner_loc, floor, hall, stage, matched)
+        matched_ids = self._filter_items(category_data, owner_loc, floor_int, hall, stage, matched)
 
         if not matched_ids:
             matched = set()
-            matched_ids = self._filter_items(category_data, owner_loc, floor, hall, 3, matched)
+            matched_ids = self._filter_items(category_data, owner_loc, floor_int, hall, 3, matched)
 
         return {
             "location_type": loc_type,
@@ -112,15 +115,25 @@ class LocationMatcher:
             return False
         return location in self.building_data
 
+    @staticmethod
+    def _to_int_floor(value):
+        if value is None:
+            return None
+        try:
+            return int(str(value).strip())
+        except Exception:
+            return None
+
     def _filter_items(self, items, owner_loc, owner_floor, owner_hall, stage, matched_locations):
         matched_ids = []
         actual_building = self.entrance_to_building.get(owner_loc, owner_loc)
         is_entrance = owner_loc in self.entrance_to_building
+        owner_floor_int = self._to_int_floor(owner_floor)
 
         for item in items:
             for found in item.get("found_location", []):
                 loc = found.get("location")
-                floor = found.get("floor_id")
+                floor_int = self._to_int_floor(found.get("floor_id"))
                 hall = found.get("hall_name")
                 ok = False
 
@@ -128,16 +141,19 @@ class LocationMatcher:
                     if loc == actual_building and hall in matched_locations:
                         ok = True
 
-                elif owner_floor is not None:
+                elif owner_floor_int is not None:
                     if stage == 1:
-                        ok = loc == actual_building and floor == owner_floor
+                        ok = loc == actual_building and floor_int == owner_floor_int
                     elif stage == 2:
-                        ok = loc == actual_building and floor in [owner_floor, owner_floor + 1, owner_floor - 1]
+                        ok = (
+                            loc == actual_building and
+                            floor_int in [owner_floor_int, owner_floor_int + 1, owner_floor_int - 1]
+                        )
                     elif stage == 3:
                         ok = loc == actual_building
 
                 else:
-                    if is_entrance and loc == actual_building and (floor or hall):
+                    if is_entrance and loc == actual_building and (floor_int is not None or hall):
                         continue
                     if loc in matched_locations:
                         ok = True
@@ -153,11 +169,17 @@ class LocationMatcher:
 
 @app.route("/api/find-items", methods=["POST"])
 def find_items():
-    data = request.get_json()
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({"success": False, "error": "No data provided"}), 400
 
-    print("Received data:", data.get("found_location.location", []))
+    # Debug log: print full incoming JSON body in terminal.
+    try:
+        print("\n[Suggestion API] Incoming /api/find-items payload:")
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    except Exception:
+        print("[Suggestion API] Incoming /api/find-items payload (raw):", request.get_data(as_text=True))
+
     required = ["owner_id", "categary_name", "categary_data",
                 "owner_location", "owner_location_confidence_stage"]
 
@@ -181,25 +203,32 @@ def find_items():
                 if loc:
                     all_locations.add(loc)
 
-        return jsonify({
+        response_payload = {
             "success": True,
             "location_match": False,
             "matched_locations": list(all_locations),
             "matched_item_ids": all_ids
-        }), 200
+        }
+        print("[Suggestion API] Response payload:")
+        print(json.dumps(response_payload, indent=2, ensure_ascii=False))
+        return jsonify(response_payload), 200
 
     try:
         matcher = LocationMatcher(GROUND_LOCATIONS, BUILDING_FLOORS)
         result = matcher.get_matched_items(data)
 
-        return jsonify({
+        response_payload = {
             "success": True,
-              "location_match": True,
+            "location_match": True,
             "matched_locations": result["matched_locations"],
             "matched_item_ids": result["matched_ids"]
-        })
+        }
+        print("[Suggestion API] Response payload:")
+        print(json.dumps(response_payload, indent=2, ensure_ascii=False))
+        return jsonify(response_payload)
 
     except Exception as e:
+        print(f"[Suggestion API] Error: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
