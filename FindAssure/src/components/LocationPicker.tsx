@@ -7,8 +7,9 @@ import {
   Modal,
   FlatList,
   Platform,
-  ScrollView,
+  ActivityIndicator,
 } from 'react-native';
+import axiosClient from '../api/axiosClient';
 import {
   getLocationOptions,
   getFloorOptions,
@@ -40,15 +41,120 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
   const [selectedLocation, setSelectedLocation] = useState<string>(selectedValue?.location || '');
   const [selectedFloor, setSelectedFloor] = useState<string | null>(selectedValue?.floor_id || null);
   const [selectedHall, setSelectedHall] = useState<string | null>(selectedValue?.hall_name || null);
+  const [locationOptions, setLocationOptions] = useState<Array<{ label: string; value: string }>>([]);
+  const [floorOptions, setFloorOptions] = useState<Array<{ label: string; value: string }>>([]);
+  const [hallOptions, setHallOptions] = useState<Array<{ label: string; value: string }>>([]);
+  const [locationsWithFloors, setLocationsWithFloors] = useState<Set<string>>(new Set());
+  const [loadingOptions, setLoadingOptions] = useState(false);
 
-  const locationOptions = getLocationOptions();
-  const floorOptions = selectedLocation ? getFloorOptions(selectedLocation) : [];
-  const hallOptions = selectedLocation && selectedFloor ? getHallOptions(selectedLocation, selectedFloor) : [];
+  const locationHasFloors = (location: string): boolean => {
+    return locationsWithFloors.has(location) || hasFloors(location);
+  };
+
+  const loadLocations = async () => {
+    setLoadingOptions(true);
+    try {
+      const response = await axiosClient.get('/locations/main');
+      const items = response.data?.data;
+      if (Array.isArray(items) && items.length > 0) {
+        setLocationOptions(
+          items.map((item: any) => ({
+            label: item.label,
+            value: item.value,
+          }))
+        );
+        setLocationsWithFloors(
+          new Set(
+            items
+              .filter((item: any) => Boolean(item.hasFloors))
+              .map((item: any) => item.value)
+          )
+        );
+      } else {
+        setLocationOptions(getLocationOptions());
+      }
+    } catch (error) {
+      console.warn('Failed to fetch locations from backend, using local fallback');
+      setLocationOptions(getLocationOptions());
+    } finally {
+      setLoadingOptions(false);
+    }
+  };
+
+  const loadFloors = async (location: string) => {
+    if (!locationHasFloors(location)) {
+      setFloorOptions([]);
+      return;
+    }
+
+    try {
+      const response = await axiosClient.get(
+        `/locations/${encodeURIComponent(location)}/floors`
+      );
+      const items = response.data?.data;
+      if (Array.isArray(items) && items.length > 0) {
+        setFloorOptions(
+          items.map((item: any) => ({
+            label: item.label,
+            value: item.value,
+          }))
+        );
+      } else {
+        setFloorOptions(getFloorOptions(location));
+      }
+    } catch (error) {
+      console.warn('Failed to fetch floors from backend, using local fallback');
+      setFloorOptions(getFloorOptions(location));
+    }
+  };
+
+  const loadHalls = async (location: string, floorId: string) => {
+    try {
+      const response = await axiosClient.get(
+        `/locations/${encodeURIComponent(location)}/floors/${encodeURIComponent(floorId)}/halls`
+      );
+      const items = response.data?.data;
+      if (Array.isArray(items) && items.length > 0) {
+        setHallOptions(
+          items.map((item: any) => ({
+            label: item.label,
+            value: item.value,
+          }))
+        );
+      } else {
+        setHallOptions(getHallOptions(location, floorId));
+      }
+    } catch (error) {
+      console.warn('Failed to fetch halls from backend, using local fallback');
+      setHallOptions(getHallOptions(location, floorId));
+    }
+  };
+
+  useEffect(() => {
+    loadLocations();
+  }, []);
+
+  useEffect(() => {
+    if (selectedLocation) {
+      loadFloors(selectedLocation);
+    } else {
+      setFloorOptions([]);
+    }
+    setHallOptions([]);
+  }, [selectedLocation]);
+
+  useEffect(() => {
+    if (selectedLocation && selectedFloor) {
+      loadHalls(selectedLocation, selectedFloor);
+    } else {
+      setHallOptions([]);
+    }
+  }, [selectedLocation, selectedFloor]);
 
   const handleLocationSelect = (value: string) => {
     setSelectedLocation(value);
     
-    if (hasFloors(value)) {
+    if (locationHasFloors(value)) {
       setCurrentStep('floor');
       setSelectedFloor(null);
       setSelectedHall(null);
@@ -235,6 +341,18 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
             <FlatList
               data={getCurrentOptions()}
               keyExtractor={(item) => item.value}
+              ListEmptyComponent={
+                <View style={styles.emptyState}>
+                  {loadingOptions ? (
+                    <>
+                      <ActivityIndicator size="small" color="#1565C0" />
+                      <Text style={styles.emptyText}>Loading locations...</Text>
+                    </>
+                  ) : (
+                    <Text style={styles.emptyText}>No options available</Text>
+                  )}
+                </View>
+              }
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={styles.optionItem}
@@ -351,6 +469,16 @@ const styles = StyleSheet.create({
   },
   optionIcon: {
     fontSize: 16,
+    color: '#666666',
+  },
+  emptyState: {
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyText: {
+    marginTop: 8,
+    fontSize: 14,
     color: '#666666',
   },
 });

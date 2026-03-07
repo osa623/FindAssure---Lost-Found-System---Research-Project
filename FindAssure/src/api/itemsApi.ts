@@ -40,11 +40,11 @@ export const itemsApi = {
         formData,
         {
           headers: {
-            'Content-Type': 'multipart/form-data',
             'Accept': 'application/json',
           },
           // Important: Set transformRequest to undefined to let axios handle FormData properly
           transformRequest: (data) => data,
+          timeout: 120000,
         }
       );
 
@@ -183,7 +183,6 @@ export const itemsApi = {
       // Send multipart/form-data request
       const response = await axiosClient.post('/items/verification', formData, {
         headers: {
-          'Content-Type': 'multipart/form-data',
           'Accept': 'application/json',
         },
         // Important: Set transformRequest to undefined to let axios handle FormData properly

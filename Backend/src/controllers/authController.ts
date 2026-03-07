@@ -73,11 +73,7 @@ export const register = async (
       throw saveError;
     }
 
-    // Return user without sensitive fields
-    const userObject = user.toObject();
-    delete userObject.__v;
-
-    res.status(201).json({ user: userObject, token });
+    res.status(201).json({ user, token });
   } catch (error) {
     next(error);
   }

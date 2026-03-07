@@ -2,12 +2,49 @@ import { v2 as cloudinary } from 'cloudinary';
 import multer from 'multer';
 import { Request } from 'express';
 
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || '',
-  api_key: process.env.CLOUDINARY_API_KEY || '',
-  api_secret: process.env.CLOUDINARY_API_SECRET || '',
-});
+const resolveCloudinaryConfig = () => {
+  const cloudinaryUrl = (process.env.CLOUDINARY_URL || '').trim();
+  if (cloudinaryUrl) {
+    try {
+      const parsed = new URL(cloudinaryUrl);
+      return {
+        cloud_name: (parsed.hostname || '').trim(),
+        api_key: decodeURIComponent((parsed.username || '').trim()),
+        api_secret: decodeURIComponent((parsed.password || '').trim()),
+      };
+    } catch (error) {
+      console.error('Invalid CLOUDINARY_URL format');
+    }
+  }
+
+  return {
+    cloud_name: (process.env.CLOUDINARY_CLOUD_NAME || '').trim(),
+    api_key: (process.env.CLOUDINARY_API_KEY || '').trim(),
+    api_secret: (process.env.CLOUDINARY_API_SECRET || '').trim(),
+  };
+};
+
+const configureCloudinary = () => {
+  const cfg = resolveCloudinaryConfig();
+  cloudinary.config({
+    cloud_name: cfg.cloud_name,
+    api_key: cfg.api_key,
+    api_secret: cfg.api_secret,
+    secure: true,
+    // Prevent Cloudinary SDK from emitting its own unhandled promise rejections
+    disable_promise: true,
+  });
+  return cfg;
+};
+
+export const getCloudinaryConfigPreview = () => {
+  const cfg = resolveCloudinaryConfig();
+  return {
+    cloud_name: cfg.cloud_name || 'NOT SET',
+    api_key: cfg.api_key ? `***${cfg.api_key.slice(-4)}` : 'NOT SET',
+    api_secret: cfg.api_secret ? 'SET' : 'NOT SET',
+  };
+};
 
 // Configure Multer for memory storage (we'll upload to Cloudinary from memory)
 const storage = multer.memoryStorage();
@@ -59,10 +96,12 @@ export const uploadToCloudinary = (
 ): Promise<{ secure_url: string; public_id: string }> => {
   return new Promise((resolve, reject) => {
     try {
+      configureCloudinary();
       const uploadStream = cloudinary.uploader.upload_stream(
         {
           folder: folder,
           resource_type: 'image',
+          disable_promise: true,
           transformation: [
             { width: 1000, height: 1000, crop: 'limit' }, // Limit max dimensions
             { quality: 'auto:good' }, // Automatic quality optimization
@@ -102,6 +141,7 @@ export const uploadToCloudinary = (
  */
 export const deleteFromCloudinary = async (publicId: string): Promise<void> => {
   try {
+    configureCloudinary();
     await cloudinary.uploader.destroy(publicId);
   } catch (error) {
     console.error('Error deleting image from Cloudinary:', error);
@@ -113,10 +153,11 @@ export const deleteFromCloudinary = async (publicId: string): Promise<void> => {
  * Check if Cloudinary is configured
  */
 export const isCloudinaryConfigured = (): boolean => {
+  const cfg = resolveCloudinaryConfig();
   return !!(
-    process.env.CLOUDINARY_CLOUD_NAME &&
-    process.env.CLOUDINARY_API_KEY &&
-    process.env.CLOUDINARY_API_SECRET
+    cfg.cloud_name &&
+    cfg.api_key &&
+    cfg.api_secret
   );
 };
 

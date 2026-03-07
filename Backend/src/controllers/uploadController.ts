@@ -1,5 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
-import { upload, uploadToCloudinary, isCloudinaryConfigured } from '../utils/cloudinary';
+import {
+  upload,
+  uploadToCloudinary,
+  isCloudinaryConfigured,
+  getCloudinaryConfigPreview,
+} from '../utils/cloudinary';
 
 /**
  * Upload image endpoint
@@ -13,11 +18,7 @@ export const uploadImage = async (
   try {
     // Debug logging
     console.log('📤 Upload request received');
-    console.log('🔑 Cloudinary Config:', {
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY ? '***' + process.env.CLOUDINARY_API_KEY.slice(-4) : 'NOT SET',
-      api_secret: process.env.CLOUDINARY_API_SECRET ? 'SET' : 'NOT SET',
-    });
+    console.log('🔑 Cloudinary Config:', getCloudinaryConfigPreview());
 
     // Check if file exists
     if (!req.file) {
@@ -46,17 +47,20 @@ export const uploadImage = async (
       
       // Create upload promise with proper error handling
       const result = await new Promise<{ secure_url: string; public_id: string }>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error('Cloudinary upload timeout'));
+        }, 30000);
+
         uploadToCloudinary(req.file!.buffer, 'findassure/found-items')
-          .then(resolve)
+          .then((value) => {
+            clearTimeout(timeoutId);
+            resolve(value);
+          })
           .catch((err) => {
+            clearTimeout(timeoutId);
             console.error('Cloudinary promise rejected:', err);
             reject(err);
           });
-        
-        // Timeout after 10 seconds
-        setTimeout(() => {
-          reject(new Error('Cloudinary upload timeout'));
-        }, 10000);
       });
 
       console.log('✅ Cloudinary upload successful');
