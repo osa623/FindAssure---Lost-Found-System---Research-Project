@@ -7,6 +7,7 @@ from app.config.settings import settings
 # Core
 from app.core.redis_client import get_redis_client
 from app.core.db import engine, Base
+from app.models import item_models  # noqa: F401
 
 # Services
 from app.services.yolo_service import YoloService
@@ -24,7 +25,15 @@ from app.services.pp2_multiview_pipeline import MultiViewPipeline
 logger = logging.getLogger(__name__)
 
 # Constants
-FAISS_DIM = 128 
+FAISS_DIM = 128
+
+# Register HEIF/HEIC opener so Pillow can read iOS gallery photos
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    logger.info("pillow-heif HEIC/HEIF opener registered.")
+except ImportError:
+    logger.warning("pillow-heif not installed — HEIC/HEIF images from iOS gallery will fail analysis. Run: pip install pillow-heif")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,7 +58,8 @@ async def lifespan(app: FastAPI):
 
     # 3. Database Connection Check
     try:
-        logger.info("Database engine configured.")
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database schema initialized for %s", settings.DATABASE_URL)
     except Exception as e:
         logger.error(f"Database configuration warning: {e}")
 

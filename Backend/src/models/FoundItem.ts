@@ -24,6 +24,16 @@ export interface IFoundItem extends Document {
   found_location: ILocationDetail[];
   status: FoundItemStatus;
   createdBy?: Types.ObjectId;
+  analysisMode?: 'pp1' | 'pp2' | null;
+  pythonItemId?: string | null;
+  faissId?: number | null;
+  faissIds: number[];
+  detectedCategory?: string | null;
+  detectedDescription?: string | null;
+  detectedColor?: string | null;
+  vector128: number[];
+  searchable: boolean;
+  pipelineResponse?: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -125,6 +135,48 @@ const foundItemSchema = new Schema<IFoundItem>(
     createdBy: {
       type: Schema.Types.ObjectId,
       ref: 'User',
+    },
+    analysisMode: {
+      type: String,
+      enum: ['pp1', 'pp2'],
+      default: null,
+    },
+    pythonItemId: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    faissId: {
+      type: Number,
+      default: null,
+    },
+    faissIds: {
+      type: [Number],
+      default: [],
+    },
+    detectedCategory: {
+      type: String,
+      default: null,
+    },
+    detectedDescription: {
+      type: String,
+      default: null,
+    },
+    detectedColor: {
+      type: String,
+      default: null,
+    },
+    vector128: {
+      type: [Number],
+      default: [],
+    },
+    searchable: {
+      type: Boolean,
+      default: false,
+    },
+    pipelineResponse: {
+      type: Schema.Types.Mixed,
+      default: null,
     },
   },
   {

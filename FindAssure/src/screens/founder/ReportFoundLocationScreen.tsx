@@ -25,7 +25,7 @@ type ReportFoundLocationRouteProp = RouteProp<RootStackParamList, 'ReportFoundLo
 const ReportFoundLocationScreen = () => {
   const navigation = useNavigation<ReportFoundLocationNavigationProp>();
   const route = useRoute<ReportFoundLocationRouteProp>();
-  const { imageUri, category, description, selectedQuestions, founderAnswers } = route.params;
+  const { images, preAnalysisToken, category, description, selectedQuestions, founderAnswers } = route.params;
   const { user } = useAuth(); // Get logged-in user data
 
   const [location, setLocation] = useState<LocationDetail | null>(null);
@@ -58,23 +58,10 @@ const ReportFoundLocationScreen = () => {
     try {
       setLoading(true);
 
-      // Step 1: Upload image to Cloudinary (optional)
-      let uploadedImageUrl = '';
-      try {
-        console.log('📤 Starting image upload...');
-        uploadedImageUrl = await itemsApi.uploadImage(imageUri);
-        console.log('✅ Image uploaded successfully:', uploadedImageUrl);
-      } catch (uploadError: any) {
-        console.error('❌ Image upload failed:', uploadError);
-        console.log('⚠️ Continuing without image - will use placeholder');
-        // Continue without image - backend will use placeholder
-        uploadedImageUrl = '';
-      }
-
-      // Step 2: Submit to backend (with or without image)
       console.log('📝 Submitting found item...');
       await itemsApi.reportFoundItem({
-        imageUrl: uploadedImageUrl || '',  // Empty string if upload failed
+        images,
+        preAnalysisToken,
         category,
         description,
         questions: selectedQuestions,

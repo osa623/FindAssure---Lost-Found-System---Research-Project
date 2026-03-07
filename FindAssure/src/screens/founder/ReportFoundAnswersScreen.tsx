@@ -21,7 +21,7 @@ type ReportFoundAnswersRouteProp = RouteProp<RootStackParamList, 'ReportFoundAns
 const ReportFoundAnswersScreen = () => {
   const navigation = useNavigation<ReportFoundAnswersNavigationProp>();
   const route = useRoute<ReportFoundAnswersRouteProp>();
-  const { imageUri, category, description, selectedQuestions } = route.params;
+  const { images, preAnalysisToken, category, description, selectedQuestions } = route.params;
 
   const [answers, setAnswers] = useState<string[]>(
     new Array(selectedQuestions.length).fill('')
@@ -42,7 +42,8 @@ const ReportFoundAnswersScreen = () => {
     }
 
     navigation.navigate('ReportFoundLocation', {
-      imageUri,
+      images,
+      preAnalysisToken,
       category,
       description,
       selectedQuestions,

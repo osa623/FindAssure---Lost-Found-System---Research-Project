@@ -270,6 +270,13 @@ def verify_owner():
         failed_count = sum(1 for item in enriched if not item.get("success", True))
         if failed_count:
             print(f"Warning: {failed_count} video(s) failed to process")
+        # A required spoken answer is considered missing when transcript is empty
+        # or when processing failed and placeholder text is set.
+        missing_answer_count = sum(
+            1 for item in enriched
+            if not (item.get("owner_answer") or "").strip()
+            or (item.get("owner_answer") == "[Processing Error]")
+        )
 
         # -----------------------------
         # GEMINI BATCH
@@ -315,6 +322,7 @@ def verify_owner():
         final_scores = []
         audio_scores = []
         guessing_risk_scores = []
+        valid_audio_count = 0
 
         for i, a in enumerate(enriched):
             local = nlp.score_pair(
@@ -341,10 +349,16 @@ def verify_owner():
 
             final_scores.append(fused)
             audio_data = a.get("audio_analysis") or {}
+            audio_label = audio_data.get("label")
             audio_score = float(audio_data.get("audio_confidence_score", 0.0) or 0.0)
-            audio_scores.append(audio_score)
             guessing_risk = float(audio_data.get("guessing_risk_score", 0.0) or 0.0)
-            guessing_risk_scores.append(guessing_risk)
+
+            # Treat audio processing failures as "not evaluated" instead of hard 0%.
+            audio_is_valid = audio_label not in (None, "audio_processing_failed")
+            if audio_is_valid:
+                valid_audio_count += 1
+                audio_scores.append(audio_score)
+                guessing_risk_scores.append(guessing_risk)
 
             results.append({
                 "question_id": a["question_id"],
@@ -366,7 +380,7 @@ def verify_owner():
             })
 
         semantic_avg_final = sum(final_scores) / len(final_scores)
-        avg_audio_confidence = sum(audio_scores) / len(audio_scores) if audio_scores else 0.0
+        avg_audio_confidence = sum(audio_scores) / len(audio_scores) if audio_scores else None
         avg_guessing_risk = sum(guessing_risk_scores) / len(guessing_risk_scores) if guessing_risk_scores else 0.0
         high_guessing_count = sum(1 for g in guessing_risk_scores if g >= HIGH_GUESSING_RISK_THRESHOLD)
         face_score = extract_face_score(face_confidence_result)
@@ -387,13 +401,22 @@ def verify_owner():
         # Final confidence combines semantic + face + audio confidence.
         # If face score is unavailable, distribute weight to semantic/audio.
         if face_score is None:
-            avg_final = (semantic_avg_final * 0.80) + (avg_audio_confidence * 0.20)
+            if avg_audio_confidence is None:
+                avg_final = semantic_avg_final
+            else:
+                avg_final = (semantic_avg_final * 0.80) + (avg_audio_confidence * 0.20)
         else:
-            avg_final = (
-                (semantic_avg_final * 0.65) +
-                (face_score * 0.20) +
-                (avg_audio_confidence * 0.15)
-            )
+            if avg_audio_confidence is None:
+                avg_final = (
+                    (semantic_avg_final * 0.80) +
+                    (face_score * 0.20)
+                )
+            else:
+                avg_final = (
+                    (semantic_avg_final * 0.65) +
+                    (face_score * 0.20) +
+                    (avg_audio_confidence * 0.15)
+                )
 
         # Additional penalty when many answers look like guessed/uncertain delivery.
         guessing_penalty = min(0.20, avg_guessing_risk * 0.20)
@@ -403,7 +426,13 @@ def verify_owner():
         min_score = min(final_scores)
         has_zero_match = min_score <= 0.25
 
-        if has_zero_match:
+        if missing_answer_count > 0:
+            is_owner = False
+            rejection_reason = (
+                f"Critical failure: Missing valid answer transcript in "
+                f"{missing_answer_count}/{len(enriched)} response(s)."
+            )
+        elif has_zero_match:
             is_owner = False
             rejection_reason = (
                 f"Critical failure: Question {final_scores.index(min_score) + 1} has "
@@ -411,17 +440,7 @@ def verify_owner():
                 "critical question."
             )
         else:
-            if face_check_status != "completed":
-                is_owner = False
-                rejection_reason = (
-                    "Critical failure: Face verification did not complete successfully."
-                )
-            elif has_missing_face_video:
-                is_owner = False
-                rejection_reason = (
-                    "Critical failure: Face not detected in at least one required answer video."
-                )
-            elif face_decision == "possible_thief":
+            if face_decision == "possible_thief":
                 is_owner = False
                 rejection_reason = (
                     "Critical failure: Face analysis marked this session as possible_thief."
@@ -431,7 +450,7 @@ def verify_owner():
                 rejection_reason = (
                     f"Face confidence too low ({to_percent(face_score)} < 55%)."
                 )
-            elif avg_audio_confidence < LOW_AUDIO_OWNER_THRESHOLD:
+            elif avg_audio_confidence is not None and avg_audio_confidence < LOW_AUDIO_OWNER_THRESHOLD:
                 is_owner = False
                 rejection_reason = (
                     f"Audio confidence too low ({to_percent(avg_audio_confidence)} < "
@@ -499,10 +518,15 @@ def verify_owner():
             "flags": {
                 "semantic_inconsistency": semantic_avg_final < 0.7,
                 "critical_zero_match": has_zero_match,
+                "missing_answer_transcript": missing_answer_count > 0,
                 "missing_face_video": has_missing_face_video,
                 "suspicious_face_pattern": face_decision == "possible_thief",
                 "low_face_confidence": (face_score is not None and face_score < 0.55),
-                "low_audio_confidence": avg_audio_confidence < LOW_AUDIO_OWNER_THRESHOLD,
+                "low_audio_confidence": (
+                    avg_audio_confidence is not None and
+                    avg_audio_confidence < LOW_AUDIO_OWNER_THRESHOLD
+                ),
+                "audio_not_evaluated": valid_audio_count == 0,
                 "high_guessing_risk": avg_guessing_risk >= HIGH_GUESSING_RISK_THRESHOLD,
                 "face_not_evaluated": face_check_status != "completed"
             }
