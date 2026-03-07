@@ -180,6 +180,13 @@ export const preAnalyzeFoundImages = async (
 ): Promise<void> => {
   const imageFiles = (req.files as Express.Multer.File[]) || [];
 
+  console.log('[PRE-ANALYZE] Received files:', imageFiles.map((f) => ({
+    originalname: f.originalname,
+    mimetype: f.mimetype,
+    size: f.size,
+    path: f.path,
+  })));
+
   try {
     if (imageFiles.length < 1 || imageFiles.length > 3) {
       res.status(400).json({ message: 'You must upload between 1 and 3 images' });
