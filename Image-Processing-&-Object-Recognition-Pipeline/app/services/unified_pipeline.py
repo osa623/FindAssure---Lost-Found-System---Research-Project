@@ -505,7 +505,18 @@ class UnifiedPipeline:
 
         try:
             image = Image.open(image_path).convert("RGB")
+            logger.info("PP1_IMAGE_OPEN: OK path=%s format=%s size=%s", image_path, image.format, image.size)
         except Exception as e:
+            # Dump magic bytes to identify the actual file format in logs
+            try:
+                with open(image_path, "rb") as _f:
+                    _magic = _f.read(16).hex()
+            except Exception:
+                _magic = "unreadable"
+            logger.error(
+                "PP1_IMAGE_OPEN_FAILED: path=%s error=%r magic_bytes=%s",
+                image_path, str(e), _magic
+            )
             return [self._empty_response("rejected", f"Failed to open image: {str(e)}")]
 
         filename = os.path.basename(image_path)

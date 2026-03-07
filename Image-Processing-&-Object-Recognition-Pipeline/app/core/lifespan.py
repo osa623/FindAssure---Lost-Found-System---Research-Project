@@ -25,7 +25,15 @@ from app.services.pp2_multiview_pipeline import MultiViewPipeline
 logger = logging.getLogger(__name__)
 
 # Constants
-FAISS_DIM = 128 
+FAISS_DIM = 128
+
+# Register HEIF/HEIC opener so Pillow can read iOS gallery photos
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    logger.info("pillow-heif HEIC/HEIF opener registered.")
+except ImportError:
+    logger.warning("pillow-heif not installed — HEIC/HEIF images from iOS gallery will fail analysis. Run: pip install pillow-heif")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
