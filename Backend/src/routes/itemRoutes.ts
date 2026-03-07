@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth, optionalAuth } from '../middleware/authMiddleware';
 import * as itemController from '../controllers/itemController';
-import { uploadVideos } from '../utils/cloudinary';
+import { uploadTempImages, uploadVideos } from '../utils/cloudinary';
 
 const router = Router();
 
@@ -14,7 +14,19 @@ const router = Router();
  * @desc    Create a found item report
  * @access  Public/Private (optional auth)
  */
-router.post('/found', itemController.createFoundItem);
+router.post('/found', optionalAuth, uploadTempImages.array('images', 3), itemController.createFoundItem);
+
+/**
+ * @route   POST /api/items/pre-analyze-found-images
+ * @desc    Pre-analyze founder images to autofill category and description
+ * @access  Public
+ */
+router.post(
+  '/pre-analyze-found-images',
+  optionalAuth,
+  uploadTempImages.array('images', 3),
+  itemController.preAnalyzeFoundImages
+);
 
 /**
  * @route   GET /api/items/found
@@ -39,7 +51,7 @@ router.get('/found/:id', itemController.getFoundItemById);
  * @desc    Create a lost item request
  * @access  Private (preferred) / Public (demo mode with auto-created demo user)
  */
-router.post('/lost', optionalAuth, itemController.createLostRequest);
+router.post('/lost', optionalAuth, uploadTempImages.single('ownerImage'), itemController.createLostRequest);
 
 /**
  * @route   GET /api/items/lost/me

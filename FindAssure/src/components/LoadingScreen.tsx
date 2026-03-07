@@ -4,9 +4,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 interface LoadingScreenProps {
   message?: string;
+  subtitle?: string;
 }
 
-export const LoadingScreen: React.FC<LoadingScreenProps> = ({ message = 'Loading...' }) => {
+export const LoadingScreen: React.FC<LoadingScreenProps> = ({
+  message = 'Loading...',
+  subtitle,
+}) => {
   return (
     <LinearGradient
       colors={['#667eea', '#764ba2']}
@@ -19,6 +23,7 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({ message = 'Loading
         <Text style={styles.appName}>FIND ASSURE</Text>
         <ActivityIndicator size="large" color="#FFFFFF" style={styles.loader} />
         <Text style={styles.message}>{message}</Text>
+        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       </View>
     </LinearGradient>
   );
@@ -59,5 +64,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#FFFFFF',
     opacity: 0.9,
+    textAlign: 'center',
+  },
+  subtitle: {
+    marginTop: 10,
+    fontSize: 14,
+    color: '#FFFFFF',
+    opacity: 0.78,
+    textAlign: 'center',
+    maxWidth: 280,
   },
 });

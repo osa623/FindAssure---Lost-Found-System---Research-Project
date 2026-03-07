@@ -31,7 +31,9 @@ Required environment variables:
 - `FIREBASE_PROJECT_ID`: Firebase project ID
 - `FIREBASE_CLIENT_EMAIL`: Firebase service account email
 - `FIREBASE_PRIVATE_KEY`: Firebase service account private key
-- `PORT`: Server port (default: 5000)
+- `IMAGE_PIPELINE_URL`: Image pipeline base URL (default: `http://127.0.0.1:8002`)
+- `IMAGE_PIPELINE_TIMEOUT_MS`: Backend wait time for pipeline requests in milliseconds (default: `300000`)
+- `PORT`: Server port (default: 5001)
 
 ### 3. Start Development Server
 

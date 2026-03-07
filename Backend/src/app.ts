@@ -5,6 +5,7 @@ import itemRoutes from './routes/itemRoutes';
 import adminRoutes from './routes/adminRoutes';
 import uploadRoutes from './routes/uploadRoutes';
 import locationRoutes from './routes/locationRoutes';
+import finetuningRoutes from './routes/finetuningRoutes';
 import { errorHandler } from './middleware/errorHandler';
 
 /**
@@ -17,31 +18,20 @@ export const createApp = (): Application => {
   // MIDDLEWARE
   // ============================================
 
-  // CORS configuration
-  const allowedOrigins = process.env.FRONTEND_URL 
-    ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
-    : ['http://localhost:8081'];
-  
-  app.use(
-    cors({
-      origin: [
-        ...allowedOrigins,
-        'http://localhost:3000',  // Web frontend (Vite)
-        'http://localhost:5173',  // Location Similarity Web (Vite)
-        'http://192.168.113.106:8081',  // Mobile app (network)
-        'http://localhost:19006',  // Expo dev server
-        'http://192.168.113.106:19006'
-      ],
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
-      exposedHeaders: ['Content-Range', 'X-Content-Range'],
-      maxAge: 600
-    })
-  );
+  // CORS configuration — allow all origins in development
+  const corsOptions: cors.CorsOptions = {
+    origin: true, // reflects the request origin back (allows any origin)
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    exposedHeaders: ['Content-Range', 'X-Content-Range'],
+    maxAge: 600,
+  };
+
+  app.use(cors(corsOptions));
 
   // Handle preflight requests
-  app.options('*', cors());
+  app.options('*', cors(corsOptions));
 
   // Body parser
   app.use(express.json());
@@ -74,6 +64,7 @@ export const createApp = (): Application => {
   app.use('/api/admin', adminRoutes);
   app.use('/api/upload', uploadRoutes);
   app.use('/api/locations', locationRoutes);
+  app.use('/api/finetuning', finetuningRoutes);
 
   // 404 handler
   app.use((req, res) => {

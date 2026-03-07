@@ -1,19 +1,49 @@
-// ReportFoundStartScreen – follow the spec
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image, Alert, ScrollView } from 'react-native';
+import React, { useLayoutEffect, useState } from 'react';
+import { View, Text, StyleSheet, Image, Alert, ScrollView, TouchableOpacity } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import * as ImagePicker from 'expo-image-picker';
-import { RootStackParamList } from '../../types/models';
+import { LoadingScreen } from '../../components/LoadingScreen';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { RootStackParamList, SelectedImageAsset } from '../../types/models';
+import { itemsApi } from '../../api/itemsApi';
+import { ITEM_CATEGORIES } from '../../constants/appConstants';
 
 type ReportFoundStartNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundStart'>;
 
+const MAX_IMAGES = 3;
+
+const mapPickerAsset = (asset: ImagePicker.ImagePickerAsset): SelectedImageAsset => ({
+  uri: asset.uri,
+  fileName: asset.fileName || null,
+  mimeType: asset.mimeType || null,
+});
+
+const mergeImages = (current: SelectedImageAsset[], incoming: SelectedImageAsset[]) => {
+  const merged = [...current];
+
+  for (const image of incoming) {
+    if (!merged.find((item) => item.uri === image.uri)) {
+      merged.push(image);
+    }
+  }
+
+  return merged.slice(0, MAX_IMAGES);
+};
+
 const ReportFoundStartScreen = () => {
   const navigation = useNavigation<ReportFoundStartNavigationProp>();
-  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [images, setImages] = useState<SelectedImageAsset[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const requestPermissions = async () => {
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      gestureEnabled: !loading,
+      headerLeft: loading ? () => null : undefined,
+    });
+  }, [loading, navigation]);
+
+  const requestLibraryPermissions = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Permission Required', 'Please allow access to your photo library');
@@ -22,23 +52,35 @@ const ReportFoundStartScreen = () => {
     return true;
   };
 
-  const handleSelectImage = async () => {
-    const hasPermission = await requestPermissions();
+  const handleSelectImages = async () => {
+    const hasPermission = await requestLibraryPermissions();
     if (!hasPermission) return;
 
+    const remainingSlots = MAX_IMAGES - images.length;
+    if (remainingSlots <= 0) {
+      Alert.alert('Image Limit Reached', 'You can upload up to 3 photos.');
+      return;
+    }
+
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
+      mediaTypes: ['images'],
+      allowsEditing: false,
+      allowsMultipleSelection: true,
+      selectionLimit: remainingSlots,
       quality: 0.8,
     });
 
     if (!result.canceled) {
-      setImageUri(result.assets[0].uri);
+      setImages((current) => mergeImages(current, result.assets.map(mapPickerAsset)));
     }
   };
 
   const handleCaptureImage = async () => {
+    if (images.length >= MAX_IMAGES) {
+      Alert.alert('Image Limit Reached', 'You can upload up to 3 photos.');
+      return;
+    }
+
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Permission Required', 'Please allow access to your camera');
@@ -52,18 +94,66 @@ const ReportFoundStartScreen = () => {
     });
 
     if (!result.canceled) {
-      setImageUri(result.assets[0].uri);
+      setImages((current) => mergeImages(current, [mapPickerAsset(result.assets[0])]));
     }
   };
 
-  const handleNext = () => {
-    if (!imageUri) {
-      Alert.alert('Image Required', 'Please select or capture an image first');
+  const handleRemoveImage = (uri: string) => {
+    setImages((current) => current.filter((image) => image.uri !== uri));
+  };
+
+  const normalizeDetectedCategory = (detectedCategory?: string | null): string | undefined => {
+    if (!detectedCategory) return undefined;
+
+    const normalized = detectedCategory.trim().toLowerCase();
+    const matchedCategory = ITEM_CATEGORIES.find(
+      (category) => category.trim().toLowerCase() === normalized
+    );
+
+    return matchedCategory || undefined;
+  };
+
+  const handleNext = async () => {
+    if (loading) {
       return;
     }
 
-    navigation.navigate('ReportFoundDetails', { imageUri });
+    if (images.length === 0) {
+      Alert.alert('Image Required', 'Please add at least one image first');
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const preAnalysis = await itemsApi.preAnalyzeFoundImages(images);
+
+      navigation.navigate('ReportFoundDetails', {
+        images,
+        preAnalysisToken: preAnalysis.preAnalysisToken || null,
+        category: normalizeDetectedCategory(preAnalysis.detectedCategory),
+        description: preAnalysis.detectedDescription || undefined,
+        analysisMessage: preAnalysis.message || undefined,
+      });
+    } catch (error: any) {
+      navigation.navigate('ReportFoundDetails', {
+        images,
+        preAnalysisToken: null,
+        analysisMessage: error?.message || 'Image analysis unavailable. Please enter details manually.',
+      });
+    } finally {
+      setLoading(false);
+    }
   };
+
+  if (loading) {
+    return (
+      <LoadingScreen
+        message="Analyzing your photos..."
+        subtitle="This may take a few seconds while we identify the item and prepare the next step."
+      />
+    );
+  }
 
   return (
     <ScrollView style={styles.container}>
@@ -71,50 +161,58 @@ const ReportFoundStartScreen = () => {
         <View style={styles.header}>
           <Text style={styles.title}>Report a Found Item</Text>
           <Text style={styles.subtitle}>
-            Help someone find their lost item by reporting what you found
+            Add 1 to 3 photos. One clear photo enables basic analysis, and 2 to 3 angles improve matching.
           </Text>
         </View>
 
-        <View style={styles.imageSection}>
-          {imageUri ? (
-            <View style={styles.imageContainer}>
-              <Image source={{ uri: imageUri }} style={styles.image} />
-              <Text style={styles.imageLabel}>✓ Image selected</Text>
-            </View>
-          ) : (
-            <View style={styles.imagePlaceholder}>
-              <Text style={styles.placeholderIcon}>📷</Text>
-              <Text style={styles.placeholderText}>No image selected</Text>
-            </View>
-          )}
+        <View style={styles.grid}>
+          {Array.from({ length: MAX_IMAGES }).map((_, index) => {
+            const image = images[index];
+
+            return (
+              <View key={index} style={styles.slot}>
+                {image ? (
+                  <>
+                    <Image
+                      source={{ uri: image.uri }}
+                      style={styles.image}
+                      resizeMode="contain"
+                    />
+                    <TouchableOpacity
+                      style={styles.removeButton}
+                      onPress={() => handleRemoveImage(image.uri)}
+                    >
+                      <Text style={styles.removeButtonText}>Remove</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <View style={styles.placeholder}>
+                    <Text style={styles.placeholderIcon}>+</Text>
+                    <Text style={styles.placeholderText}>Photo {index + 1}</Text>
+                  </View>
+                )}
+              </View>
+            );
+          })}
         </View>
 
+        <Text style={styles.helperText}>
+          {images.length <= 1
+            ? '1 photo = basic analysis for clear, well-lit items.'
+            : '2-3 photos = enhanced multi-view analysis from different angles.'}
+        </Text>
+
         <View style={styles.buttonGroup}>
-          <PrimaryButton
-            title="📷 Capture Photo"
-            onPress={handleCaptureImage}
-            style={styles.button}
-          />
-          <PrimaryButton
-            title="🖼️ Select from Gallery"
-            onPress={handleSelectImage}
-            style={styles.button}
-          />
+          <PrimaryButton title="Capture Photo" onPress={handleCaptureImage} style={styles.button} />
+          <PrimaryButton title="Select from Gallery" onPress={handleSelectImages} style={styles.button} />
         </View>
 
         <PrimaryButton
           title="Next"
           onPress={handleNext}
-          disabled={!imageUri}
+          disabled={images.length === 0}
           style={styles.nextButton}
         />
-
-        <View style={styles.infoBox}>
-          <Text style={styles.infoTitle}>💡 Tips</Text>
-          <Text style={styles.infoText}>• Take a clear photo of the item</Text>
-          <Text style={styles.infoText}>• Include identifying features</Text>
-          <Text style={styles.infoText}>• Good lighting helps</Text>
-        </View>
       </View>
     </ScrollView>
   );
@@ -142,27 +240,22 @@ const styles = StyleSheet.create({
     color: '#666666',
     lineHeight: 20,
   },
-  imageSection: {
-    marginBottom: 24,
+  grid: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
   },
-  imageContainer: {
-    alignItems: 'center',
+  slot: {
+    flex: 1,
   },
   image: {
     width: '100%',
-    height: 300,
+    height: 160,
     borderRadius: 12,
     backgroundColor: '#E0E0E0',
   },
-  imageLabel: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#4CAF50',
-    fontWeight: '600',
-  },
-  imagePlaceholder: {
-    width: '100%',
-    height: 300,
+  placeholder: {
+    height: 160,
     borderRadius: 12,
     backgroundColor: '#E0E0E0',
     justifyContent: 'center',
@@ -172,12 +265,27 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
   },
   placeholderIcon: {
-    fontSize: 64,
-    marginBottom: 12,
+    fontSize: 28,
+    color: '#777777',
+    marginBottom: 8,
   },
   placeholderText: {
-    fontSize: 16,
-    color: '#999999',
+    fontSize: 13,
+    color: '#777777',
+  },
+  removeButton: {
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  removeButtonText: {
+    fontSize: 12,
+    color: '#C62828',
+    fontWeight: '600',
+  },
+  helperText: {
+    fontSize: 13,
+    color: '#666666',
+    marginBottom: 20,
   },
   buttonGroup: {
     marginBottom: 16,
@@ -186,25 +294,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   nextButton: {
-    marginBottom: 24,
-  },
-  infoBox: {
-    backgroundColor: '#E3F2FD',
-    borderRadius: 12,
-    padding: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4A90E2',
-  },
-  infoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 8,
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#666666',
-    marginBottom: 4,
+    marginBottom: 16,
   },
 });
 

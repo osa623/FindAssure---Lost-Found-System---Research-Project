@@ -124,4 +124,30 @@ verificationSchema.index({ foundItemId: 1, ownerId: 1 });
 verificationSchema.index({ status: 1, createdAt: -1 });
 verificationSchema.index({ ownerId: 1, status: 1, createdAt: -1 });
 
+// Auto-collect fine-tuning data when verification status is resolved
+verificationSchema.post('save', async function (doc: IVerification) {
+  if (doc.status === 'pending') return;
+  try {
+    // Dynamic import to avoid circular dependency
+    const finetuning = await import('../services/finetuningService');
+
+    // Phase 1: Collect embedding training pair (only for passed)
+    if (doc.status === 'passed') {
+      const result = await finetuning.collectPairFromVerification(doc._id.toString());
+      if (result.collected) {
+        console.log(`🧠 Fine-tuning pair auto-collected for verification ${doc._id}`);
+      }
+    }
+
+    // Phase 2: Log verification result to Python (passed AND failed)
+    await finetuning.logVerificationToPython(doc);
+
+    // Phase 2: Send feedback to Python RL agent + embedding pair collector
+    await finetuning.sendFeedbackToPython(doc);
+  } catch (err) {
+    // Non-blocking — don't let fine-tuning break the verification flow
+    console.error('Fine-tuning hook failed (non-blocking):', err);
+  }
+});
+
 export const Verification = mongoose.model<IVerification>('Verification', verificationSchema);

@@ -3,6 +3,7 @@ import { FoundItem, IFoundItem, FoundItemStatus, IFounderContact, ILocationDetai
 import { LostRequest, ILostRequest } from '../models/LostRequest';
 
 export interface CreateFoundItemData {
+  _id?: Types.ObjectId;
   imageUrl: string;
   category: string;
   description: string;
@@ -11,6 +12,16 @@ export interface CreateFoundItemData {
   found_location: ILocationDetail[];
   founderContact: IFounderContact;
   createdBy?: string;
+  analysisMode?: 'pp1' | 'pp2' | null;
+  pythonItemId?: string | null;
+  faissId?: number | null;
+  faissIds?: number[];
+  detectedCategory?: string | null;
+  detectedDescription?: string | null;
+  detectedColor?: string | null;
+  vector128?: number[];
+  searchable?: boolean;
+  pipelineResponse?: Record<string, unknown> | null;
 }
 
 export interface FoundItemFilters {
@@ -25,6 +36,7 @@ export interface CreateLostRequestData {
   floor_id?: string | null;
   hall_name?: string | null;
   owner_location_confidence_stage: number;
+  ownerImageUrl?: string | null;
 }
 
 export interface AiSearchMatchInput {
@@ -42,11 +54,47 @@ export interface AiMatchedFoundItem {
   found_location: ILocationDetail[];
 }
 
+export interface LostRequestSearchResultsUpdate {
+  matchedFoundItemIds: string[];
+  ownerImageUrl?: string | null;
+  imageMatchResults?: Array<{
+    foundItemId: string;
+    score: number;
+  }>;
+}
+
+const OWNER_HIDDEN_FOUND_ITEM_FIELDS = [
+  'founderAnswers',
+  'founderContact',
+  'analysisMode',
+  'pythonItemId',
+  'faissId',
+  'faissIds',
+  'detectedCategory',
+  'detectedDescription',
+  'detectedColor',
+  'vector128',
+  'searchable',
+  'pipelineResponse',
+] as const;
+
+export const sanitizeFoundItemForOwner = (item: any) => {
+  const itemObject = typeof item?.toObject === 'function' ? item.toObject() : item;
+  const ownerView = { ...itemObject };
+
+  for (const field of OWNER_HIDDEN_FOUND_ITEM_FIELDS) {
+    delete ownerView[field];
+  }
+
+  return ownerView;
+};
+
 /**
  * Create a new found item
  */
 export const createFoundItem = async (data: CreateFoundItemData): Promise<IFoundItem> => {
   const foundItem = await FoundItem.create({
+    ...(data._id ? { _id: data._id } : {}),
     imageUrl: data.imageUrl,
     category: data.category,
     description: data.description,
@@ -56,6 +104,16 @@ export const createFoundItem = async (data: CreateFoundItemData): Promise<IFound
     founderContact: data.founderContact,
     status: 'available',
     ...(data.createdBy && { createdBy: new Types.ObjectId(data.createdBy) }),
+    analysisMode: data.analysisMode ?? null,
+    pythonItemId: data.pythonItemId ?? null,
+    faissId: data.faissId ?? null,
+    faissIds: data.faissIds ?? [],
+    detectedCategory: data.detectedCategory ?? null,
+    detectedDescription: data.detectedDescription ?? null,
+    detectedColor: data.detectedColor ?? null,
+    vector128: data.vector128 ?? [],
+    searchable: data.searchable ?? false,
+    pipelineResponse: data.pipelineResponse ?? null,
   });
 
   return foundItem;
@@ -92,11 +150,7 @@ export const getFoundItemForOwner = async (id: string): Promise<Partial<IFoundIt
     return null;
   }
 
-  // Return item without founderAnswers
-  const itemObj = item.toObject();
-  const { founderAnswers, ...ownerView } = itemObj;
-
-  return ownerView;
+  return sanitizeFoundItemForOwner(item);
 };
 
 /**
@@ -138,6 +192,7 @@ export const createLostRequest = async (
     floor_id: data.floor_id,
     hall_name: data.hall_name,
     owner_location_confidence_stage: data.owner_location_confidence_stage,
+    ownerImageUrl: data.ownerImageUrl ?? null,
   });
 
   return lostRequest;
@@ -245,17 +300,28 @@ export const resolveAiMatchesToFoundItems = async (
 /**
  * Update matched found item IDs for a lost request.
  */
-export const updateLostRequestMatches = async (
+export const updateLostRequestSearchResults = async (
   lostRequestId: string,
-  matchedFoundItemIds: string[]
+  data: LostRequestSearchResultsUpdate
 ): Promise<ILostRequest | null> => {
-  const objectIds = matchedFoundItemIds
+  const matchedFoundItemIds = data.matchedFoundItemIds
     .filter((id) => Types.ObjectId.isValid(id))
     .map((id) => new Types.ObjectId(id));
 
+  const imageMatchResults = (data.imageMatchResults || [])
+    .filter((result) => Types.ObjectId.isValid(result.foundItemId))
+    .map((result) => ({
+      foundItemId: new Types.ObjectId(result.foundItemId),
+      score: result.score,
+    }));
+
   return LostRequest.findByIdAndUpdate(
     lostRequestId,
-    { matchedFoundItemIds: objectIds },
+    {
+      matchedFoundItemIds,
+      ...(data.ownerImageUrl !== undefined ? { ownerImageUrl: data.ownerImageUrl } : {}),
+      imageMatchResults,
+    },
     { new: true }
   );
 };

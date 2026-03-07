@@ -109,15 +109,15 @@ const AdminItemDetailScreen = () => {
             <Text style={styles.sectionTitle}>👤 Founder Contact Information</Text>
             <View style={styles.contactInfo}>
               <Text style={styles.contactLabel}>Name:</Text>
-              <Text style={styles.contactValue}>{foundItem.founderContact.name}</Text>
+              <Text style={styles.contactValue}>{foundItem.founderContact?.name || 'N/A'}</Text>
             </View>
             <View style={styles.contactInfo}>
               <Text style={styles.contactLabel}>Email:</Text>
-              <Text style={styles.contactValue}>{foundItem.founderContact.email}</Text>
+              <Text style={styles.contactValue}>{foundItem.founderContact?.email || 'N/A'}</Text>
             </View>
             <View style={styles.contactInfo}>
               <Text style={styles.contactLabel}>Phone:</Text>
-              <Text style={styles.contactValue}>{foundItem.founderContact.phone}</Text>
+              <Text style={styles.contactValue}>{foundItem.founderContact?.phone || 'N/A'}</Text>
             </View>
           </View>
 
@@ -133,7 +133,7 @@ const AdminItemDetailScreen = () => {
                   <Text style={styles.questionText}>{question}</Text>
                   <View style={styles.answerBox}>
                     <Text style={styles.answerLabel}>Founder's Answer:</Text>
-                    <Text style={styles.answerText}>{foundItem.founderAnswers[index]}</Text>
+                    <Text style={styles.answerText}>{foundItem.founderAnswers?.[index] || 'N/A'}</Text>
                   </View>
                 </View>
               </View>

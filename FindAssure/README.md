@@ -16,6 +16,14 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npx expo start
    ```
 
+3. Set the mobile backend host for development
+
+   ```bash
+   EXPO_PUBLIC_BACKEND_HOST=192.168.43.36
+   ```
+
+   The app reads this from `.env`. On a physical iPhone, use the Windows machine's LAN IP that is running the Node backend on port `5001`.
+
 In the output, you'll find options to open the app in a
 
 - [development build](https://docs.expo.dev/develop/development-builds/introduction/)
