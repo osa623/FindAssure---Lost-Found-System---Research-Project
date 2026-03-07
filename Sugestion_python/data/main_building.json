@@ -1,0 +1,460 @@
+﻿[
+  {
+    "floor_id": "basement",
+    "up_flow": "1",
+    "down_flow": "n/a",
+    "hall_list": [
+      {
+        "actual_location": "A_basement_washroom",
+        "directions": {
+          "left": "n/a",
+          "right": "basement_liftarea",
+          "front": "passage_basement"
+        }
+      },
+      {
+        "actual_location": "basement_liftarea",
+        "directions": {
+          "left": "A_basement_washroom",
+          "right": "B_basement_washroom",
+          "front": "passage_basement"
+        }
+      },
+      {
+        "actual_location": "B_basement_washroom",
+        "directions": {
+          "left": "basement_liftarea",
+          "right": "n/a",
+          "front": "passage_basement"
+        }
+      },
+      {
+        "actual_location": "basement_canteen",
+        "directions": {
+          "left": "n/a",
+          "right": "n/a",
+          "front": "passage_basement"
+        }
+      },
+      {
+        "actual_location": "passage_basement",
+        "directions": {
+          "left": "n/a",
+          "right": "n/a",
+          "front": "n/a"
+        }
+      }
+    ]
+  },
+  {
+    "floor_id": "1",
+    "up_flow": "2",
+    "down_flow": "basement",
+    "hall_list": [
+      {
+        "actual_location": "1_liftarea",
+        "directions": {
+          "left": "A1_washroom",
+          "right": "B1_washroom",
+          "front": "passage_1"
+        }
+      },
+      {
+        "actual_location": "A1_washroom",
+        "directions": {
+          "left": "n/a",
+          "right": "1_liftarea",
+          "front": "passage_1"
+        }
+      },
+      {
+        "actual_location": "B1_washroom",
+        "directions": {
+          "left": "1_liftarea",
+          "right": "n/a",
+          "front": "passage_1"
+        }
+      },
+      {
+        "actual_location": "passage_1",
+        "directions": {
+          "left": "n/a",
+          "right": "n/a",
+          "front": "n/a"
+        }
+      }
+    ]
+  },
+  {
+    "floor_id": "2",
+    "up_flow": "3",
+    "down_flow": "1",
+    "hall_list": [
+      {
+        "actual_location": "canteen",
+        "directions": {
+          "left": "B2_washroom",
+          "right": "n/a",
+          "front": "passage_2"
+        }
+      },
+      {
+        "actual_location": "B2_washroom",
+        "directions": {
+          "left": "2_liftarea",
+          "right": "canteen",
+          "front": "passage_2"
+        }
+      },
+      {
+        "actual_location": "2_liftarea",
+        "directions": {
+          "left": "A2_washroom",
+          "right": "B2_washroom",
+          "front": "passage_2"
+        }
+      },
+      {
+        "actual_location": "A2_washroom",
+        "directions": {
+          "left": "Library",
+          "right": "2_liftarea",
+          "front": "passage_2"
+        }
+      },
+      {
+        "actual_location": "Library",
+        "directions": {
+          "left": "n/a",
+          "right": "A2_washroom",
+          "front": "passage_2"
+        }
+      },
+      {
+        "actual_location": "main_building_entrance",
+        "directions": {
+          "left": "n/a",
+          "right": "n/a",
+          "front": "passage_2"
+        }
+      }
+    ]
+  },
+  {
+    "floor_id": "3",
+    "up_flow": "4",
+    "down_flow": "2",
+    "hall_list": [
+      {
+        "actual_location": "A3_washroom",
+        "directions": {
+          "left": "n/a",
+          "right": "3_liftarea",
+          "front": "passage_3"
+        }
+      },
+      {
+        "actual_location": "B301",
+        "directions": {
+          "left": "B302",
+          "right": "n/a",
+          "front": "passage_3"
+        }
+      },
+      {
+        "actual_location": "B302",
+        "directions": {
+          "left": "B303",
+          "right": "B301",
+          "front": "passage_3"
+        }
+      },
+      {
+        "actual_location": "B303",
+        "directions": {
+          "left": "n/a",
+          "right": "B302",
+          "front": "passage_3"
+        }
+      },
+      {
+        "actual_location": "B304",
+        "directions": {
+          "left": "n/a",
+          "right": "B305",
+          "front": "passage_3"
+        }
+      },
+      {
+        "actual_location": "B305",
+        "directions": {
+          "left": "B306",
+          "right": "B304",
+          "front": "passage_3"
+        }
+      },
+      {
+        "actual_location": "B306",
+        "directions": {
+          "left": "B3_washroom",
+          "right": "B305",
+          "front": "passage_3"
+        }
+      },
+      {
+        "actual_location": "B3_washroom",
+        "directions": {
+          "left": "3_liftarea",
+          "right": "B306",
+          "front": "passage_3"
+        }
+      },
+      {
+        "actual_location": "3_liftarea",
+        "directions": {
+          "left": "A3_washroom",
+          "right": "B3_washroom",
+          "front": "passage_3"
+        }
+      },
+      {
+        "actual_location": "passage_3",
+        "directions": {
+          "left": "n/a",
+          "right": "n/a",
+          "front": "n/a"
+        }
+      }
+    ]
+  },
+  {
+    "floor_id": "4",
+    "up_flow": "5",
+    "down_flow": "3",
+    "hall_list": [
+      {
+        "actual_location": "A4_Reading_Room",
+        "directions": {
+          "left": "n/a",
+          "right": "A4_washroom",
+          "front": "passage_4"
+        }
+      },
+      {
+        "actual_location": "A4_washroom",
+        "directions": {
+          "left": "A4_Reading_Room",
+          "right": "4_liftarea",
+          "front": "passage_4"
+        }
+      },
+      {
+        "actual_location": "B401",
+        "directions": {
+          "left": "B402",
+          "right": "n/a",
+          "front": "passage_4"
+        }
+      },
+      {
+        "actual_location": "B402",
+        "directions": {
+          "left": "B403",
+          "right": "B401",
+          "front": "passage_4"
+        }
+      },
+      {
+        "actual_location": "B403",
+        "directions": {
+          "left": "n/a",
+          "right": "B402",
+          "front": "passage_4"
+        }
+      },
+      {
+        "actual_location": "B404",
+        "directions": {
+          "left": "B405",
+          "right": "n/a",
+          "front": "passage_4"
+        }
+      },
+      {
+        "actual_location": "B405",
+        "directions": {
+          "left": "B406",
+          "right": "B404",
+          "front": "passage_4"
+        }
+      },
+      {
+        "actual_location": "B406",
+        "directions": {
+          "left": "B4_washroom",
+          "right": "n/a",
+          "front": "passage_4"
+        }
+      },
+      {
+        "actual_location": "B4_washroom",
+        "directions": {
+          "left": "4_liftarea",
+          "right": "B406",
+          "front": "passage_4"
+        }
+      },
+      {
+        "actual_location": "4_liftarea",
+        "directions": {
+          "left": "A4_washroom",
+          "right": "B4_washroom",
+          "front": "passage_4"
+        }
+      },
+      {
+        "actual_location": "passage_4",
+        "directions": {
+          "left": "n/a",
+          "right": "n/a",
+          "front": "n/a"
+        }
+      }
+    ]
+  },
+  {
+    "floor_id": "5",
+    "up_flow": "n/a",
+    "down_flow": "4",
+    "hall_list": [
+      {
+        "actual_location": "A501",
+        "directions": {
+          "left": "A502",
+          "right": "A5_washroom",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "A502",
+        "directions": {
+          "left": "A503",
+          "right": "A501",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "A503",
+        "directions": {
+          "left": "n/a",
+          "right": "A502",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "A504",
+        "directions": {
+          "left": "A505",
+          "right": "n/a",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "A505",
+        "directions": {
+          "left": "A506",
+          "right": "A504",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "A506",
+        "directions": {
+          "left": "n/a",
+          "right": "A505",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "A5_washroom",
+        "directions": {
+          "left": "A501",
+          "right": "5_liftarea",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "B501",
+        "directions": {
+          "left": "B502",
+          "right": "n/a",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "B502",
+        "directions": {
+          "left": "B503",
+          "right": "B501",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "B503",
+        "directions": {
+          "left": "n/a",
+          "right": "B502",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "B504",
+        "directions": {
+          "left": "n/a",
+          "right": "B505",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "B505",
+        "directions": {
+          "left": "B506",
+          "right": "B504",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "B506",
+        "directions": {
+          "left": "B5_washroom",
+          "right": "B505",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "B5_washroom",
+        "directions": {
+          "left": "5_liftarea",
+          "right": "B506",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "5_liftarea",
+        "directions": {
+          "left": "A5_washroom",
+          "right": "B5_washroom",
+          "front": "passage_5"
+        }
+      },
+      {
+        "actual_location": "passage_5",
+        "directions": {
+          "left": "n/a",
+          "right": "n/a",
+          "front": "n/a"
+        }
+      }
+    ]
+  }
+]
