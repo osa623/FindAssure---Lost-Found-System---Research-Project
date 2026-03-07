@@ -111,10 +111,23 @@ export const itemsApi = {
     const formData = new FormData();
 
     for (const image of images) {
+      const isHeic = /\.(heic|heif)$/i.test(image.fileName || image.uri)
+        || (image.mimeType?.toLowerCase() === 'image/heic')
+        || (image.mimeType?.toLowerCase() === 'image/heif');
+      const entryName = isHeic ? `photo_${Date.now()}.jpg` : (image.fileName || `photo_${Date.now()}.jpg`);
+      const entryType = isHeic ? 'image/jpeg' : buildImageMimeType(image);
+      console.log('[PRE-ANALYZE] FormData entry:', {
+        uri: image.uri.substring(0, 100),
+        originalFileName: image.fileName,
+        originalMimeType: image.mimeType,
+        isHeic,
+        sentName: entryName,
+        sentType: entryType,
+      });
       formData.append('images', {
         uri: image.uri,
-        name: image.fileName || `photo_${Date.now()}.jpg`,
-        type: buildImageMimeType(image),
+        name: entryName,
+        type: entryType,
       } as any);
     }
 

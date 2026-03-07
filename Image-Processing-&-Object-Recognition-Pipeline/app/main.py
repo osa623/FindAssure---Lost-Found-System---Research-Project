@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
+from PIL import Image as PILImage
 import shutil
 import os
 import uuid
@@ -51,11 +52,49 @@ async def analyze_pp1(
     file_ext = filename.split(".")[-1] if "." in filename else "jpg"
     temp_filename = f"{uuid.uuid4()}.{file_ext}"
     temp_path = os.path.join(UPLOAD_DIR, temp_filename)
+
+    logger.info("PP1_UPLOAD: filename=%s content_type=%s", filename, file.content_type)
     
     try:
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-            
+
+        # Log saved file size and magic bytes to diagnose format issues
+        saved_size = os.path.getsize(temp_path)
+        with open(temp_path, "rb") as f:
+            raw_header = f.read(16)
+        magic = raw_header.hex()
+        logger.info("PP1_TEMP_SAVE: path=%s ext=%s size=%d magic=%s", temp_path, file_ext, saved_size, magic)
+
+        # Detect HEIC/HEIF by magic bytes (ftyp box at offset 4) and convert to JPEG
+        # This handles iOS gallery images which are always HEIC regardless of the filename extension
+        _is_heic = len(raw_header) >= 12 and raw_header[4:8] == b"ftyp" and raw_header[8:12] in (
+            b"heic", b"heif", b"heix", b"hevc", b"hevx", b"mif1", b"msf1"
+        )
+        if _is_heic:
+            logger.info("PP1_HEIC_DETECTED: Converting HEIC -> JPEG for %s", temp_path)
+            try:
+                import pillow_heif as _pillow_heif
+                _heif = _pillow_heif.open_heif(temp_path, convert_hdr_to_8bit=True)
+                _pil = _heif.to_pillow()
+                _jpeg_path = os.path.splitext(temp_path)[0] + "_converted.jpg"
+                _pil.save(_jpeg_path, "JPEG", quality=92)
+                os.remove(temp_path)
+                temp_path = _jpeg_path
+                logger.info("PP1_HEIC_CONVERTED: saved JPEG -> %s", temp_path)
+            except ImportError:
+                logger.error(
+                    "PP1_HEIC_CONVERT_FAILED: pillow-heif not installed. "
+                    "Run: .\\venv\\Scripts\\python -m pip install pillow-heif"
+                )
+                raise HTTPException(
+                    status_code=422,
+                    detail="HEIC image format requires pillow-heif. Please use a JPEG/PNG image or contact support."
+                )
+            except Exception as _heic_err:
+                logger.error("PP1_HEIC_CONVERT_FAILED: %r", str(_heic_err))
+                raise HTTPException(status_code=422, detail=f"Failed to convert HEIC image: {_heic_err}")
+
         # Call the pipeline from app state (shared service instances)
         try:
             pipeline = getattr(request.app.state, "unified_pipeline", None)
@@ -82,7 +121,7 @@ async def analyze_pp1(
         return result
         
     finally:
-        # Cleanup
+        # Cleanup — temp_path may have been reassigned to the converted JPEG path
         if os.path.exists(temp_path):
             try:
                 os.remove(temp_path)

@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Image, Alert, ScrollView, TouchableOpacity } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -35,6 +35,7 @@ const ReportFoundStartScreen = () => {
   const navigation = useNavigation<ReportFoundStartNavigationProp>();
   const [images, setImages] = useState<SelectedImageAsset[]>([]);
   const [loading, setLoading] = useState(false);
+  const isSubmitting = useRef(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -71,6 +72,16 @@ const ReportFoundStartScreen = () => {
     });
 
     if (!result.canceled) {
+      result.assets.forEach((asset, i) => {
+        console.log(`[GALLERY] Asset[${i}]:`, {
+          uri: asset.uri.substring(0, 100),
+          fileName: asset.fileName,
+          mimeType: asset.mimeType,
+          fileSize: asset.fileSize,
+          width: asset.width,
+          height: asset.height,
+        });
+      });
       setImages((current) => mergeImages(current, result.assets.map(mapPickerAsset)));
     }
   };
@@ -114,7 +125,7 @@ const ReportFoundStartScreen = () => {
   };
 
   const handleNext = async () => {
-    if (loading) {
+    if (isSubmitting.current) {
       return;
     }
 
@@ -124,6 +135,7 @@ const ReportFoundStartScreen = () => {
     }
 
     try {
+      isSubmitting.current = true;
       setLoading(true);
 
       const preAnalysis = await itemsApi.preAnalyzeFoundImages(images);
@@ -142,6 +154,7 @@ const ReportFoundStartScreen = () => {
         analysisMessage: error?.message || 'Image analysis unavailable. Please enter details manually.',
       });
     } finally {
+      isSubmitting.current = false;
       setLoading(false);
     }
   };
