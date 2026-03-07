@@ -12,7 +12,12 @@ from pymongo import MongoClient
 from bson import ObjectId
 import requests
 
+# Prevent transformers from importing TensorFlow in this service.
+# We use sentence-transformers with PyTorch path here.
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+
 from video_to_text import extract_text
+from audio_confidence import analyze_audio_confidence
 from local_nlp_checker import LocalNLP
 from gemini_batch_checker import gemini_batch_similarity
 
@@ -30,6 +35,8 @@ nlp = LocalNLP()
 
 TMP_DIR = tempfile.gettempdir()
 MAX_WORKERS = 5
+LOW_AUDIO_OWNER_THRESHOLD = 0.50
+HIGH_GUESSING_RISK_THRESHOLD = 0.70
 
 
 # -----------------------------
@@ -204,13 +211,20 @@ def verify_owner():
             video_path = saved_paths.get(key)
 
             try:
-                owner_text = extract_text(video_path)
+                # Audio confidence + transcript extraction (new behavior).
+                audio_result = analyze_audio_confidence(video_path)
+                owner_text = (audio_result.get("transcript") or "").strip()
+
+                # Fallback to existing transcription path to avoid breaking old behavior.
+                if not owner_text:
+                    owner_text = extract_text(video_path)
                 if not owner_text or not owner_text.strip():
                     print(f"Warning: Empty transcript for {key} (question {answer_data.get('question_id')})")
                 return {
                     "question_id": answer_data["question_id"],
                     "founder_answer": answer_data["founder_answer"],
                     "owner_answer": owner_text,
+                    "audio_analysis": audio_result,
                     "success": True
                 }
             except Exception as e:
@@ -219,6 +233,11 @@ def verify_owner():
                     "question_id": answer_data.get("question_id", 0),
                     "founder_answer": answer_data.get("founder_answer", ""),
                     "owner_answer": "[Processing Error]",
+                    "audio_analysis": {
+                        "audio_confidence_score": 0.0,
+                        "label": "audio_processing_failed",
+                        "diagnostics": {},
+                    },
                     "error": str(e),
                     "success": False
                 }
@@ -240,6 +259,13 @@ def verify_owner():
 
         video_processing_time = time.time() - start_time
         print(f"Video processing completed in {video_processing_time:.2f}s (parallel)")
+
+        # Debug visibility: print all extracted transcripts per question.
+        print("Extracted owner transcripts:")
+        for item in enriched:
+            qid = item.get("question_id")
+            transcript = item.get("owner_answer", "")
+            print(f"  Q{qid}: {transcript}")
 
         failed_count = sum(1 for item in enriched if not item.get("success", True))
         if failed_count:
@@ -287,6 +313,8 @@ def verify_owner():
         # -----------------------------
         results = []
         final_scores = []
+        audio_scores = []
+        guessing_risk_scores = []
 
         for i, a in enumerate(enriched):
             local = nlp.score_pair(
@@ -312,6 +340,11 @@ def verify_owner():
                 fused = (local_score * 0.5) + (gem_score * 0.5)
 
             final_scores.append(fused)
+            audio_data = a.get("audio_analysis") or {}
+            audio_score = float(audio_data.get("audio_confidence_score", 0.0) or 0.0)
+            audio_scores.append(audio_score)
+            guessing_risk = float(audio_data.get("guessing_risk_score", 0.0) or 0.0)
+            guessing_risk_scores.append(guessing_risk)
 
             results.append({
                 "question_id": a["question_id"],
@@ -322,10 +355,20 @@ def verify_owner():
                 "final_similarity": to_percent(fused),
                 "status": classify_status(fused),
                 "gemini_analysis": gemini_details[i].get("analysis")
-                if i < len(gemini_details) and isinstance(gemini_details[i], dict) else None
+                if i < len(gemini_details) and isinstance(gemini_details[i], dict) else None,
+                "audio_confidence": {
+                    "score": to_percent(audio_score),
+                    "label": audio_data.get("label"),
+                    "guessing_risk_score": to_percent(guessing_risk),
+                    "guessing_label": audio_data.get("guessing_label"),
+                    "diagnostics": audio_data.get("diagnostics", {})
+                }
             })
 
         semantic_avg_final = sum(final_scores) / len(final_scores)
+        avg_audio_confidence = sum(audio_scores) / len(audio_scores) if audio_scores else 0.0
+        avg_guessing_risk = sum(guessing_risk_scores) / len(guessing_risk_scores) if guessing_risk_scores else 0.0
+        high_guessing_count = sum(1 for g in guessing_risk_scores if g >= HIGH_GUESSING_RISK_THRESHOLD)
         face_score = extract_face_score(face_confidence_result)
         face_decision = (
             face_confidence_result.get("final_decision")
@@ -337,13 +380,24 @@ def verify_owner():
                 isinstance(v, dict) and v.get("label") == "face_not_detected"
                 for v in face_confidence_result.get("videos", [])
             )
+        # Strict policy: if face stage did not complete, treat as missing/invalid face evidence.
+        if face_check_status != "completed":
+            has_missing_face_video = True
 
-        # Final confidence combines semantic verification and face confidence.
-        # If face score is unavailable, keep semantic score only.
+        # Final confidence combines semantic + face + audio confidence.
+        # If face score is unavailable, distribute weight to semantic/audio.
         if face_score is None:
-            avg_final = semantic_avg_final
+            avg_final = (semantic_avg_final * 0.80) + (avg_audio_confidence * 0.20)
         else:
-            avg_final = (semantic_avg_final * 0.75) + (face_score * 0.25)
+            avg_final = (
+                (semantic_avg_final * 0.65) +
+                (face_score * 0.20) +
+                (avg_audio_confidence * 0.15)
+            )
+
+        # Additional penalty when many answers look like guessed/uncertain delivery.
+        guessing_penalty = min(0.20, avg_guessing_risk * 0.20)
+        avg_final = max(0.0, avg_final - guessing_penalty)
 
         # Rule 2: reject if any single question is critically low.
         min_score = min(final_scores)
@@ -357,7 +411,12 @@ def verify_owner():
                 "critical question."
             )
         else:
-            if has_missing_face_video:
+            if face_check_status != "completed":
+                is_owner = False
+                rejection_reason = (
+                    "Critical failure: Face verification did not complete successfully."
+                )
+            elif has_missing_face_video:
                 is_owner = False
                 rejection_reason = (
                     "Critical failure: Face not detected in at least one required answer video."
@@ -371,6 +430,18 @@ def verify_owner():
                 is_owner = False
                 rejection_reason = (
                     f"Face confidence too low ({to_percent(face_score)} < 55%)."
+                )
+            elif avg_audio_confidence < LOW_AUDIO_OWNER_THRESHOLD:
+                is_owner = False
+                rejection_reason = (
+                    f"Audio confidence too low ({to_percent(avg_audio_confidence)} < "
+                    f"{int(LOW_AUDIO_OWNER_THRESHOLD * 100)}%)."
+                )
+            elif avg_guessing_risk >= HIGH_GUESSING_RISK_THRESHOLD and high_guessing_count >= 3:
+                is_owner = False
+                rejection_reason = (
+                    "High guessing pattern detected across answers "
+                    f"({high_guessing_count}/{len(guessing_risk_scores)} high-risk responses)."
                 )
             else:
                 is_owner = avg_final >= 0.70
@@ -390,6 +461,8 @@ def verify_owner():
             "semantic_confidence": semantic_avg_final,
             "face_confidence_score": face_score,
             "face_decision": face_decision,
+            "avg_guessing_risk": avg_guessing_risk,
+            "guessing_penalty": guessing_penalty,
             "is_absolute_owner": is_owner,
             "has_zero_match_question": has_zero_match,
             "minimum_question_score": min_score,
@@ -399,6 +472,7 @@ def verify_owner():
             "video_processing_time_seconds": round(video_processing_time, 2),
 
             "face_confidence": face_confidence_result,
+            "avg_audio_confidence": avg_audio_confidence,
             "face_check_status": face_check_status,
             "face_check_error": face_check_error,
 
@@ -406,7 +480,8 @@ def verify_owner():
                 {
                     "question_id": r["question_id"],
                     "final_similarity": r["final_similarity"],
-                    "status": r["status"]
+                    "status": r["status"],
+                    "audio_confidence": r.get("audio_confidence")
                 } for r in results
             ],
             "AI_recommendations": {
@@ -427,6 +502,8 @@ def verify_owner():
                 "missing_face_video": has_missing_face_video,
                 "suspicious_face_pattern": face_decision == "possible_thief",
                 "low_face_confidence": (face_score is not None and face_score < 0.55),
+                "low_audio_confidence": avg_audio_confidence < LOW_AUDIO_OWNER_THRESHOLD,
+                "high_guessing_risk": avg_guessing_risk >= HIGH_GUESSING_RISK_THRESHOLD,
                 "face_not_evaluated": face_check_status != "completed"
             }
         })
@@ -438,6 +515,9 @@ def verify_owner():
             "semantic_confidence": to_percent(semantic_avg_final),
             "face_confidence_score": to_percent(face_score),
             "face_decision": face_decision,
+            "avg_audio_confidence": to_percent(avg_audio_confidence),
+            "avg_guessing_risk": to_percent(avg_guessing_risk),
+            "guessing_penalty": to_percent(guessing_penalty),
             "is_absolute_owner": is_owner,
             "has_zero_match_question": has_zero_match,
             "minimum_question_score": to_percent(min_score),

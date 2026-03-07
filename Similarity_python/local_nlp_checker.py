@@ -1,4 +1,10 @@
 # local_nlp_checker.py
+import os
+# Force transformers/sentence-transformers to avoid TensorFlow in this service.
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("USE_FLAX", "0")
+
 import spacy
 import numpy as np
 import re
