@@ -36,6 +36,13 @@ export interface PythonVerificationResult {
   owner_transcript: string;
   founder_answer: string;
   gemini_analysis: string | null;
+  audio_confidence?: {
+    score?: string;
+    label?: string;
+    guessing_risk_score?: string;
+    guessing_label?: string;
+    diagnostics?: Record<string, any>;
+  };
 }
 
 export interface PythonVerificationResponse {
@@ -49,6 +56,9 @@ export interface PythonVerificationResponse {
   minimum_question_score?: string;
   semantic_confidence?: string;
   face_confidence_score?: string;
+  avg_audio_confidence?: string;
+  avg_guessing_risk?: string;
+  guessing_penalty?: string;
   face_decision?: string;
   has_zero_match_question?: boolean;
   results?: PythonVerificationResult[];
