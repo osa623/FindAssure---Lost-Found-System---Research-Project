@@ -1,75 +1,55 @@
 import React, { useLayoutEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, BackHandler, Alert } from 'react-native';
-import { useNavigation, CommonActions, useFocusEffect } from '@react-navigation/native';
+import { Alert, BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { CommonActions, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
+import { Ionicons } from '@expo/vector-icons';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../context/AuthContext';
 import { RootStackParamList } from '../types/models';
+import { GlassCard } from '../components/GlassCard';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { Ionicons } from '@expo/vector-icons';
+import { gradients, palette, radius, spacing, type } from '../theme/designSystem';
 
 type HomeScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Home'>;
 
 const HomeScreen = () => {
   const navigation = useNavigation<HomeScreenNavigationProp>();
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
 
-  const handleReportFound = () => {
-    navigation.navigate('ReportFoundStart');
-  };
-
+  const handleProfile = () => navigation.navigate('Profile');
+  const handleLogin = () => navigation.navigate('Login');
+  const handleReportFound = () => navigation.navigate('ReportFoundStart');
   const handleFindLost = () => {
     if (!user) {
-      // Redirect to login if not logged in
       navigation.navigate('Login');
-    } else {
-      navigation.navigate('FindLostStart');
+      return;
     }
+    navigation.navigate('FindLostStart');
   };
 
-  const handleProfile = () => {
-    navigation.navigate('Profile');
-  };
-
-  const handleLogin = () => {
-    navigation.navigate('Login');
-  };
-
-  // Set up header button
   useLayoutEffect(() => {
     navigation.setOptions({
+      title: '',
       headerRight: () => (
-        <TouchableOpacity
-          onPress={() => user ? handleProfile() : handleLogin()}
-          style={{ marginRight: 15 }}
-        >
-          <Ionicons 
-            name={user ? "person-circle" : "log-in"} 
-            size={28} 
-            color="#FFFFFF" 
-          />
-        </TouchableOpacity>
+        <Pressable onPress={() => (user ? handleProfile() : handleLogin())} style={styles.headerButton}>
+          <Ionicons name={user ? 'person-circle' : 'log-in'} size={24} color={palette.ink} />
+        </Pressable>
       ),
     });
   }, [navigation, user]);
 
-  // Handle Android back button for logged-in users
   useFocusEffect(
     React.useCallback(() => {
       const onBackPress = () => {
         if (user) {
-          // If user is logged in, show exit app confirmation
-          Alert.alert(
-            'Exit App',
-            'Do you want to exit the app?',
-            [
-              { text: 'Cancel', style: 'cancel', onPress: () => {} },
-              { text: 'Exit', style: 'destructive', onPress: () => BackHandler.exitApp() },
-            ]
-          );
-          return true; // Prevent default back behavior
+          Alert.alert('Exit App', 'Do you want to exit the app?', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Exit', style: 'destructive', onPress: () => BackHandler.exitApp() },
+          ]);
+          return true;
         }
-        return false; // Allow default back behavior for guests
+        return false;
       };
 
       const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
@@ -78,298 +58,264 @@ const HomeScreen = () => {
   );
 
   return (
-    <ScrollView style={styles.container}>
-      <LinearGradient
-        colors={['#4A90E2', '#67B5E8', '#8DCFF5']}
-        style={styles.headerGradient}
-      >
-        <View style={styles.headerContent}>
-          <View style={styles.iconContainer}>
-            <Text style={styles.iconText}>🔍</Text>
-          </View>
-          <Text style={styles.appTitle}>FIND ASSURE</Text>
-          <Text style={styles.tagline}>Your Lost & Found System</Text>
-        </View>
-      </LinearGradient>
-
-      <View style={styles.content}>
-        {/* Auth Status Section */}
-        <View style={styles.authSection}>
-          {user ? (
-            <View style={styles.userCard}>
-              <Text style={styles.greeting}>Welcome back, {user.name}! 👋</Text>
-              <Text style={styles.userRole}>Role: {user.role}</Text>
-              {user.role === 'admin' && (
-                <TouchableOpacity 
-                  style={styles.adminButton} 
-                  onPress={() => navigation.navigate('AdminDashboard')}
-                >
-                  <Ionicons name="shield-checkmark" size={18} color="#FFFFFF" />
-                  <Text style={styles.adminButtonText}>Admin Dashboard</Text>
-                </TouchableOpacity>
-              )}
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <Animated.View entering={FadeInDown.duration(420)}>
+          <GlassCard style={styles.hero}>
+            <View style={styles.heroBadge}>
+              <Text style={styles.heroBadgeText}>iOS-style lost and found</Text>
             </View>
-          ) : (
-            <View style={styles.guestCard}>
-              <Text style={styles.guestText}>Not logged in</Text>
-              <PrimaryButton
-                title="Login / Register"
-                onPress={handleLogin}
-                style={styles.authButton}
-              />
+            <View style={styles.heroTop}>
+              <Text style={styles.wordmark}>FIND ASSURE</Text>
             </View>
-          )}
-        </View>
+            <Text style={styles.heroTitle}>Recover faster. Report cleaner. Verify safely.</Text>
+            <Text style={styles.heroBody}>
+              A calmer lost-and-found workflow with better photos, clearer context, and controlled access to finder details.
+            </Text>
+            <View style={styles.heroActions}>
+              <PrimaryButton title="Report Found Item" onPress={handleReportFound} />
+              <PrimaryButton title="Find Lost Item" onPress={handleFindLost} variant="secondary" />
+            </View>
+          </GlassCard>
+        </Animated.View>
 
-        {/* Main Action Cards */}
-        <View style={styles.actionsContainer}>
-          <Text style={styles.sectionTitle}>What would you like to do?</Text>
-          
-          <TouchableOpacity 
-            style={styles.actionCard}
+        <Animated.View entering={FadeInDown.delay(80).duration(420)}>
+          <GlassCard style={styles.accountCard}>
+            {user ? (
+              <>
+                <Text style={styles.sectionEyebrow}>Account</Text>
+                <Text style={styles.sectionTitle}>Welcome back, {user.name.split(' ')[0]}.</Text>
+                <Text style={styles.sectionBody}>
+                  Your current role is {user.role}. Continue where you left off or review your account details.
+                </Text>
+                <View style={styles.inlineActions}>
+                  <PrimaryButton title="Open Profile" onPress={handleProfile} variant="secondary" />
+                  {user.role === 'admin' ? (
+                    <PrimaryButton
+                      title="Admin Dashboard"
+                      onPress={() =>
+                        navigation.dispatch(
+                          CommonActions.navigate({
+                            name: 'AdminDashboard',
+                          })
+                        )
+                      }
+                      variant="ghost"
+                    />
+                  ) : null}
+                </View>
+              </>
+            ) : (
+              <>
+                <Text style={styles.sectionEyebrow}>Guest mode</Text>
+                <Text style={styles.sectionTitle}>Browse first. Sign in when you need ownership tools.</Text>
+                <Text style={styles.sectionBody}>
+                  Reporting found items is open. Searching and claiming requires a signed-in owner account.
+                </Text>
+                <PrimaryButton title="Login / Register" onPress={handleLogin} variant="secondary" />
+              </>
+            )}
+          </GlassCard>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.delay(140).duration(420)} style={styles.stack}>
+          <ActionPanel
+            icon="scan-outline"
+            eyebrow="Founder flow"
+            title="Create a report with layered proof"
+            body="Capture up to three images, refine the description, choose five owner questions, then submit finder contact details privately."
             onPress={handleReportFound}
-            activeOpacity={0.7}
-          >
-            <View style={styles.actionIcon}>
-              <Text style={styles.actionEmoji}>📢</Text>
-            </View>
-            <View style={styles.actionContent}>
-              <Text style={styles.actionTitle}>Report a Found Item</Text>
-              <Text style={styles.actionDescription}>
-                Help someone by reporting an item you found
-              </Text>
-            </View>
-            <Text style={styles.arrow}>›</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.actionCard}
+          />
+          <ActionPanel
+            icon="locate-outline"
+            eyebrow="Owner flow"
+            title="Search with location confidence and photo evidence"
+            body={`Look through reported items using description, place, and optional images.${user ? '' : ' Login is required before search.'}`}
             onPress={handleFindLost}
-            activeOpacity={0.7}
-          >
-            <View style={styles.actionIcon}>
-              <Text style={styles.actionEmoji}>🔎</Text>
-            </View>
-            <View style={styles.actionContent}>
-              <Text style={styles.actionTitle}>Find Lost Item</Text>
-              <Text style={styles.actionDescription}>
-                Search for your lost items {!user && '(Login required)'}
-              </Text>
-            </View>
-            <Text style={styles.arrow}>›</Text>
-          </TouchableOpacity>
-        </View>
+          />
+        </Animated.View>
 
-        {/* Info Section */}
-        <View style={styles.infoSection}>
-          <Text style={styles.infoTitle}>How It Works</Text>
-          <View style={styles.infoStep}>
-            <Text style={styles.stepNumber}>1</Text>
-            <Text style={styles.stepText}>Report found items with photos and details</Text>
-          </View>
-          <View style={styles.infoStep}>
-            <Text style={styles.stepNumber}>2</Text>
-            <Text style={styles.stepText}>Owners search and verify ownership</Text>
-          </View>
-          <View style={styles.infoStep}>
-            <Text style={styles.stepNumber}>3</Text>
-            <Text style={styles.stepText}>Connect and reunite with lost belongings</Text>
-          </View>
-        </View>
-      </View>
-    </ScrollView>
+        <Animated.View entering={FadeInDown.delay(200).duration(420)}>
+          <GlassCard style={styles.howItWorks}>
+            <Text style={styles.sectionEyebrow}>How it works</Text>
+            <Text style={styles.sectionTitle}>One flow for reporting. One flow for proving ownership.</Text>
+            <View style={styles.steps}>
+              {[
+                'Founders submit photos, context, and verification questions.',
+                'Owners search using details, location confidence, and optional photos.',
+                'Verification gates access to finder contact details.',
+              ].map((step, index) => (
+                <View key={step} style={styles.stepRow}>
+                  <View style={styles.stepBadge}>
+                    <Text style={styles.stepBadgeText}>{index + 1}</Text>
+                  </View>
+                  <Text style={styles.stepText}>{step}</Text>
+                </View>
+              ))}
+            </View>
+          </GlassCard>
+        </Animated.View>
+      </ScrollView>
+    </LinearGradient>
   );
 };
+
+const ActionPanel = ({
+  icon,
+  eyebrow,
+  title,
+  body,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  eyebrow: string;
+  title: string;
+  body: string;
+  onPress: () => void;
+}) => (
+  <Pressable onPress={onPress}>
+    <GlassCard style={styles.actionCard}>
+      <View style={styles.actionHeader}>
+        <View style={styles.actionIconWrap}>
+          <Ionicons name={icon} size={22} color={palette.primaryDeep} />
+        </View>
+        <Ionicons name="arrow-forward" size={18} color={palette.mist} />
+      </View>
+      <Text style={styles.sectionEyebrow}>{eyebrow}</Text>
+      <Text style={styles.actionTitle}>{title}</Text>
+      <Text style={styles.sectionBody}>{body}</Text>
+    </GlassCard>
+  </Pressable>
+);
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  headerGradient: {
-    paddingTop: 40,
-    paddingBottom: 40,
-    paddingHorizontal: 20,
-  },
-  headerContent: {
-    alignItems: 'center',
-  },
-  iconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  iconText: {
-    fontSize: 40,
-  },
-  appTitle: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    letterSpacing: 2,
-    marginBottom: 8,
-  },
-  tagline: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    opacity: 0.95,
   },
   content: {
-    padding: 20,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
+    gap: spacing.lg,
   },
-  authSection: {
-    marginBottom: 24,
-  },
-  userCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  greeting: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 4,
-  },
-  userRole: {
-    fontSize: 14,
-    color: '#666666',
-    textTransform: 'capitalize',
-  },
-  adminButton: {
-    flexDirection: 'row',
+  headerButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: palette.paperStrong,
+    borderWidth: 1,
+    borderColor: palette.line,
     alignItems: 'center',
-    backgroundColor: '#E53935',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    marginTop: 12,
-    gap: 8,
+    justifyContent: 'center',
+    marginRight: spacing.md,
   },
-  adminButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
+  hero: {
+    borderRadius: radius.lg,
+    padding: spacing.lg,
   },
-  guestCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+  heroBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    marginBottom: spacing.md,
   },
-  guestText: {
-    fontSize: 14,
-    color: '#666666',
-    marginBottom: 12,
+  heroBadgeText: {
+    ...type.caption,
+    color: palette.primaryDeep,
+    fontWeight: '700',
   },
-  authButton: {
-    width: '100%',
+  heroTop: {
+    marginBottom: spacing.xs,
   },
-  actionsContainer: {
-    marginBottom: 24,
+  wordmark: {
+    ...type.brand,
+    color: palette.primaryDeep,
   },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 16,
+  heroTitle: {
+    ...type.title,
+    color: palette.ink,
+    marginBottom: spacing.sm,
+  },
+  heroBody: {
+    ...type.body,
+    color: palette.inkSoft,
+    marginBottom: spacing.lg,
+  },
+  heroActions: {
+    gap: spacing.sm,
+  },
+  accountCard: {
+    marginTop: 0,
+  },
+  stack: {
+    gap: spacing.md,
   },
   actionCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    borderRadius: radius.lg,
   },
-  actionIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#E3F2FD',
+  actionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  actionIconWrap: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: palette.primarySoft,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 16,
   },
-  actionEmoji: {
-    fontSize: 28,
+  sectionEyebrow: {
+    ...type.label,
+    marginBottom: spacing.xs,
   },
-  actionContent: {
-    flex: 1,
+  sectionTitle: {
+    ...type.section,
+    marginBottom: spacing.sm,
   },
   actionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 4,
+    ...type.section,
+    marginBottom: spacing.xs,
   },
-  actionDescription: {
-    fontSize: 13,
-    color: '#666666',
-    lineHeight: 18,
+  sectionBody: {
+    ...type.body,
   },
-  arrow: {
-    fontSize: 32,
-    color: '#CCCCCC',
-    fontWeight: '300',
+  inlineActions: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
-  infoSection: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
+  howItWorks: {
+    marginTop: spacing.xs,
   },
-  infoTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 16,
+  steps: {
+    marginTop: spacing.md,
+    gap: spacing.md,
   },
-  infoStep: {
+  stepRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
+    alignItems: 'flex-start',
+    gap: spacing.md,
   },
-  stepNumber: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#4A90E2',
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-    lineHeight: 32,
-    marginRight: 12,
+  stepBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: palette.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBadgeText: {
+    ...type.caption,
+    color: palette.paperStrong,
+    fontWeight: '800',
   },
   stepText: {
+    ...type.body,
     flex: 1,
-    fontSize: 14,
-    color: '#666666',
-    lineHeight: 20,
   },
 });
 

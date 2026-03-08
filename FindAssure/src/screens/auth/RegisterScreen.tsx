@@ -1,28 +1,30 @@
-// RegisterScreen – follow the spec
 import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  StyleSheet, 
-  ScrollView, 
-  KeyboardAvoidingView, 
-  Platform,
+import {
   Alert,
-  TouchableOpacity
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
-import { useNavigation, CommonActions } from '@react-navigation/native';
+import { CommonActions, useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { RootStackParamList } from '../../types/models';
+import { FormInput } from '../../components/FormInput';
+import { GlassCard } from '../../components/GlassCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { gradients, palette, spacing, type } from '../../theme/designSystem';
 
 type RegisterScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Register'>;
 
 const RegisterScreen = () => {
   const navigation = useNavigation<RegisterScreenNavigationProp>();
   const { signUp } = useAuth();
-  
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -35,12 +37,10 @@ const RegisterScreen = () => {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
-
     if (password !== confirmPassword) {
       Alert.alert('Error', 'Passwords do not match');
       return;
     }
-
     if (password.length < 6) {
       Alert.alert('Error', 'Password must be at least 6 characters');
       return;
@@ -48,17 +48,18 @@ const RegisterScreen = () => {
 
     try {
       setLoading(true);
-      await signUp({ name, email, phone, password, role: 'owner' });
+      await signUp({ name, email, phone, password, role: 'owner' } as any);
       Alert.alert('Success', 'Account created successfully!', [
-        { 
-          text: 'OK', 
-          onPress: () => navigation.dispatch(
-            CommonActions.reset({
-              index: 0,
-              routes: [{ name: 'Home' }],
-            })
-          )
-        }
+        {
+          text: 'OK',
+          onPress: () =>
+            navigation.dispatch(
+              CommonActions.reset({
+                index: 0,
+                routes: [{ name: 'Home' }],
+              })
+            ),
+        },
       ]);
     } catch (error: any) {
       Alert.alert('Registration Failed', error.message || 'Please try again');
@@ -67,174 +68,159 @@ const RegisterScreen = () => {
     }
   };
 
-  const handleLogin = () => {
-    navigation.navigate('Login');
-  };
-
   return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.content}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Create Account</Text>
-            <Text style={styles.subtitle}>Register as an Item Owner</Text>
-          </View>
-
-          <View style={styles.form}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Full Name</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your full name"
-                value={name}
-                onChangeText={setName}
-                autoCapitalize="words"
-              />
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <GlassCard style={styles.hero}>
+            <View style={styles.heroBadge}>
+              <Text style={styles.heroBadgeText}>Registration</Text>
             </View>
+            <Text style={styles.wordmark}>FIND ASSURE</Text>
+            <Text style={styles.heroTitle}>Create an owner account.</Text>
+            <Text style={styles.heroBody}>Get access to search, verification history, and future claim tracking.</Text>
+          </GlassCard>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your email"
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                autoComplete="email"
-              />
-            </View>
+          <GlassCard>
+            <Text style={styles.sectionEyebrow}>Registration</Text>
+            <Text style={styles.formTitle}>Personal details</Text>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Phone Number</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your phone number"
-                value={phone}
-                onChangeText={setPhone}
-                keyboardType="phone-pad"
-                autoComplete="tel"
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Create a password (min 6 characters)"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                autoCapitalize="none"
-                autoComplete="password-new"
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Confirm Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Confirm your password"
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secureTextEntry
-                autoCapitalize="none"
-              />
-            </View>
-
-            <PrimaryButton
-              title="Register"
-              onPress={handleRegister}
-              loading={loading}
-              style={styles.registerButton}
+            <FormInput
+              label="Full name"
+              placeholder="Enter your full name"
+              value={name}
+              onChangeText={setName}
+              autoCapitalize="words"
+              leadingIcon="person-outline"
+              containerStyle={styles.fieldGap}
+            />
+            <FormInput
+              label="Email"
+              placeholder="name@example.com"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoComplete="email"
+              leadingIcon="mail-outline"
+              containerStyle={styles.fieldGap}
+            />
+            <FormInput
+              label="Phone number"
+              placeholder="Enter your phone number"
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+              autoComplete="tel"
+              leadingIcon="call-outline"
+              containerStyle={styles.fieldGap}
+            />
+            <FormInput
+              label="Password"
+              placeholder="Minimum 6 characters"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoComplete="password-new"
+              leadingIcon="lock-closed-outline"
+              containerStyle={styles.fieldGap}
+            />
+            <FormInput
+              label="Confirm password"
+              placeholder="Repeat the password"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              leadingIcon="checkmark-circle-outline"
             />
 
-            <View style={styles.loginSection}>
-              <Text style={styles.loginText}>Already have an account? </Text>
-              <TouchableOpacity onPress={handleLogin}>
-                <Text style={styles.loginLink}>Login here</Text>
-              </TouchableOpacity>
+            <PrimaryButton title="Register" onPress={handleRegister} loading={loading} size="lg" style={styles.buttonGap} />
+
+            <View style={styles.bottomRow}>
+              <Text style={styles.bottomText}>Already have an account?</Text>
+              <Pressable onPress={() => navigation.navigate('Login')}>
+                <Text style={styles.linkText}>Login here</Text>
+              </Pressable>
             </View>
-          </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+          </GlassCard>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
   },
   scrollContent: {
-    flexGrow: 1,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
-  content: {
-    flex: 1,
-    padding: 20,
-    paddingTop: 10,
+  hero: {
+    borderRadius: 24,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
   },
-  header: {
-    marginBottom: 24,
-    alignItems: 'center',
+  heroBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.primarySoft,
+    borderRadius: 999,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    marginBottom: spacing.md,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 8,
+  heroBadgeText: {
+    ...type.caption,
+    color: palette.primaryDeep,
+    fontWeight: '700',
   },
-  subtitle: {
-    fontSize: 16,
-    color: '#666666',
+  wordmark: {
+    ...type.brand,
+    fontSize: 15,
+    lineHeight: 17,
+    color: palette.primaryDeep,
+    marginBottom: spacing.sm,
   },
-  form: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+  heroTitle: {
+    ...type.title,
+    color: palette.ink,
+    marginBottom: spacing.sm,
   },
-  inputGroup: {
-    marginBottom: 16,
+  heroBody: {
+    ...type.body,
+    color: palette.inkSoft,
   },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 8,
+  sectionEyebrow: {
+    ...type.label,
+    marginBottom: spacing.xs,
   },
-  input: {
-    borderWidth: 1,
-    borderColor: '#DDDDDD',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: '#FAFAFA',
+  formTitle: {
+    ...type.section,
+    marginBottom: spacing.xl,
   },
-  registerButton: {
-    marginTop: 10,
+  fieldGap: {
+    marginBottom: spacing.md,
   },
-  loginSection: {
+  buttonGap: {
+    marginTop: spacing.lg,
+  },
+  bottomRow: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 16,
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
   },
-  loginText: {
-    fontSize: 14,
-    color: '#666666',
+  bottomText: {
+    ...type.body,
   },
-  loginLink: {
-    fontSize: 14,
-    color: '#4A90E2',
-    fontWeight: '600',
+  linkText: {
+    ...type.bodyStrong,
+    color: palette.primaryDeep,
   },
 });
 

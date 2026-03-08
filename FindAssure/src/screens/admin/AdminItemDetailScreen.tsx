@@ -124,7 +124,7 @@ const AdminItemDetailScreen = () => {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>❓ Questions & Founder Answers</Text>
             <Text style={styles.adminNote}>
-              ⚠️ Admin can see founder's answers - DO NOT share with unverified users
+              ⚠️ Admin can see founder&apos;s answers - DO NOT share with unverified users
             </Text>
             {foundItem.questions.map((question, index) => (
               <View key={index} style={styles.qaItem}>
@@ -132,7 +132,7 @@ const AdminItemDetailScreen = () => {
                 <View style={styles.qaContent}>
                   <Text style={styles.questionText}>{question}</Text>
                   <View style={styles.answerBox}>
-                    <Text style={styles.answerLabel}>Founder's Answer:</Text>
+                    <Text style={styles.answerLabel}>Founder&apos;s Answer:</Text>
                     <Text style={styles.answerText}>{foundItem.founderAnswers?.[index] || 'N/A'}</Text>
                   </View>
                 </View>

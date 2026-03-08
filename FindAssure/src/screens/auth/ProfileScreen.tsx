@@ -1,28 +1,29 @@
-// ProfileScreen – follow the spec
-import React, { useState, useEffect } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  StyleSheet, 
-  ScrollView, 
+import React, { useEffect, useState } from 'react';
+import {
   Alert,
   Image,
-  TouchableOpacity,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
-import { useNavigation, CommonActions } from '@react-navigation/native';
+import { CommonActions, useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { RootStackParamList } from '../../types/models';
-import { PrimaryButton } from '../../components/PrimaryButton';
 import { authApi } from '../../api/authApi';
+import { FormInput } from '../../components/FormInput';
+import { GlassCard } from '../../components/GlassCard';
+import { PrimaryButton } from '../../components/PrimaryButton';
+import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
 
 type ProfileScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Profile'>;
 
 const ProfileScreen = () => {
   const navigation = useNavigation<ProfileScreenNavigationProp>();
   const { user, updateProfile, signOut } = useAuth();
-  
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -44,7 +45,7 @@ const ProfileScreen = () => {
       setLoadingClaimed(true);
       const items = await authApi.getClaimedItems();
       setClaimedItems(items);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to fetch claimed items:', error);
     } finally {
       setLoadingClaimed(false);
@@ -56,7 +57,6 @@ const ProfileScreen = () => {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
-
     try {
       setLoading(true);
       await updateProfile({ name, phone });
@@ -69,400 +69,264 @@ const ProfileScreen = () => {
   };
 
   const handleLogout = async () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await signOut();
-              navigation.dispatch(
-                CommonActions.reset({
-                  index: 0,
-                  routes: [{ name: 'Home' }],
-                })
-              );
-            } catch (error: any) {
-              Alert.alert('Error', error.message || 'Failed to logout');
-            }
-          },
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Logout',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await signOut();
+            navigation.dispatch(
+              CommonActions.reset({
+                index: 0,
+                routes: [{ name: 'Home' }],
+              })
+            );
+          } catch (error: any) {
+            Alert.alert('Error', error.message || 'Failed to logout');
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
   if (!user) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.errorText}>Please login to view profile</Text>
+      <View style={styles.emptyWrap}>
+        <Text style={styles.emptyText}>Please login to view profile</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <View style={styles.header}>
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <GlassCard style={styles.hero}>
+          <View style={styles.heroBadge}>
+            <Text style={styles.heroBadgeText}>Profile</Text>
+          </View>
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
-            </Text>
+            <Text style={styles.avatarText}>{user.name ? user.name.charAt(0).toUpperCase() : 'U'}</Text>
           </View>
-          <Text style={styles.welcomeText}>
-            Welcome back, {user.name.split(' ')[0]}!
-          </Text>
-          <Text style={styles.roleText}>Role: Item Owner</Text>
-        </View>
+          <Text style={styles.heroTitle}>{user.name}</Text>
+          <Text style={styles.heroBody}>Owner account · Member since {new Date(user.createdAt).toLocaleDateString()}</Text>
+        </GlassCard>
 
-        <View style={styles.form}>
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Full Name</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your full name"
-              value={name}
-              onChangeText={setName}
-              autoCapitalize="words"
-            />
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={[styles.input, styles.inputDisabled]}
-              placeholder="Enter your email"
-              value={email}
-              editable={false}
-              autoCapitalize="none"
-            />
-            <Text style={styles.helperText}>Email cannot be changed</Text>
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Phone Number</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your phone number"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-            />
-          </View>
-
-          <PrimaryButton
-            title="Save Changes"
-            onPress={handleSave}
-            loading={loading}
-            style={styles.saveButton}
+        <GlassCard style={styles.cardGap}>
+          <Text style={styles.sectionEyebrow}>Profile</Text>
+          <Text style={styles.formTitle}>Personal information</Text>
+          <FormInput
+            label="Full name"
+            value={name}
+            onChangeText={setName}
+            autoCapitalize="words"
+            leadingIcon="person-outline"
+            containerStyle={styles.fieldGap}
           />
-        </View>
+          <FormInput
+            label="Email"
+            value={email}
+            editable={false}
+            hint="Email cannot be changed"
+            leadingIcon="mail-outline"
+            containerStyle={styles.fieldGap}
+          />
+          <FormInput
+            label="Phone number"
+            value={phone}
+            onChangeText={setPhone}
+            keyboardType="phone-pad"
+            leadingIcon="call-outline"
+          />
+          <PrimaryButton title="Save Changes" onPress={handleSave} loading={loading} size="lg" style={styles.buttonGap} />
+        </GlassCard>
 
-        {/* Logout Button - Prominent */}
-        <TouchableOpacity 
-          style={styles.logoutButton}
-          onPress={handleLogout}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.logoutIcon}>🚪</Text>
-          <View style={styles.logoutContent}>
-            <Text style={styles.logoutTitle}>Logout</Text>
-            <Text style={styles.logoutSubtitle}>Sign out of your account</Text>
-          </View>
-          <Text style={styles.logoutArrow}>›</Text>
-        </TouchableOpacity>
+        <GlassCard style={styles.cardGap}>
+          <Text style={styles.sectionEyebrow}>Security</Text>
+          <Text style={styles.formTitle}>Session control</Text>
+          <Text style={styles.sectionBody}>Signing out clears this device session and returns you to the public home screen.</Text>
+          <PrimaryButton title="Logout" onPress={handleLogout} variant="danger" size="lg" style={styles.buttonGap} />
+        </GlassCard>
 
-        <View style={styles.infoSection}>
-          <Text style={styles.infoTitle}>Account Information</Text>
+        <GlassCard style={styles.cardGap}>
+          <Text style={styles.sectionEyebrow}>Account info</Text>
+          <Text style={styles.formTitle}>Stored details</Text>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>User ID:</Text>
+            <Text style={styles.infoLabel}>User ID</Text>
             <Text style={styles.infoValue}>{user._id}</Text>
           </View>
           <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Member Since:</Text>
-            <Text style={styles.infoValue}>
-              {new Date(user.createdAt).toLocaleDateString()}
-            </Text>
+            <Text style={styles.infoLabel}>Role</Text>
+            <Text style={styles.infoValue}>Item Owner</Text>
           </View>
-        </View>
+        </GlassCard>
 
-        {/* Claimed Items Section */}
-        <View style={styles.claimedSection}>
-          <Text style={styles.sectionTitle}>My Claimed Items</Text>
+        <GlassCard>
+          <Text style={styles.sectionEyebrow}>Claim history</Text>
+          <Text style={styles.formTitle}>My claimed items</Text>
           {loadingClaimed ? (
-            <Text style={styles.loadingText}>Loading claimed items...</Text>
+            <Text style={styles.sectionBody}>Loading claimed items...</Text>
           ) : claimedItems.length === 0 ? (
-            <Text style={styles.emptyText}>No claimed items yet</Text>
+            <Text style={styles.sectionBody}>No claimed items yet.</Text>
           ) : (
             claimedItems.map((item, index) => (
-              <View key={index} style={styles.claimedItemCard}>
+              <View key={index} style={styles.claimCard}>
                 <Image
                   source={{ uri: item.foundItemId?.imageUrl || 'https://via.placeholder.com/100' }}
                   style={styles.itemImage}
                 />
-                <View style={styles.itemDetails}>
-                  <Text style={styles.itemCategory}>{item.foundItemId?.category}</Text>
-                  <Text style={styles.itemDescription} numberOfLines={2}>
+                <View style={styles.claimCopy}>
+                  <Text style={styles.claimTitle}>{item.foundItemId?.category}</Text>
+                  <Text style={styles.claimBody} numberOfLines={2}>
                     {item.foundItemId?.description}
                   </Text>
-                  <Text style={styles.claimedDate}>
-                    Claimed: {new Date(item.createdAt).toLocaleDateString()}
+                  <Text style={styles.claimMeta}>Claimed {new Date(item.createdAt).toLocaleDateString()}</Text>
+                  <Text style={styles.claimContact}>
+                    Founder: {item.foundItemId?.founderContact?.name || 'N/A'} · {item.foundItemId?.founderContact?.email || 'N/A'}
                   </Text>
-                  
-                  {/* Founder Contact Information */}
-                  <View style={styles.founderInfo}>
-                    <Text style={styles.founderTitle}>Founder Contact:</Text>
-                    <Text style={styles.founderText}>
-                      {item.foundItemId?.founderContact?.name || 'N/A'}
-                    </Text>
-                    <Text style={styles.founderText}>
-                      📧 {item.foundItemId?.founderContact?.email || 'N/A'}
-                    </Text>
-                    <Text style={styles.founderText}>
-                      📱 {item.foundItemId?.founderContact?.phone || 'N/A'}
-                    </Text>
-                  </View>
                 </View>
               </View>
             ))
           )}
-        </View>
-      </View>
-    </ScrollView>
+        </GlassCard>
+      </ScrollView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
   },
   content: {
-    padding: 20,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
-  header: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#4A90E2',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  avatarText: {
-    fontSize: 40,
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
-  welcomeText: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginTop: 12,
-    marginBottom: 4,
-  },
-  roleText: {
-    fontSize: 14,
-    color: '#666666',
-    textTransform: 'capitalize',
-  },
-  form: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#DDDDDD',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: '#FAFAFA',
-  },
-  inputDisabled: {
-    backgroundColor: '#F0F0F0',
-    color: '#999999',
-  },
-  helperText: {
-    fontSize: 12,
-    color: '#999999',
-    marginTop: 4,
-  },
-  saveButton: {
-    marginTop: 10,
-  },
-  logoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 2,
-    borderColor: '#E53935',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  logoutIcon: {
-    fontSize: 32,
-    marginRight: 12,
-  },
-  logoutContent: {
+  emptyWrap: {
     flex: 1,
-  },
-  logoutTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#E53935',
-    marginBottom: 2,
-  },
-  logoutSubtitle: {
-    fontSize: 13,
-    color: '#999999',
-  },
-  logoutArrow: {
-    fontSize: 32,
-    color: '#E53935',
-    fontWeight: '300',
-  },
-  infoSection: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  infoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 16,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  infoLabel: {
-    fontSize: 14,
-    color: '#666666',
-  },
-  infoValue: {
-    fontSize: 14,
-    color: '#333333',
-    fontWeight: '500',
-  },
-  errorText: {
-    fontSize: 16,
-    color: '#666666',
-    textAlign: 'center',
-    marginTop: 40,
-  },
-  claimedSection: {
-    marginTop: 20,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#333333',
-    marginBottom: 16,
-  },
-  loadingText: {
-    fontSize: 14,
-    color: '#666666',
-    textAlign: 'center',
-    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
   },
   emptyText: {
-    fontSize: 14,
-    color: '#999999',
-    textAlign: 'center',
-    padding: 30,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    ...type.body,
   },
-  claimedItemCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
+  hero: {
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  heroBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    marginBottom: spacing.md,
+  },
+  heroBadgeText: {
+    ...type.caption,
+    color: palette.primaryDeep,
+    fontWeight: '700',
+  },
+  avatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: palette.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+  },
+  avatarText: {
+    ...type.hero,
+    color: palette.primaryDeep,
+    fontSize: 24,
+    lineHeight: 28,
+  },
+  heroTitle: {
+    ...type.section,
+    color: palette.ink,
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  heroBody: {
+    ...type.body,
+    color: palette.inkSoft,
+    textAlign: 'center',
+  },
+  cardGap: {
+    marginBottom: spacing.lg,
+  },
+  sectionEyebrow: {
+    ...type.label,
+    marginBottom: spacing.xs,
+  },
+  formTitle: {
+    ...type.section,
+    marginBottom: spacing.lg,
+  },
+  fieldGap: {
+    marginBottom: spacing.md,
+  },
+  buttonGap: {
+    marginTop: spacing.xl,
+  },
+  sectionBody: {
+    ...type.body,
+  },
+  infoRow: {
+    marginBottom: spacing.md,
+  },
+  infoLabel: {
+    ...type.label,
+    marginBottom: 4,
+  },
+  infoValue: {
+    ...type.bodyStrong,
+    fontSize: 12,
+    lineHeight: 16,
+    flexShrink: 1,
+  },
+  claimCard: {
     flexDirection: 'row',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    gap: spacing.md,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: palette.line,
+    marginTop: spacing.md,
   },
   itemImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
-    marginRight: 12,
+    width: 78,
+    height: 78,
+    borderRadius: 18,
+    backgroundColor: palette.shell,
   },
-  itemDetails: {
+  claimCopy: {
     flex: 1,
   },
-  itemCategory: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#4A90E2',
+  claimTitle: {
+    ...type.cardTitle,
+    textTransform: 'capitalize',
     marginBottom: 4,
   },
-  itemDescription: {
-    fontSize: 14,
-    color: '#666666',
+  claimBody: {
+    ...type.body,
     marginBottom: 4,
   },
-  claimedDate: {
-    fontSize: 12,
-    color: '#999999',
-    marginBottom: 8,
-  },
-  founderInfo: {
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#EEEEEE',
-  },
-  founderTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#333333',
+  claimMeta: {
+    ...type.caption,
     marginBottom: 4,
   },
-  founderText: {
-    fontSize: 12,
-    color: '#666666',
-    marginBottom: 2,
+  claimContact: {
+    ...type.caption,
+    color: palette.primaryDeep,
+    lineHeight: 14,
   },
 });
 

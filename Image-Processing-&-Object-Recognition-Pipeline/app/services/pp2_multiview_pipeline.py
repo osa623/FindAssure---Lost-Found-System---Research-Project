@@ -64,6 +64,7 @@ class MultiViewPipeline:
         "Backpack",
         "Key",
         "Student ID",
+        "NIC / National ID Card",
         "Power Bank",
         "Headphone",
         "Laptop/Mobile chargers & cables",
@@ -90,6 +91,7 @@ class MultiViewPipeline:
         self.perf_profile = str(settings.PERF_PROFILE).lower()
         configured = float(getattr(settings, "FLORENCE_LITE_SUCCESS_CONFIDENCE", self.LITE_EXTRACTION_CONFIDENCE))
         self.lite_success_confidence = max(self.LITE_EXTRACTION_CONFIDENCE, configured)
+        self._pp2_thread_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pp2_phase2")
 
     def _get_gemini(self) -> Optional[GeminiReasoner]:
         if not bool(getattr(settings, "PP2_ENABLE_GEMINI", False)):
@@ -332,6 +334,58 @@ class MultiViewPipeline:
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
         return outputs
+
+    def _run_pp2_phase2_gemini_sync(
+        self,
+        *,
+        per_view_results: List[PP2PerViewResult],
+        canonical_label_by_index: Dict[int, str],
+        item_id: str,
+        request_id: str,
+    ) -> Dict[str, Any]:
+        """Run Gemini Phase2 multi-view fusion synchronously (intended for thread pool execution)."""
+        gemini = self._get_gemini()
+        if gemini is None:
+            return {"status": "skipped", "reason": "disabled"}
+        try:
+            per_image = []
+            for view in per_view_results:
+                canonical = canonical_label_by_index.get(view.view_index, str(view.detection.cls_name))
+                raw = view.extraction.raw if isinstance(view.extraction.raw, dict) else {}
+                per_image.append({
+                    "view_index": int(view.view_index),
+                    "phase1_output": {
+                        "label": canonical,
+                        "description": str(view.extraction.caption or ""),
+                        "color_vqa": str(raw.get("color_vqa") or ""),
+                        "ocr_text": str(view.extraction.ocr_text or ""),
+                    },
+                })
+            bundle = {"item_id": item_id, "per_image": per_image}
+            logger.debug(
+                "PP2_PHASE2_GEMINI_START request_id=%s item_id=%s n_views=%d",
+                request_id,
+                item_id,
+                len(per_image),
+            )
+            start = time.perf_counter()
+            result = gemini.run_phase2(evidence_bundle_json=bundle)
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            logger.debug(
+                "PP2_PHASE2_GEMINI_DONE request_id=%s item_id=%s status=%s elapsed_ms=%.2f",
+                request_id,
+                item_id,
+                str(result.get("status", "unknown")),
+                elapsed_ms,
+            )
+            return result
+        except Exception:
+            logger.exception(
+                "PP2_PHASE2_GEMINI_ERROR request_id=%s item_id=%s",
+                request_id,
+                item_id,
+            )
+            return {"status": "error"}
 
     @staticmethod
     def _normalize_string_list(value: Any) -> List[str]:
@@ -2103,6 +2157,20 @@ class MultiViewPipeline:
                 if warning not in verification.failure_reasons:
                     verification.failure_reasons.append(warning)
 
+        # Submit Phase2 Gemini fusion concurrently with Florence enrichment
+        _pp2_phase2_future = None
+        if gemini_enabled and verification.passed:
+            try:
+                _pp2_phase2_future = self._pp2_thread_pool.submit(
+                    self._run_pp2_phase2_gemini_sync,
+                    per_view_results=per_view_results,
+                    canonical_label_by_index=canonical_label_by_index,
+                    item_id=item_id,
+                    request_id=trace_request_id,
+                )
+            except Exception as _exc:
+                logger.warning("PP2_PHASE2_SUBMIT_FAILED request_id=%s: %s", trace_request_id, _exc)
+
         # 5. Optional detailed enrichment:
         # - verification fail => all views
         # - force grounding => all views (or used pair when early-exit skipped others)
@@ -2225,6 +2293,30 @@ class MultiViewPipeline:
                 view_meta_by_index=view_meta_by_index,
                 used_view_indices=selected_indices,
             )
+
+            # Apply Phase2 Gemini fusion result (overlapped with Florence enrichment)
+            if _pp2_phase2_future is not None:
+                try:
+                    phase2_timeout = float(getattr(settings, "PP2_PHASE2_TIMEOUT_S", 15))
+                    phase2_result = _pp2_phase2_future.result(timeout=phase2_timeout)
+                    if isinstance(phase2_result, dict) and phase2_result.get("status") == "accepted":
+                        if phase2_result.get("final_description"):
+                            fused.caption = str(phase2_result["final_description"])
+                        if phase2_result.get("color"):
+                            fused.color = str(phase2_result["color"])
+                        logger.debug(
+                            "PP2_PHASE2_GEMINI_APPLIED request_id=%s item_id=%s",
+                            trace_request_id,
+                            item_id,
+                        )
+                    _pp2_phase2_future = None
+                except Exception as _exc:
+                    logger.warning(
+                        "PP2_PHASE2_COLLECT_FAILED request_id=%s item_id=%s: %s",
+                        trace_request_id,
+                        item_id,
+                        _exc,
+                    )
 
             try:
                 selected_vectors = [vectors_np[i] for i in selected_indices]

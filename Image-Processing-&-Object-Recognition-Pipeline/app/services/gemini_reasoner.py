@@ -139,6 +139,12 @@ RULES
   In that case, set label_change_reason to a short explanation (e.g. "Image shows earbuds not a wallet").
   If the label is correct, set label_change_reason to null.
 
+CATEGORY-SPECIFIC RULES:
+- SMART PHONE: Identify the BACK COVER color ONLY. The screen/display shows wallpaper/content — do NOT use screen color. Look at the physical back panel, glass, or casing.
+- NIC / NATIONAL ID CARD: Government-issued national identity document. Extract NIC number (9 digits + V or X, e.g. 123456789V), full name, date of birth, issuing authority from OCR.
+- STUDENT ID: Institution-issued student card. Extract institution name, student name, student ID number from OCR.
+- ALL ITEMS — COLOR ACCURACY: Report the dominant PHYSICAL surface color. Do NOT report screen backlight glow, flash hotspots, reflected glare, or background colors.
+
 EVIDENCE (authoritative)
 LABEL: {LABEL}
 PRIMARY_COLOR: {COLOR_OR_UNKNOWN}
@@ -184,6 +190,11 @@ ALLOWED LABELS (Preferred):
 {{ALLOWED_LABELS_LIST}}
 
 STEP-BY-STEP:
+0) CATEGORY-SPECIFIC RULES (apply throughout):
+   - SMART PHONE: Use the BACK COVER color ONLY. Do NOT use screen color or wallpaper color.
+   - NIC / NATIONAL ID CARD: Extract NIC number (9 digits + V or X), full name, date of birth from OCR evidence.
+   - STUDENT ID: Extract institution name, student name, student ID number from OCR evidence.
+   - ALL ITEMS: combined_color must be the dominant PHYSICAL surface color. Reject screen glow, glare, and reflections.
 1) Inspect EVIDENCE_BUNDLE.per_image[].phase1_output.label and ensure all labels match.
    - If any mismatch -> status="rejected" with message and stop.
 2) Decide if images show the same physical object:

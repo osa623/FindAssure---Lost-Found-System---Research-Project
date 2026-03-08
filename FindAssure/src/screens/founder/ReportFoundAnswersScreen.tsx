@@ -1,19 +1,21 @@
-// ReportFoundAnswersScreen – follow the spec
 import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  StyleSheet, 
-  ScrollView, 
+import {
   Alert,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../../types/models';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { FormInput } from '../../components/FormInput';
+import { GlassCard } from '../../components/GlassCard';
+import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
 
 type ReportFoundAnswersNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundAnswers'>;
 type ReportFoundAnswersRouteProp = RouteProp<RootStackParamList, 'ReportFoundAnswers'>;
@@ -35,14 +37,13 @@ const ReportFoundAnswersScreen = () => {
   );
 
   const handleAnswerChange = (index: number, text: string) => {
-    const newAnswers = [...answers];
-    newAnswers[index] = text;
-    setAnswers(newAnswers);
+    const next = [...answers];
+    next[index] = text;
+    setAnswers(next);
   };
 
   const handleNext = () => {
-    const allAnswered = answers.every(answer => answer.trim().length > 0);
-    
+    const allAnswered = answers.every((answer) => answer.trim().length > 0);
     if (!allAnswered) {
       Alert.alert('Incomplete', 'Please answer all questions');
       return;
@@ -54,7 +55,7 @@ const ReportFoundAnswersScreen = () => {
       category,
       description,
       selectedQuestions,
-      founderAnswers: answers.map(a => a.trim()),
+      founderAnswers: answers.map((a) => a.trim()),
     });
   };
 
@@ -97,77 +98,60 @@ const ReportFoundAnswersScreen = () => {
             ))}
           </View>
 
-          <View style={styles.tipsBox}>
-            <Text style={styles.tipsTitle}>💡 Tips for Answering Questions:</Text>
-            <Text style={styles.tipText}>• Examine the found item carefully before answering</Text>
-            <Text style={styles.tipText}>• Look at all visible details, labels, and unique features</Text>
-            <Text style={styles.tipText}>• Be specific and accurate in your descriptions</Text>
-            <Text style={styles.tipText}>• Include colors, brands, size, or any identifying marks</Text>
-            <Text style={styles.tipText}>• Your answers will help verify the true owner</Text>
-            <Text style={styles.tipText}>• Only the real owner will be able to match your details</Text>
-          </View>
+          <GlassCard style={styles.cardGap}>
+            <Text style={styles.tipTitle}>Answering tips</Text>
+            <Text style={styles.tipText}>Examine the item closely and include details like color, brand, materials, size, or unique marks.</Text>
+            <Text style={styles.tipText}>Keep answers truthful and specific so only the real owner can match them later.</Text>
+          </GlassCard>
 
-          <PrimaryButton
-            title="Next"
-            onPress={handleNext}
-            style={styles.nextButton}
-          />
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+          <PrimaryButton title="Next" onPress={handleNext} size="lg" />
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  scrollView: {
-    flex: 1,
-  },
+  container: { flex: 1 },
   content: {
-    padding: 20,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
-  header: {
-    marginBottom: 24,
+  hero: {
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
   },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 8,
+  heroBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    marginBottom: spacing.sm,
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#666666',
-    lineHeight: 20,
+  heroBadgeText: {
+    ...type.caption,
+    color: palette.primaryDeep,
+    fontWeight: '700',
   },
-  questionsContainer: {
-    marginBottom: 20,
+  heroEyebrow: {
+    ...type.label,
+    color: palette.primaryDeep,
+    marginBottom: spacing.xs,
   },
-  questionGroup: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+  heroTitle: {
+    ...type.title,
+    color: palette.ink,
+    marginBottom: spacing.sm,
   },
-  questionNumber: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#4A90E2',
-    marginBottom: 6,
+  heroBody: {
+    ...type.body,
+    color: palette.inkSoft,
   },
-  questionText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 12,
+  cardGap: {
+    marginBottom: spacing.lg,
   },
   suggestionText: {
     fontSize: 12,
@@ -184,28 +168,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#FAFAFA',
     minHeight: 100,
   },
-  tipsBox: {
-    backgroundColor: '#E8F5E9',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4CAF50',
+  questionText: {
+    ...type.cardTitle,
+    marginBottom: spacing.lg,
   },
-  tipsTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#2E7D32',
-    marginBottom: 12,
+  tipTitle: {
+    ...type.section,
+    marginBottom: spacing.sm,
   },
   tipText: {
-    fontSize: 13,
-    color: '#1B5E20',
-    lineHeight: 20,
-    marginBottom: 6,
-  },
-  nextButton: {
-    marginBottom: 20,
+    ...type.body,
+    marginBottom: spacing.sm,
   },
 });
 

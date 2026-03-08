@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { GlassCard } from './GlassCard';
+import { gradients, palette, spacing, type } from '../theme/designSystem';
 
 interface LoadingScreenProps {
   message?: string;
@@ -13,17 +15,19 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
 }) => {
   return (
     <LinearGradient
-      colors={['#667eea', '#764ba2']}
+      colors={gradients.heroAlt}
       style={styles.container}
     >
       <View style={styles.content}>
-        <View style={styles.iconContainer}>
-          <Text style={styles.icon}>🔍</Text>
-        </View>
-        <Text style={styles.appName}>FIND ASSURE</Text>
-        <ActivityIndicator size="large" color="#FFFFFF" style={styles.loader} />
-        <Text style={styles.message}>{message}</Text>
-        {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        <GlassCard style={styles.card}>
+          <View style={styles.iconContainer}>
+            <Text style={styles.icon}>⌾</Text>
+          </View>
+          <Text style={styles.appName}>FIND ASSURE</Text>
+          <ActivityIndicator size="large" color={palette.primaryDeep} style={styles.loader} />
+          <Text style={styles.message}>{message}</Text>
+          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        </GlassCard>
       </View>
     </LinearGradient>
   );
@@ -36,42 +40,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   content: {
-    alignItems: 'center',
+    width: '100%',
+    paddingHorizontal: 24,
+  },
+  card: {
+    borderRadius: 32,
   },
   iconContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
+    justifyContent: 'center',
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    backgroundColor: palette.primarySoft,
+    alignSelf: 'center',
+    marginBottom: spacing.lg,
   },
   icon: {
-    fontSize: 50,
+    fontSize: 40,
+    color: palette.primaryDeep,
   },
   appName: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    letterSpacing: 3,
-    marginBottom: 40,
+    ...type.brand,
+    color: palette.ink,
+    textAlign: 'center',
+    marginBottom: spacing.xl,
   },
   loader: {
-    marginBottom: 20,
+    marginBottom: spacing.lg,
   },
   message: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    opacity: 0.9,
+    ...type.section,
     textAlign: 'center',
   },
   subtitle: {
-    marginTop: 10,
-    fontSize: 14,
-    color: '#FFFFFF',
-    opacity: 0.78,
+    ...type.body,
+    marginTop: spacing.sm,
     textAlign: 'center',
-    maxWidth: 280,
   },
 });

@@ -1,17 +1,18 @@
 import React, { useState, useRef, useCallback } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  ScrollView,
   Alert,
   KeyboardAvoidingView,
   Platform,
-  TouchableOpacity,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
   ActivityIndicator,
-  Image,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import * as ImagePicker from 'expo-image-picker';
@@ -25,8 +26,19 @@ import { LocationDetail } from '../../constants/locationData';
 import { itemsApi } from '../../api/itemsApi';
 import { ITEM_CATEGORIES } from '../../constants/appConstants';
 import { AI_BACKEND_URL } from '../../config/api.config';
+import { FormInput } from '../../components/FormInput';
+import { GlassCard } from '../../components/GlassCard';
+import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
+import { showImageSourceOptions } from '../../utils/imageSourceOptions';
 
 type FindLostStartNavigationProp = StackNavigationProp<RootStackParamList, 'FindLostStart'>;
+
+const CONFIDENCE_OPTIONS = [
+  { value: 1, emoji: '😊', title: 'Pretty Sure', tone: '#1E9E64' },
+  { value: 2, emoji: '🙂', title: 'Sure', tone: '#2F57E5' },
+  { value: 3, emoji: '🤔', title: 'Not Sure', tone: '#D9822B' },
+  { value: 4, emoji: '😕', title: "Don't Remember", tone: '#D34A5C' },
+];
 
 const FindLostStartScreen = () => {
   const navigation = useNavigation<FindLostStartNavigationProp>();
@@ -38,7 +50,6 @@ const FindLostStartScreen = () => {
   const [confidenceStage, setConfidenceStage] = useState<number>(2);
   const [ownerImage, setOwnerImage] = useState<SelectedImageAsset | null>(null);
   const [loading, setLoading] = useState(false);
-
   const [grammarChecking, setGrammarChecking] = useState(false);
   const [grammarNote, setGrammarNote] = useState<string | null>(null);
   const grammarTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -46,7 +57,6 @@ const FindLostStartScreen = () => {
   const triggerGrammarCheck = useCallback((text: string) => {
     if (grammarTimer.current) clearTimeout(grammarTimer.current);
     setGrammarNote(null);
-
     if (!text || text.trim().length < 5) return;
 
     grammarTimer.current = setTimeout(async () => {
@@ -55,9 +65,7 @@ const FindLostStartScreen = () => {
         const res = await axios.post(`${AI_BACKEND_URL}/correct-grammar`, { text }, { timeout: 10000 });
         if (res.data.was_corrected && res.data.corrected_text) {
           setDescription(res.data.corrected_text);
-          const fixes = res.data.corrections?.length
-            ? res.data.corrections.join(', ')
-            : 'Grammar auto-corrected';
+          const fixes = res.data.corrections?.length ? res.data.corrections.join(', ') : 'Grammar auto-corrected';
           setGrammarNote(fixes);
           setTimeout(() => setGrammarNote(null), 4000);
         }
@@ -97,6 +105,29 @@ const FindLostStartScreen = () => {
     }
   };
 
+  const handleCaptureOwnerImage = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow access to your camera');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.8,
+    });
+
+    if (!result.canceled) {
+      const asset = result.assets[0];
+      setOwnerImage({
+        uri: asset.uri,
+        fileName: asset.fileName || null,
+        mimeType: asset.mimeType || null,
+      });
+    }
+  };
+
   const handleSearch = async () => {
     if (!user) {
       Alert.alert('Login Required', 'Please login to search for lost items', [
@@ -113,7 +144,6 @@ const FindLostStartScreen = () => {
 
     try {
       setLoading(true);
-
       const lostRequestResponse = await itemsApi.reportLostItem({
         category,
         description: description.trim(),
@@ -123,340 +153,251 @@ const FindLostStartScreen = () => {
         owner_location_confidence_stage: confidenceStage,
         ownerImage,
       });
-
       navigation.navigate('FindLostResults', {
         foundItems: lostRequestResponse.results || [],
       });
     } catch (error: any) {
-      Alert.alert(
-        'Search Failed',
-        error.message || 'Could not search for items. Please try again.'
-      );
+      Alert.alert('Search Failed', error.message || 'Could not search for items. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView style={styles.scrollView}>
-        <View style={styles.content}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Find Your Lost Item</Text>
-            <Text style={styles.subtitle}>
-              Search through reported found items using description, location, and optionally a photo.
-            </Text>
-          </View>
-
-          <View style={styles.form}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Category *</Text>
-              <CategoryPicker
-                selectedValue={category}
-                onValueChange={setCategory}
-              />
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <GlassCard style={styles.hero}>
+            <View style={styles.heroBadge}>
+              <Text style={styles.heroBadgeText}>Owner flow</Text>
             </View>
+            <Text style={styles.heroEyebrow}>Owner flow</Text>
+            <Text style={styles.heroTitle}>Describe what you lost.</Text>
+            <Text style={styles.heroBody}>Search works best when you combine item context, location confidence, and an optional photo.</Text>
+          </GlassCard>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Description *</Text>
-              <View>
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  placeholder="Describe your lost item in detail..."
-                  value={description}
-                  onChangeText={handleDescriptionChange}
-                  multiline
-                  numberOfLines={6}
-                  textAlignVertical="top"
-                />
-                {grammarChecking && (
-                  <View style={styles.grammarIndicator}>
-                    <ActivityIndicator size="small" color="#4A90D9" />
-                    <Text style={styles.grammarCheckingText}>Checking grammar...</Text>
-                  </View>
-                )}
-              </View>
-              {grammarNote ? (
-                <Text style={styles.grammarNote}>✓ {grammarNote}</Text>
-              ) : (
-                <Text style={styles.helperText}>
-                  Include color, brand, and specific identifying details.
-                </Text>
-              )}
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Lost Location *</Text>
-              <LocationPicker
-                selectedValue={location}
-                onValueChange={setLocation}
-                allowDoNotRemember={true}
-                userType="owner"
-                error={!location ? undefined : ''}
-              />
-              <Text style={styles.helperText}>
-                Select the location where you think you lost the item.
-              </Text>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>How sure are you about this location?</Text>
-              <View style={styles.confidenceContainer}>
-                <TouchableOpacity
-                  style={[
-                    styles.confidenceCard,
-                    confidenceStage === 1 && styles.confidenceCardActive,
-                    confidenceStage === 1 && { backgroundColor: '#E8F5E9', borderColor: '#4CAF50' },
-                  ]}
-                  onPress={() => setConfidenceStage(1)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.confidenceEmoji}>😊</Text>
-                  <Text style={[styles.confidenceTitle, confidenceStage === 1 && { color: '#4CAF50', fontWeight: '700' }]}>
-                    Pretty Sure
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.confidenceCard,
-                    confidenceStage === 2 && styles.confidenceCardActive,
-                    confidenceStage === 2 && { backgroundColor: '#E3F2FD', borderColor: '#2196F3' },
-                  ]}
-                  onPress={() => setConfidenceStage(2)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.confidenceEmoji}>🙂</Text>
-                  <Text style={[styles.confidenceTitle, confidenceStage === 2 && { color: '#2196F3', fontWeight: '700' }]}>
-                    Sure
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.confidenceCard,
-                    confidenceStage === 3 && styles.confidenceCardActive,
-                    confidenceStage === 3 && { backgroundColor: '#FFF3E0', borderColor: '#FF9800' },
-                  ]}
-                  onPress={() => setConfidenceStage(3)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.confidenceEmoji}>🤔</Text>
-                  <Text style={[styles.confidenceTitle, confidenceStage === 3 && { color: '#FF9800', fontWeight: '700' }]}>
-                    Not Sure
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.confidenceCard,
-                    confidenceStage === 4 && styles.confidenceCardActive,
-                    confidenceStage === 4 && { backgroundColor: '#FFEBEE', borderColor: '#F44336' },
-                  ]}
-                  onPress={() => setConfidenceStage(4)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.confidenceEmoji}>😕</Text>
-                  <Text style={[styles.confidenceTitle, confidenceStage === 4 && { color: '#F44336', fontWeight: '700' }]}>
-                    Don&apos;t Remember
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <View style={styles.photoSection}>
-              <Text style={styles.label}>Have a photo of your item? (Optional)</Text>
-              {ownerImage ? (
-                <View style={styles.ownerImageWrap}>
-                  <Image
-                    source={{ uri: ownerImage.uri }}
-                    style={styles.ownerImagePreview}
-                    resizeMode="contain"
-                  />
-                  <TouchableOpacity onPress={() => setOwnerImage(null)}>
-                    <Text style={styles.removePhotoText}>Remove photo</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <TouchableOpacity style={styles.uploadCard} onPress={handleSelectOwnerImage}>
-                  <Text style={styles.uploadCardIcon}>📷</Text>
-                  <Text style={styles.uploadCardText}>Upload Photo</Text>
-                </TouchableOpacity>
-              )}
-              <Text style={styles.helperText}>
-                Adding a photo improves matching accuracy.
-              </Text>
-            </View>
-
-            <PrimaryButton
-              title="Search Found Items"
-              onPress={handleSearch}
-              loading={loading}
-              style={styles.searchButton}
+          <GlassCard style={styles.cardGap}>
+            <Text style={styles.sectionEyebrow}>Search context</Text>
+            <Text style={styles.sectionTitle}>Give the system enough detail to match well</Text>
+            <Text style={styles.fieldLabel}>Category</Text>
+            <CategoryPicker selectedValue={category} onValueChange={setCategory} />
+            <FormInput
+              label="Description"
+              placeholder="Describe your lost item in detail..."
+              value={description}
+              onChangeText={handleDescriptionChange}
+              multiline
+              hint={grammarNote || 'Include color, brand, materials, and identifying details.'}
+              containerStyle={styles.fieldGap}
             />
-          </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            {grammarChecking ? (
+              <View style={styles.grammarRow}>
+                <ActivityIndicator size="small" color={palette.primaryDeep} />
+                <Text style={styles.grammarText}>Checking grammar...</Text>
+              </View>
+            ) : null}
+          </GlassCard>
+
+          <GlassCard style={styles.cardGap}>
+            <Text style={styles.sectionEyebrow}>Place memory</Text>
+            <Text style={styles.sectionTitle}>Where do you think you lost it?</Text>
+            <LocationPicker selectedValue={location} onValueChange={setLocation} allowDoNotRemember userType="owner" error={!location ? undefined : ''} />
+          </GlassCard>
+
+          <GlassCard style={styles.cardGap}>
+            <Text style={styles.sectionEyebrow}>Confidence</Text>
+            <Text style={styles.sectionTitle}>How certain are you about that location?</Text>
+            <View style={styles.confidenceGrid}>
+              {CONFIDENCE_OPTIONS.map((option) => {
+                const active = confidenceStage === option.value;
+                return (
+                  <Pressable
+                    key={option.value}
+                    style={[styles.confidenceCard, active && { borderColor: option.tone, backgroundColor: `${option.tone}18` }]}
+                    onPress={() => setConfidenceStage(option.value)}
+                  >
+                    <Text style={styles.confidenceEmoji}>{option.emoji}</Text>
+                    <Text numberOfLines={2} style={[styles.confidenceTitle, active && { color: option.tone }]}>{option.title}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </GlassCard>
+
+          <GlassCard style={styles.cardGap}>
+            <Text style={styles.sectionEyebrow}>Optional image</Text>
+            <Text style={styles.sectionTitle}>Add a photo if you have one</Text>
+            {ownerImage ? (
+              <View style={styles.ownerImageWrap}>
+                <Image source={{ uri: ownerImage.uri }} style={styles.ownerImagePreview} contentFit="cover" />
+                <Pressable
+                  onPress={() => setOwnerImage(null)}
+                  style={styles.removeWrap}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove selected photo"
+                >
+                  <Ionicons name="close" size={14} color={palette.paperStrong} />
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable
+                style={styles.uploadCard}
+                onPress={() =>
+                  showImageSourceOptions({
+                    title: 'Add Reference Photo',
+                    onTakePhoto: handleCaptureOwnerImage,
+                    onChooseFromLibrary: handleSelectOwnerImage,
+                  })
+                }
+              >
+                <Text style={styles.uploadIcon}>⌁</Text>
+                <Text style={styles.uploadTitle}>Upload photo</Text>
+                <Text style={styles.uploadBody}>Tap to take a photo or choose one from your library.</Text>
+              </Pressable>
+            )}
+          </GlassCard>
+
+          <PrimaryButton title="Search Found Items" onPress={handleSearch} loading={loading} size="lg" />
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  scrollView: {
-    flex: 1,
-  },
+  container: { flex: 1 },
   content: {
-    padding: 20,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
-  header: {
-    marginBottom: 24,
+  hero: {
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 8,
+  heroBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    marginBottom: spacing.sm,
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#666666',
-    lineHeight: 20,
+  heroBadgeText: {
+    ...type.caption,
+    color: palette.primaryDeep,
+    fontWeight: '700',
   },
-  form: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+  heroEyebrow: {
+    ...type.label,
+    color: palette.primaryDeep,
+    marginBottom: spacing.xs,
   },
-  inputGroup: {
-    marginBottom: 20,
+  heroTitle: {
+    ...type.title,
+    color: palette.ink,
+    marginBottom: spacing.sm,
   },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 8,
+  heroBody: {
+    ...type.body,
+    color: palette.inkSoft,
   },
-  input: {
-    borderWidth: 1,
-    borderColor: '#DDDDDD',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: '#FAFAFA',
+  cardGap: {
+    marginBottom: spacing.lg,
   },
-  textArea: {
-    minHeight: 120,
-    paddingTop: 12,
+  sectionEyebrow: {
+    ...type.label,
+    marginBottom: spacing.xs,
   },
-  helperText: {
-    fontSize: 12,
-    color: '#999999',
-    marginTop: 6,
+  sectionTitle: {
+    ...type.section,
+    marginBottom: spacing.md,
   },
-  grammarIndicator: {
+  fieldLabel: {
+    ...type.label,
+    marginBottom: spacing.sm,
+  },
+  fieldGap: {
+    marginTop: spacing.md,
+  },
+  grammarRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    position: 'absolute',
-    bottom: 8,
-    right: 8,
+    gap: spacing.sm,
+    marginTop: spacing.sm,
   },
-  grammarCheckingText: {
-    fontSize: 11,
-    color: '#4A90D9',
-    marginLeft: 4,
+  grammarText: {
+    ...type.caption,
+    color: palette.primaryDeep,
   },
-  grammarNote: {
-    fontSize: 12,
-    color: '#4CAF50',
-    marginTop: 6,
-    fontWeight: '500',
-  },
-  confidenceContainer: {
+  confidenceGrid: {
     flexDirection: 'row',
-    gap: 12,
-    marginTop: 12,
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
   confidenceCard: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
-    paddingVertical: 16,
-    paddingHorizontal: 8,
+    width: '47.5%',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.line,
+    backgroundColor: palette.paperStrong,
+    minHeight: 88,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  confidenceCardActive: {
-    borderWidth: 3,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 3,
   },
   confidenceEmoji: {
-    fontSize: 32,
-    marginBottom: 8,
+    fontSize: 24,
+    marginBottom: spacing.xs,
   },
   confidenceTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#666666',
+    ...type.bodyStrong,
     textAlign: 'center',
-  },
-  photoSection: {
-    marginBottom: 20,
+    fontSize: 13,
+    lineHeight: 17,
   },
   uploadCard: {
-    height: 110,
-    borderRadius: 12,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#C8D2E0',
-    borderStyle: 'dashed',
-    justifyContent: 'center',
+    borderColor: palette.line,
+    backgroundColor: palette.paperStrong,
+    padding: spacing.md,
     alignItems: 'center',
-    backgroundColor: '#F7FAFD',
   },
-  uploadCardIcon: {
-    fontSize: 28,
-    marginBottom: 8,
+  uploadIcon: {
+    ...type.section,
+    color: palette.primaryDeep,
+    marginBottom: spacing.xs,
   },
-  uploadCardText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#355D7A',
+  uploadTitle: {
+    ...type.cardTitle,
+    marginBottom: spacing.xs,
+  },
+  uploadBody: {
+    ...type.body,
+    textAlign: 'center',
   },
   ownerImageWrap: {
-    alignItems: 'flex-start',
+    position: 'relative',
   },
   ownerImagePreview: {
     width: '100%',
-    height: 200,
-    borderRadius: 12,
-    backgroundColor: '#E0E0E0',
+    height: 196,
+    borderRadius: radius.lg,
+    backgroundColor: palette.shell,
   },
-  removePhotoText: {
-    marginTop: 8,
-    fontSize: 12,
-    color: '#C62828',
-    fontWeight: '600',
-  },
-  searchButton: {
-    marginTop: 10,
+  removeWrap: {
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.sm,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(17,24,39,0.68)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
 

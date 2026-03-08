@@ -312,7 +312,7 @@ const AnswerQuestionsVideoScreen = () => {
               </Text>
             </View>
 
-            <Text style={styles.pleaseWaitText}>Please don't close the app...</Text>
+            <Text style={styles.pleaseWaitText}>Please don&apos;t close the app...</Text>
           </View>
         </View>
       </Modal>

@@ -49,9 +49,14 @@ CATEGORY_KEYWORDS: Dict[str, List[str]] = {
         "metal key",
     ],
     "Student ID": [
-        "student id", "id card", "school id", "campus card", "identity card",
-        "student card", "university id", "university card", "nic", "national id",
-        "badge", "identification", "date of issue", "place of birth",
+        "student id", "id card", "school id", "campus card",
+        "student card", "university id", "university card",
+        "badge", "identification", "date of issue",
+    ],
+    "NIC / National ID Card": [
+        "nic", "national id", "national identity card", "national identity",
+        "national identification", "identity card", "government id",
+        "place of birth", "date of birth", "citizenship", "citizen",
     ],
     "Power Bank": [
         "power bank", "portable charger", "battery pack", "external battery",
@@ -89,7 +94,8 @@ NEGATIVE_KEYWORDS: Dict[str, List[str]] = {
     "Handbag": ["backpack", "rucksack", "wallet", "suitcase", "luggage"],
     "Backpack": ["handbag", "purse", "tote", "sling bag", "suitcase"],
     "Key": ["keyboard", "keystone", "keynote", "key chain light"],
-    "Student ID": ["credit card", "debit card", "bank card", "sim card"],
+    "Student ID": ["credit card", "debit card", "bank card", "sim card", "nic", "national id", "national identity"],
+    "NIC / National ID Card": ["credit card", "debit card", "bank card", "sim card", "student card", "school id", "student id"],
     "Power Bank": ["phone", "laptop", "charger", "speaker", "hard drive",
                     "smartphone", "mobile phone", "tablet"],
     "Headphone": ["earbud", "earbuds", "airpods", "tws", "helmet",

@@ -1,6 +1,10 @@
 import React from 'react';
-import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { Image } from 'expo-image';
 import { FoundItem } from '../types/models';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import { GlassCard } from './GlassCard';
+import { motion, palette, radius, spacing, type } from '../theme/designSystem';
 
 interface ItemCardProps {
   item: FoundItem;
@@ -8,6 +12,8 @@ interface ItemCardProps {
 }
 
 export const ItemCard: React.FC<ItemCardProps> = ({ item, onPress }) => {
+  const scale = useSharedValue(1);
+
   // Format location display - show first location
   const formatLocation = () => {
     if (!item.found_location || item.found_location.length === 0) return 'Location not specified';
@@ -30,48 +36,58 @@ export const ItemCard: React.FC<ItemCardProps> = ({ item, onPress }) => {
     return { backgroundColor: '#ECEFF3', color: '#667085' };
   };
 
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
-      <Image 
-        source={{ uri: item.imageUrl }} 
-        style={styles.image}
-        resizeMode="cover"
-      />
-      <View style={styles.content}>
-        <View style={styles.header}>
-          <Text style={styles.category}>{item.category}</Text>
-          <View style={[styles.statusBadge, getStatusBadgeStyle(item.status)]}>
-            <Text style={styles.statusText}>{item.status}</Text>
-          </View>
-        </View>
-        <Text style={styles.description} numberOfLines={2}>
-          {item.description}
-        </Text>
-        {item.imageMatch && (
-          <View
-            style={[
-              styles.imageMatchBadge,
-              { backgroundColor: getImageMatchStyle(item.imageMatch.score).backgroundColor },
-            ]}
-          >
-            <Text
-              style={[
-                styles.imageMatchText,
-                { color: getImageMatchStyle(item.imageMatch.score).color },
-              ]}
-            >
-              {`${Math.round(item.imageMatch.score * 100)}% visual match`}
+    <Animated.View style={animatedStyle}>
+      <Pressable
+        onPress={onPress}
+        onPressIn={() => {
+          scale.value = withSpring(0.985, motion.springSoft);
+        }}
+        onPressOut={() => {
+          scale.value = withSpring(1, motion.spring);
+        }}
+      >
+        <GlassCard style={styles.card} contentStyle={styles.cardContent}>
+          <Image source={{ uri: item.imageUrl }} style={styles.image} contentFit="cover" />
+          <View style={styles.content}>
+            <View style={styles.header}>
+              <Text style={styles.category}>{item.category}</Text>
+              <View style={[styles.statusBadge, getStatusBadgeStyle(item.status)]}>
+                <Text style={styles.statusText}>{item.status.replace('_', ' ')}</Text>
+              </View>
+            </View>
+            <Text style={styles.description} numberOfLines={2}>
+              {item.description}
             </Text>
+            {item.imageMatch && (
+              <View
+                style={[
+                  styles.imageMatchBadge,
+                  { backgroundColor: getImageMatchStyle(item.imageMatch.score).backgroundColor },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.imageMatchText,
+                    { color: getImageMatchStyle(item.imageMatch.score).color },
+                  ]}
+                >
+                  {`${Math.round(item.imageMatch.score * 100)}% visual match`}
+                </Text>
+              </View>
+            )}
+            <View style={styles.footer}>
+              <Text style={styles.location} numberOfLines={1}>📍 {formatLocation()}</Text>
+              <Text style={styles.date}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+            </View>
           </View>
-        )}
-        <View style={styles.footer}>
-          <Text style={styles.location}>📍 {formatLocation()}</Text>
-          <Text style={styles.date}>
-            {new Date(item.createdAt).toLocaleDateString()}
-          </Text>
-        </View>
-      </View>
-    </TouchableOpacity>
+        </GlassCard>
+      </Pressable>
+    </Animated.View>
   );
 };
 
@@ -90,23 +106,20 @@ const getStatusBadgeStyle = (status: string) => {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
     marginBottom: 16,
-    overflow: 'hidden',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+  },
+  cardContent: {
+    padding: 0,
   },
   image: {
     width: '100%',
-    height: 200,
-    backgroundColor: '#E0E0E0',
+    height: 186,
+    backgroundColor: '#DDE6FF',
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
   },
   content: {
-    padding: 16,
+    padding: spacing.md,
   },
   header: {
     flexDirection: 'row',
@@ -115,27 +128,25 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   category: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333333',
+    ...type.cardTitle,
     textTransform: 'capitalize',
+    flex: 1,
+    marginRight: spacing.sm,
   },
   statusBadge: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: radius.pill,
   },
   statusText: {
-    color: '#FFFFFF',
+    color: palette.paperStrong,
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
     textTransform: 'capitalize',
   },
   description: {
-    fontSize: 14,
-    color: '#666666',
-    marginBottom: 12,
-    lineHeight: 20,
+    ...type.body,
+    marginBottom: spacing.sm,
   },
   footer: {
     flexDirection: 'row',
@@ -145,21 +156,23 @@ const styles = StyleSheet.create({
   imageMatchBadge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    marginBottom: 12,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    marginBottom: spacing.sm,
   },
   imageMatchText: {
-    fontSize: 12,
+    ...type.caption,
     fontWeight: '700',
   },
   location: {
+    color: palette.primaryDeep,
+    fontFamily: type.body.fontFamily,
     fontSize: 13,
-    color: '#4A90E2',
-    fontWeight: '500',
+    fontWeight: '600',
+    flex: 1,
+    marginRight: spacing.sm,
   },
   date: {
-    fontSize: 12,
-    color: '#999999',
+    ...type.caption,
   },
 });

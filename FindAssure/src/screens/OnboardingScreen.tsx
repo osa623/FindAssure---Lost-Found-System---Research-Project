@@ -1,276 +1,305 @@
-import React, { useState, useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
   Dimensions,
   FlatList,
-  TouchableOpacity,
-  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { RootStackParamList } from '../types/models';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Animated, {
+  interpolate,
+  SharedValue,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+} from 'react-native-reanimated';
+import { RootStackParamList } from '../types/models';
+import { GlassCard } from '../components/GlassCard';
+import { PrimaryButton } from '../components/PrimaryButton';
+import { gradients, palette, radius, spacing, type } from '../theme/designSystem';
 
 const { width } = Dimensions.get('window');
+const AnimatedFlatList = Animated.createAnimatedComponent(FlatList<any>);
 
 type OnboardingNavigationProp = StackNavigationProp<RootStackParamList, 'Onboarding'>;
 
 interface OnboardingSlide {
   id: string;
+  eyebrow: string;
   title: string;
   description: string;
-  icon: string;
-  gradient: string[];
+  badge: string;
+  gradient: readonly [string, string, string];
 }
 
 const slides: OnboardingSlide[] = [
   {
     id: '1',
-    title: 'Welcome to FindAssure',
-    description: 'The smart lost and found system that helps reunite people with their belongings using AI-powered verification.',
-    icon: '🔍',
-    gradient: ['#667eea', '#764ba2'],
+    eyebrow: 'FindAssure',
+    title: 'Lost and found, rebuilt for speed.',
+    description: 'A calmer reporting and recovery experience with AI-assisted matching, cleaner verification, and clearer next steps.',
+    badge: '01',
+    gradient: gradients.hero,
   },
   {
     id: '2',
-    title: 'Found Something?',
-    description: 'Report found items easily with photos, descriptions, and secure verification questions to protect the real owner.',
-    icon: '📦',
-    gradient: ['#f093fb', '#f5576c'],
+    eyebrow: 'Founder flow',
+    title: 'Capture, describe, and protect the item.',
+    description: 'Add strong photos, let the app prepare details, and choose the five questions that only the real owner should know.',
+    badge: '02',
+    gradient: gradients.violet,
   },
   {
     id: '3',
-    title: 'Lost Your Item?',
-    description: 'Search through found items and claim yours by answering verification questions with our AI-powered system.',
-    icon: '🎯',
-    gradient: ['#4facfe', '#00f2fe'],
+    eyebrow: 'Owner flow',
+    title: 'Search with context, not guesswork.',
+    description: 'Combine category, description, location confidence, and optional photos to surface stronger matches immediately.',
+    badge: '03',
+    gradient: gradients.heroAlt,
   },
   {
     id: '4',
-    title: 'Secure & Smart',
-    description: 'AI verifies your answers to ensure items reach their rightful owners. Get founder contact details once verified!',
-    icon: '🛡️',
-    gradient: ['#43e97b', '#38f9d7'],
+    eyebrow: 'Verification',
+    title: 'Ownership stays private until it is proven.',
+    description: 'Video and semantic checks keep sensitive finder contact details hidden until the claim is verified.',
+    badge: '04',
+    gradient: gradients.success,
   },
 ];
+
+const SlideCard = ({
+  item,
+  index,
+  scrollX,
+}: {
+  item: OnboardingSlide;
+  index: number;
+  scrollX: SharedValue<number>;
+}) => {
+  const animatedStyle = useAnimatedStyle(() => {
+    const position = scrollX.value / width;
+    return {
+      transform: [
+        { translateY: interpolate(position, [index - 1, index, index + 1], [24, 0, 24]) },
+        { scale: interpolate(position, [index - 1, index, index + 1], [0.94, 1, 0.94]) },
+      ],
+      opacity: interpolate(position, [index - 1, index, index + 1], [0.4, 1, 0.4]),
+    };
+  });
+
+  return (
+    <View style={styles.slide}>
+      <Animated.View style={[styles.slideInner, animatedStyle]}>
+        <LinearGradient colors={item.gradient} style={styles.heroPanel}>
+          <View style={styles.heroTopRow}>
+            <Text style={styles.badge}>{item.badge}</Text>
+            <Text style={styles.wordmark}>FIND ASSURE</Text>
+          </View>
+          <View style={styles.orb} />
+          <Text style={styles.eyebrow}>{item.eyebrow}</Text>
+          <Text style={styles.heroTitle}>{item.title}</Text>
+        </LinearGradient>
+
+        <GlassCard style={styles.copyCard}>
+          <Text style={styles.copyText}>{item.description}</Text>
+          <View style={styles.copyMetaRow}>
+            <Text style={styles.copyMeta}>iOS-first</Text>
+            <Text style={styles.copyMeta}>AI assisted</Text>
+            <Text style={styles.copyMeta}>Private by default</Text>
+          </View>
+        </GlassCard>
+      </Animated.View>
+    </View>
+  );
+};
 
 const OnboardingScreen = () => {
   const navigation = useNavigation<OnboardingNavigationProp>();
   const [currentIndex, setCurrentIndex] = useState(0);
   const flatListRef = useRef<FlatList>(null);
+  const scrollX = useSharedValue(0);
+
+  const completeOnboarding = async () => {
+    try {
+      await AsyncStorage.setItem('hasSeenOnboarding', 'true');
+      navigation.replace('Home');
+    } catch {
+      navigation.replace('Home');
+    }
+  };
 
   const handleNext = () => {
     if (currentIndex < slides.length - 1) {
       const nextIndex = currentIndex + 1;
       flatListRef.current?.scrollToIndex({ index: nextIndex });
       setCurrentIndex(nextIndex);
+      return;
     }
+    completeOnboarding();
   };
 
-  const handleSkip = async () => {
-    await completeOnboarding();
-  };
-
-  const handleGetStarted = async () => {
-    await completeOnboarding();
-  };
-
-  const completeOnboarding = async () => {
-    try {
-      await AsyncStorage.setItem('hasSeenOnboarding', 'true');
-      navigation.replace('Home');
-    } catch (error) {
-      console.error('Error saving onboarding status:', error);
-      navigation.replace('Home');
-    }
-  };
-
-  const onViewableItemsChanged = useRef(({ viewableItems }: any) => {
-    if (viewableItems.length > 0) {
-      setCurrentIndex(viewableItems[0].index);
-    }
-  }).current;
-
-  const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 50,
-  }).current;
-
-  const renderSlide = ({ item }: { item: OnboardingSlide }) => (
-    <LinearGradient colors={item.gradient} style={styles.slide}>
-      <View style={styles.slideContent}>
-        <View style={styles.iconContainer}>
-          <Text style={styles.icon}>{item.icon}</Text>
-        </View>
-        <Text style={styles.title}>{item.title}</Text>
-        <Text style={styles.description}>{item.description}</Text>
-      </View>
-    </LinearGradient>
-  );
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      scrollX.value = event.contentOffset.x;
+    },
+  });
 
   return (
-    <View style={styles.container}>
-      <FlatList
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+      <View style={styles.topBar}>
+        <Pressable onPress={completeOnboarding}>
+          <Text style={styles.skipText}>Skip</Text>
+        </Pressable>
+      </View>
+
+      <AnimatedFlatList
         ref={flatListRef}
         data={slides}
-        renderItem={renderSlide}
+        renderItem={({ item, index }) => <SlideCard item={item} index={index} scrollX={scrollX} />}
+        keyExtractor={(item) => item.id}
         horizontal
         pagingEnabled
+        bounces={false}
         showsHorizontalScrollIndicator={false}
-        keyExtractor={(item) => item.id}
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
+        onScroll={scrollHandler}
+        scrollEventThrottle={16}
+        onMomentumScrollEnd={(event) => {
+          const nextIndex = Math.round(event.nativeEvent.contentOffset.x / width);
+          setCurrentIndex(nextIndex);
+        }}
       />
 
-      {/* Pagination Dots */}
-      <View style={styles.pagination}>
-        {slides.map((_, index) => (
-          <View
-            key={index}
-            style={[
-              styles.dot,
-              index === currentIndex && styles.activeDot,
-            ]}
-          />
-        ))}
+      <View style={styles.footer}>
+        <View style={styles.pagination}>
+          {slides.map((_, index) => (
+            <View key={index} style={[styles.dot, index === currentIndex && styles.dotActive]} />
+          ))}
+        </View>
+        <PrimaryButton
+          title={currentIndex === slides.length - 1 ? 'Enter FindAssure' : 'Continue'}
+          onPress={handleNext}
+          size="lg"
+        />
       </View>
-
-      {/* Bottom Buttons */}
-      <View style={styles.bottomContainer}>
-        {currentIndex < slides.length - 1 ? (
-          <View style={styles.buttonRow}>
-            <TouchableOpacity onPress={handleSkip} style={styles.skipButton}>
-              <Text style={styles.skipText}>Skip</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handleNext} style={styles.nextButton}>
-              <LinearGradient
-                colors={['#667eea', '#764ba2']}
-                style={styles.nextButtonGradient}
-              >
-                <Text style={styles.nextText}>Next</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity onPress={handleGetStarted} style={styles.getStartedButton}>
-            <LinearGradient
-              colors={['#667eea', '#764ba2']}
-              style={styles.getStartedGradient}
-            >
-              <Text style={styles.getStartedText}>Get Started</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        )}
-      </View>
-    </View>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.paper,
+  },
+  topBar: {
+    paddingTop: 72,
+    paddingHorizontal: spacing.xl,
+    alignItems: 'flex-end',
+  },
+  skipText: {
+    ...type.bodyStrong,
+    color: palette.primaryDeep,
   },
   slide: {
     width,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.md,
+  },
+  slideInner: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
-  slideContent: {
-    alignItems: 'center',
-    paddingHorizontal: 40,
+  heroPanel: {
+    flex: 1,
+    minHeight: 420,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
+    overflow: 'hidden',
+    justifyContent: 'flex-end',
   },
-  iconContainer: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 40,
+  heroTopRow: {
+    position: 'absolute',
+    top: spacing.xl,
+    left: spacing.xl,
+    right: spacing.xl,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
-  icon: {
-    fontSize: 60,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  description: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    textAlign: 'center',
-    lineHeight: 24,
+  badge: {
+    ...type.bodyStrong,
+    color: palette.paperStrong,
     opacity: 0.9,
+  },
+  wordmark: {
+    ...type.brand,
+    fontSize: 14,
+    lineHeight: 16,
+    color: palette.paperStrong,
+  },
+  orb: {
+    position: 'absolute',
+    top: -36,
+    right: -12,
+    width: 188,
+    height: 188,
+    borderRadius: 94,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  eyebrow: {
+    ...type.label,
+    color: 'rgba(255,255,255,0.72)',
+    marginBottom: spacing.sm,
+  },
+  heroTitle: {
+    ...type.hero,
+    maxWidth: '92%',
+  },
+  copyCard: {
+    marginTop: -56,
+    marginHorizontal: spacing.md,
+  },
+  copyText: {
+    ...type.body,
+    color: palette.ink,
+    marginBottom: spacing.lg,
+  },
+  copyMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  copyMeta: {
+    ...type.caption,
+    color: palette.primaryDeep,
+    backgroundColor: palette.primarySoft,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    overflow: 'hidden',
+  },
+  footer: {
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
   },
   pagination: {
     flexDirection: 'row',
+    gap: spacing.sm,
     justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 20,
+    marginBottom: spacing.lg,
   },
   dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#CCCCCC',
-    marginHorizontal: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: 'rgba(79,124,255,0.18)',
   },
-  activeDot: {
-    width: 24,
-    backgroundColor: '#667eea',
-  },
-  bottomContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  skipButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-  },
-  skipText: {
-    fontSize: 16,
-    color: '#666666',
-    fontWeight: '600',
-  },
-  nextButton: {
-    borderRadius: 25,
-    overflow: 'hidden',
-  },
-  nextButtonGradient: {
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-    borderRadius: 25,
-  },
-  nextText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
-  getStartedButton: {
-    borderRadius: 25,
-    overflow: 'hidden',
-  },
-  getStartedGradient: {
-    paddingVertical: 16,
-    alignItems: 'center',
-    borderRadius: 25,
-  },
-  getStartedText: {
-    fontSize: 18,
-    color: '#FFFFFF',
-    fontWeight: 'bold',
+  dotActive: {
+    width: 28,
+    backgroundColor: palette.primary,
   },
 });
 
