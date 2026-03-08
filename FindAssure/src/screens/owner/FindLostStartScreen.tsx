@@ -1,32 +1,26 @@
-import React, { useState, useRef, useCallback } from 'react';
-import {
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  ActivityIndicator,
-} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
+import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import * as ImagePicker from 'expo-image-picker';
 import axios from 'axios';
-import { useAuth } from '../../context/AuthContext';
-import { RootStackParamList, SelectedImageAsset } from '../../types/models';
-import { PrimaryButton } from '../../components/PrimaryButton';
-import { CategoryPicker } from '../../components/CategoryPicker';
-import { LocationPicker } from '../../components/LocationPicker';
-import { LocationDetail } from '../../constants/locationData';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { itemsApi } from '../../api/itemsApi';
-import { ITEM_CATEGORIES } from '../../constants/appConstants';
 import { AI_BACKEND_URL } from '../../config/api.config';
+import { ITEM_CATEGORIES } from '../../constants/appConstants';
+import { LocationDetail } from '../../constants/locationData';
+import { CategoryPicker } from '../../components/CategoryPicker';
 import { FormInput } from '../../components/FormInput';
 import { GlassCard } from '../../components/GlassCard';
 import { KeyboardAwareFormScreen } from '../../components/KeyboardAwareFormScreen';
-import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
+import { LocationPicker } from '../../components/LocationPicker';
+import { OverlayLoadingState } from '../../components/OverlayLoadingState';
+import { PrimaryButton } from '../../components/PrimaryButton';
+import { useAuth } from '../../context/AuthContext';
+import { useAppTheme } from '../../context/ThemeContext';
+import { useToast } from '../../context/ToastContext';
+import { RootStackParamList, SelectedImageAsset } from '../../types/models';
 import { showImageSourceOptions } from '../../utils/imageSourceOptions';
 
 type FindLostStartNavigationProp = StackNavigationProp<RootStackParamList, 'FindLostStart'>;
@@ -41,6 +35,9 @@ const CONFIDENCE_OPTIONS = [
 const FindLostStartScreen = () => {
   const navigation = useNavigation<FindLostStartNavigationProp>();
   const { user } = useAuth();
+  const { theme } = useAppTheme();
+  const { showToast } = useToast();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const [category, setCategory] = useState<string>(ITEM_CATEGORIES[0]);
   const [description, setDescription] = useState('');
@@ -75,10 +72,13 @@ const FindLostStartScreen = () => {
     }, 1200);
   }, []);
 
-  const handleDescriptionChange = useCallback((text: string) => {
-    setDescription(text);
-    triggerGrammarCheck(text);
-  }, [triggerGrammarCheck]);
+  const handleDescriptionChange = useCallback(
+    (text: string) => {
+      setDescription(text);
+      triggerGrammarCheck(text);
+    },
+    [triggerGrammarCheck]
+  );
 
   const handleSelectOwnerImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -136,7 +136,11 @@ const FindLostStartScreen = () => {
     }
 
     if (!category || !description.trim() || !location || !location.location) {
-      Alert.alert('Required Fields', 'Please fill in all fields');
+      showToast({
+        title: 'Missing details',
+        message: 'Please complete the category, description, and location.',
+        variant: 'warning',
+      });
       return;
     }
 
@@ -155,22 +159,26 @@ const FindLostStartScreen = () => {
         foundItems: lostRequestResponse.results || [],
       });
     } catch (error: any) {
-      Alert.alert('Search Failed', error.message || 'Could not search for items. Please try again.');
+      showToast({
+        title: 'Search failed',
+        message: error.message || 'Could not search for items. Please try again.',
+        variant: 'error',
+      });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+    <View style={styles.container}>
       <KeyboardAwareFormScreen contentContainerStyle={styles.content}>
         <GlassCard style={styles.hero}>
           <View style={styles.heroBadge}>
             <Text style={styles.heroBadgeText}>Owner flow</Text>
           </View>
-          <Text style={styles.heroEyebrow}>Owner flow</Text>
+          <Text style={styles.heroEyebrow}>Search</Text>
           <Text style={styles.heroTitle}>Describe what you lost.</Text>
-          <Text style={styles.heroBody}>Search works best when you combine item context, location confidence, and an optional photo.</Text>
+          <Text style={styles.heroBody}>A good search combines item context, location confidence, and an optional reference image.</Text>
         </GlassCard>
 
         <GlassCard style={styles.cardGap}>
@@ -189,8 +197,8 @@ const FindLostStartScreen = () => {
           />
           {grammarChecking ? (
             <View style={styles.grammarRow}>
-              <ActivityIndicator size="small" color={palette.primaryDeep} />
-              <Text style={styles.grammarText}>Checking grammar...</Text>
+              <ActivityIndicator size="small" color={theme.colors.accent} />
+              <Text style={styles.grammarText}>Checking grammar…</Text>
             </View>
           ) : null}
         </GlassCard>
@@ -214,7 +222,9 @@ const FindLostStartScreen = () => {
                   onPress={() => setConfidenceStage(option.value)}
                 >
                   <Text style={styles.confidenceEmoji}>{option.emoji}</Text>
-                  <Text numberOfLines={2} style={[styles.confidenceTitle, active && { color: option.tone }]}>{option.title}</Text>
+                  <Text numberOfLines={2} style={[styles.confidenceTitle, active && { color: option.tone }]}>
+                    {option.title}
+                  </Text>
                 </Pressable>
               );
             })}
@@ -233,7 +243,7 @@ const FindLostStartScreen = () => {
                 accessibilityRole="button"
                 accessibilityLabel="Remove selected photo"
               >
-                <Ionicons name="close" size={14} color={palette.paperStrong} />
+                <Ionicons name="close" size={14} color={theme.colors.inverse} />
               </Pressable>
             </View>
           ) : (
@@ -248,7 +258,7 @@ const FindLostStartScreen = () => {
               }
             >
               <Text style={styles.uploadIcon}>⌁</Text>
-              <Text style={styles.uploadTitle}>Upload photo</Text>
+              <Text style={styles.uploadTitle}>Add reference photo</Text>
               <Text style={styles.uploadBody}>Tap to take a photo or choose one from your library.</Text>
             </Pressable>
           )}
@@ -256,145 +266,155 @@ const FindLostStartScreen = () => {
 
         <PrimaryButton title="Search Found Items" onPress={handleSearch} loading={loading} size="lg" />
       </KeyboardAwareFormScreen>
-    </LinearGradient>
+
+      <OverlayLoadingState
+        visible={loading}
+        title="Searching reported items"
+        message="Comparing your details against available reports."
+      />
+    </View>
   );
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: {
-    paddingTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  hero: {
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.lg,
-  },
-  heroBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: palette.primarySoft,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    marginBottom: spacing.sm,
-  },
-  heroBadgeText: {
-    ...type.caption,
-    color: palette.primaryDeep,
-    fontWeight: '700',
-  },
-  heroEyebrow: {
-    ...type.label,
-    color: palette.primaryDeep,
-    marginBottom: spacing.xs,
-  },
-  heroTitle: {
-    ...type.title,
-    color: palette.ink,
-    marginBottom: spacing.sm,
-  },
-  heroBody: {
-    ...type.body,
-    color: palette.inkSoft,
-  },
-  cardGap: {
-    marginBottom: spacing.lg,
-  },
-  sectionEyebrow: {
-    ...type.label,
-    marginBottom: spacing.xs,
-  },
-  sectionTitle: {
-    ...type.section,
-    marginBottom: spacing.md,
-  },
-  fieldLabel: {
-    ...type.label,
-    marginBottom: spacing.sm,
-  },
-  fieldGap: {
-    marginTop: spacing.md,
-  },
-  grammarRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.sm,
-  },
-  grammarText: {
-    ...type.caption,
-    color: palette.primaryDeep,
-  },
-  confidenceGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  confidenceCard: {
-    width: '47.5%',
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: palette.line,
-    backgroundColor: palette.paperStrong,
-    minHeight: 88,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  confidenceEmoji: {
-    fontSize: 24,
-    marginBottom: spacing.xs,
-  },
-  confidenceTitle: {
-    ...type.bodyStrong,
-    textAlign: 'center',
-    fontSize: 13,
-    lineHeight: 17,
-  },
-  uploadCard: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: palette.line,
-    backgroundColor: palette.paperStrong,
-    padding: spacing.md,
-    alignItems: 'center',
-  },
-  uploadIcon: {
-    ...type.section,
-    color: palette.primaryDeep,
-    marginBottom: spacing.xs,
-  },
-  uploadTitle: {
-    ...type.cardTitle,
-    marginBottom: spacing.xs,
-  },
-  uploadBody: {
-    ...type.body,
-    textAlign: 'center',
-  },
-  ownerImageWrap: {
-    position: 'relative',
-  },
-  ownerImagePreview: {
-    width: '100%',
-    height: 196,
-    borderRadius: radius.lg,
-    backgroundColor: palette.shell,
-  },
-  removeWrap: {
-    position: 'absolute',
-    top: spacing.sm,
-    right: spacing.sm,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(17,24,39,0.68)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.colors.background },
+    content: {
+      paddingTop: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
+    },
+    hero: {
+      padding: theme.spacing.lg,
+      marginBottom: theme.spacing.md,
+    },
+    heroBadge: {
+      alignSelf: 'flex-start',
+      backgroundColor: theme.colors.accentSoft,
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 5,
+      marginBottom: theme.spacing.sm,
+    },
+    heroBadgeText: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+      fontWeight: '700',
+    },
+    heroEyebrow: {
+      ...theme.type.label,
+      color: theme.colors.accent,
+      marginBottom: theme.spacing.xs,
+    },
+    heroTitle: {
+      ...theme.type.title,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.sm,
+    },
+    heroBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+    cardGap: {
+      marginBottom: theme.spacing.md,
+    },
+    sectionEyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    sectionTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.md,
+    },
+    fieldLabel: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.sm,
+    },
+    fieldGap: {
+      marginTop: theme.spacing.md,
+    },
+    grammarRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      marginTop: theme.spacing.sm,
+    },
+    grammarText: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+    },
+    confidenceGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: theme.spacing.sm,
+    },
+    confidenceCard: {
+      width: '47.5%',
+      borderRadius: theme.radius.md,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.input,
+      minHeight: 84,
+      paddingVertical: theme.spacing.md,
+      paddingHorizontal: theme.spacing.sm,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    confidenceEmoji: {
+      fontSize: 24,
+      marginBottom: theme.spacing.xs,
+    },
+    confidenceTitle: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+      textAlign: 'center',
+      fontSize: 13,
+      lineHeight: 17,
+    },
+    uploadCard: {
+      borderRadius: theme.radius.md,
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
+      backgroundColor: theme.colors.input,
+      padding: theme.spacing.md,
+      alignItems: 'center',
+    },
+    uploadIcon: {
+      ...theme.type.section,
+      color: theme.colors.accent,
+      marginBottom: theme.spacing.xs,
+    },
+    uploadTitle: {
+      ...theme.type.cardTitle,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.xs,
+    },
+    uploadBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      textAlign: 'center',
+    },
+    ownerImageWrap: {
+      position: 'relative',
+    },
+    ownerImagePreview: {
+      width: '100%',
+      height: 196,
+      borderRadius: theme.radius.lg,
+      backgroundColor: theme.colors.inputMuted,
+    },
+    removeWrap: {
+      position: 'absolute',
+      top: theme.spacing.sm,
+      right: theme.spacing.sm,
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: 'rgba(15, 23, 42, 0.72)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+  });
 
 export default FindLostStartScreen;

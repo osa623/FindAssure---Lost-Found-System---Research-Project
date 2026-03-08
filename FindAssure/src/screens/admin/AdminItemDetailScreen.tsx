@@ -1,393 +1,398 @@
-// AdminItemDetailScreen – follow the spec (admin can see EVERYTHING including founderAnswers)
-import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  Image, 
-  StyleSheet, 
-  ScrollView, 
-  Alert,
-  TouchableOpacity
-} from 'react-native';
-import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
-import { StackNavigationProp } from '@react-navigation/stack';
+import React, { useMemo, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { RouteProp, useRoute } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { RootStackParamList } from '../../types/models';
+import { GlassCard } from '../../components/GlassCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { StaggeredEntrance } from '../../components/StaggeredEntrance';
 import { itemsApi } from '../../api/itemsApi';
+import { useAppTheme } from '../../context/ThemeContext';
+import { getVisualMatchDisplay } from '../../utils/visualMatch';
+import { getAdminItemStatusTone, getAdminPalette } from './adminTheme';
 
-type AdminItemDetailNavigationProp = StackNavigationProp<RootStackParamList, 'AdminItemDetail'>;
 type AdminItemDetailRouteProp = RouteProp<RootStackParamList, 'AdminItemDetail'>;
 
 const AdminItemDetailScreen = () => {
-  const navigation = useNavigation<AdminItemDetailNavigationProp>();
   const route = useRoute<AdminItemDetailRouteProp>();
   const { foundItem } = route.params;
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const adminPalette = useMemo(() => getAdminPalette(theme), [theme]);
 
   const [currentStatus, setCurrentStatus] = useState(foundItem.status);
-  const [loading, setLoading] = useState(false);
+  const [pendingStatus, setPendingStatus] = useState<string | null>(null);
+  const visualMatch = getVisualMatchDisplay(foundItem.imageMatch?.score);
 
-  // Format location display
   const formatLocation = (locations: typeof foundItem.found_location) => {
     if (!locations || locations.length === 0) return 'Location not specified';
-    
-    return locations.map((loc, index) => {
-      let locationStr = loc.location;
-      if (loc.floor_id) locationStr += ` - Floor: ${loc.floor_id}`;
-      if (loc.hall_name) locationStr += ` - Hall: ${loc.hall_name}`;
-      return locationStr;
-    }).join('\n');
+
+    return locations
+      .map((loc) => {
+        let locationStr = loc.location;
+        if (loc.floor_id) locationStr += ` - Floor: ${loc.floor_id}`;
+        if (loc.hall_name) locationStr += ` - Hall: ${loc.hall_name}`;
+        return locationStr;
+      })
+      .join('\n');
   };
 
   const handleChangeStatus = async (newStatus: string) => {
-    Alert.alert(
-      'Confirm Status Change',
-      `Change status to "${newStatus}"?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          onPress: async () => {
-            try {
-              setLoading(true);
-              await itemsApi.updateFoundItemStatus(foundItem._id, newStatus);
-              setCurrentStatus(newStatus as any);
-              Alert.alert('Success', 'Status updated successfully');
-            } catch (error: any) {
-              Alert.alert('Error', error.message || 'Failed to update status');
-            } finally {
-              setLoading(false);
-            }
-          },
+    Alert.alert('Confirm Status Change', `Change status to "${newStatus}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Confirm',
+        onPress: async () => {
+          try {
+            setPendingStatus(newStatus);
+            await itemsApi.updateFoundItemStatus(foundItem._id, newStatus);
+            setCurrentStatus(newStatus as any);
+            Alert.alert('Success', 'Status updated successfully');
+          } catch (error: any) {
+            Alert.alert('Error', error.message || 'Failed to update status');
+          } finally {
+            setPendingStatus(null);
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
+  const statusTone = getAdminItemStatusTone(theme, currentStatus);
+
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <Image source={{ uri: foundItem.imageUrl }} style={styles.image} />
-
-        <View style={styles.card}>
-          <View style={styles.adminBadge}>
-            <Text style={styles.adminBadgeText}>ADMIN VIEW</Text>
-          </View>
-
-          <View style={styles.statusSection}>
-            <Text style={styles.label}>Current Status:</Text>
-            <View style={[styles.statusBadge, getStatusBadgeStyle(currentStatus)]}>
-              <Text style={styles.statusText}>{currentStatus}</Text>
-            </View>
-          </View>
-
-          <Text style={styles.category}>{foundItem.category}</Text>
-          
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Description</Text>
-            <Text style={styles.description}>{foundItem.description}</Text>
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>📍 Found Location</Text>
-            <Text style={styles.locationText}>{formatLocation(foundItem.found_location)}</Text>
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>📅 Date Found</Text>
-            <Text style={styles.dateText}>
-              {new Date(foundItem.createdAt).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </Text>
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>👤 Founder Contact Information</Text>
-            <View style={styles.contactInfo}>
-              <Text style={styles.contactLabel}>Name:</Text>
-              <Text style={styles.contactValue}>{foundItem.founderContact?.name || 'N/A'}</Text>
-            </View>
-            <View style={styles.contactInfo}>
-              <Text style={styles.contactLabel}>Email:</Text>
-              <Text style={styles.contactValue}>{foundItem.founderContact?.email || 'N/A'}</Text>
-            </View>
-            <View style={styles.contactInfo}>
-              <Text style={styles.contactLabel}>Phone:</Text>
-              <Text style={styles.contactValue}>{foundItem.founderContact?.phone || 'N/A'}</Text>
-            </View>
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>❓ Questions & Founder Answers</Text>
-            <Text style={styles.adminNote}>
-              ⚠️ Admin can see founder&apos;s answers - DO NOT share with unverified users
-            </Text>
-            {foundItem.questions.map((question, index) => (
-              <View key={index} style={styles.qaItem}>
-                <Text style={styles.questionNumber}>Q{index + 1}:</Text>
-                <View style={styles.qaContent}>
-                  <Text style={styles.questionText}>{question}</Text>
-                  <View style={styles.answerBox}>
-                    <Text style={styles.answerLabel}>Founder&apos;s Answer:</Text>
-                    <Text style={styles.answerText}>{foundItem.founderAnswers?.[index] || 'N/A'}</Text>
+    <LinearGradient colors={theme.gradients.appBackground} style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <StaggeredEntrance delay={20}>
+          <GlassCard style={styles.mediaCard} contentStyle={styles.mediaCardContent}>
+            <Image source={{ uri: foundItem.imageUrl }} style={styles.image} contentFit="cover" />
+            <View style={styles.heroBody}>
+              <View style={styles.badgeRow}>
+                <View style={[styles.adminBadge, { backgroundColor: adminPalette.accentSoft }]}>
+                  <Text style={[styles.adminBadgeText, { color: adminPalette.accentText }]}>Admin-only view</Text>
+                </View>
+                <View style={[styles.statusBadge, { backgroundColor: statusTone.backgroundColor }]}>
+                  <Text style={[styles.statusText, { color: statusTone.textColor }]}>
+                    {currentStatus.split('_').join(' ')}
+                  </Text>
+                </View>
+                {visualMatch ? (
+                  <View style={styles.visualMatchBadge}>
+                    <Text style={styles.visualMatchText}>{visualMatch.label}</Text>
                   </View>
+                ) : null}
+              </View>
+
+              <Text style={styles.eyebrow}>Found item oversight</Text>
+              <Text style={styles.category}>{foundItem.category}</Text>
+              <Text style={styles.description}>{foundItem.description}</Text>
+            </View>
+          </GlassCard>
+        </StaggeredEntrance>
+
+        <StaggeredEntrance delay={80}>
+          <View style={styles.metaGrid}>
+            <GlassCard style={styles.metaCard}>
+              <Text style={styles.metaLabel}>Found location</Text>
+              <Text style={styles.metaValue}>{formatLocation(foundItem.found_location)}</Text>
+            </GlassCard>
+            <GlassCard style={styles.metaCard}>
+              <Text style={styles.metaLabel}>Date found</Text>
+              <Text style={styles.metaValue}>
+                {new Date(foundItem.createdAt).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </Text>
+            </GlassCard>
+          </View>
+        </StaggeredEntrance>
+
+        <StaggeredEntrance delay={120}>
+          <GlassCard style={styles.sectionCard}>
+            <Text style={styles.sectionEyebrow}>Founder contact</Text>
+            <Text style={styles.sectionTitle}>Visible only to administrators</Text>
+            {[
+              { label: 'Name', value: foundItem.founderContact?.name || 'N/A', icon: 'person-outline' as const },
+              { label: 'Email', value: foundItem.founderContact?.email || 'N/A', icon: 'mail-outline' as const },
+              { label: 'Phone', value: foundItem.founderContact?.phone || 'N/A', icon: 'call-outline' as const },
+            ].map((field) => (
+              <View key={field.label} style={styles.detailRow}>
+                <Ionicons name={field.icon} size={17} color={theme.colors.textMuted} />
+                <View style={styles.detailCopy}>
+                  <Text style={styles.detailLabel}>{field.label}</Text>
+                  <Text style={styles.detailValue}>{field.value}</Text>
                 </View>
               </View>
             ))}
-          </View>
+          </GlassCard>
+        </StaggeredEntrance>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>⚙️ Change Status</Text>
-            <View style={styles.statusButtons}>
-              <TouchableOpacity
-                style={[styles.statusButton, styles.statusButtonAvailable]}
-                onPress={() => handleChangeStatus('available')}
-                disabled={loading || currentStatus === 'available'}
-              >
-                <Text style={styles.statusButtonText}>Available</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.statusButton, styles.statusButtonPending]}
-                onPress={() => handleChangeStatus('pending_verification')}
-                disabled={loading || currentStatus === 'pending_verification'}
-              >
-                <Text style={styles.statusButtonText}>Pending</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.statusButton, styles.statusButtonClaimed]}
-                onPress={() => handleChangeStatus('claimed')}
-                disabled={loading || currentStatus === 'claimed'}
-              >
-                <Text style={styles.statusButtonText}>Claimed</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.metadataSection}>
-            <Text style={styles.metadataLabel}>Item ID: {foundItem._id}</Text>
-            {foundItem.updatedAt && (
-              <Text style={styles.metadataLabel}>
-                Last Updated: {new Date(foundItem.updatedAt).toLocaleString()}
+        <StaggeredEntrance delay={160}>
+          <GlassCard style={styles.sectionCard}>
+            <Text style={styles.sectionEyebrow}>Verification prompts</Text>
+            <Text style={styles.sectionTitle}>Founder questions and protected answers</Text>
+            <View style={styles.warningNote}>
+              <Ionicons name="warning-outline" size={18} color={adminPalette.accent} />
+              <Text style={styles.warningText}>
+                Do not disclose founder answers until the claimant has been verified.
               </Text>
-            )}
-          </View>
-        </View>
-      </View>
-    </ScrollView>
+            </View>
+            {foundItem.questions.map((question, index) => (
+              <GlassCard key={`${question}-${index}`} style={styles.qaCard} intensity={24}>
+                <Text style={styles.questionLabel}>Question {index + 1}</Text>
+                <Text style={styles.questionText}>{question}</Text>
+                <View style={styles.answerBlock}>
+                  <Text style={styles.answerLabel}>Founder answer</Text>
+                  <Text style={styles.answerText}>{foundItem.founderAnswers?.[index] || 'N/A'}</Text>
+                </View>
+              </GlassCard>
+            ))}
+          </GlassCard>
+        </StaggeredEntrance>
+
+        <StaggeredEntrance delay={200}>
+          <GlassCard style={styles.sectionCard}>
+            <Text style={styles.sectionEyebrow}>Status control</Text>
+            <Text style={styles.sectionTitle}>Update item state</Text>
+            <Text style={styles.sectionBody}>
+              Keep the verification queue accurate by marking the item as available, pending review, or claimed.
+            </Text>
+            <View style={styles.statusButtons}>
+              <PrimaryButton
+                title="Mark Available"
+                onPress={() => handleChangeStatus('available')}
+                disabled={Boolean(pendingStatus) || currentStatus === 'available'}
+                loading={pendingStatus === 'available'}
+                size="lg"
+              />
+              <PrimaryButton
+                title="Mark Pending"
+                onPress={() => handleChangeStatus('pending_verification')}
+                disabled={Boolean(pendingStatus) || currentStatus === 'pending_verification'}
+                loading={pendingStatus === 'pending_verification'}
+                size="lg"
+                variant="secondary"
+              />
+              <PrimaryButton
+                title="Mark Claimed"
+                onPress={() => handleChangeStatus('claimed')}
+                disabled={Boolean(pendingStatus) || currentStatus === 'claimed'}
+                loading={pendingStatus === 'claimed'}
+                size="lg"
+                variant="ghost"
+                style={StyleSheet.flatten([styles.claimedButton, { borderColor: theme.colors.borderStrong }])}
+              />
+            </View>
+          </GlassCard>
+        </StaggeredEntrance>
+
+        <GlassCard style={styles.metadataCard} intensity={24}>
+          <Text style={styles.metadataLabel}>Item ID: {foundItem._id}</Text>
+          {foundItem.updatedAt ? (
+            <Text style={styles.metadataLabel}>
+              Last updated: {new Date(foundItem.updatedAt).toLocaleString()}
+            </Text>
+          ) : null}
+        </GlassCard>
+      </ScrollView>
+    </LinearGradient>
   );
 };
 
-const getStatusBadgeStyle = (status: string) => {
-  switch (status) {
-    case 'available':
-      return { backgroundColor: '#4CAF50' };
-    case 'pending_verification':
-      return { backgroundColor: '#FF9800' };
-    case 'claimed':
-      return { backgroundColor: '#9E9E9E' };
-    default:
-      return { backgroundColor: '#757575' };
-  }
-};
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  content: {
-    paddingBottom: 30,
-  },
-  image: {
-    width: '100%',
-    height: 300,
-    backgroundColor: '#E0E0E0',
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    margin: 20,
-    marginTop: -40,
-    borderRadius: 16,
-    padding: 20,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-  },
-  adminBadge: {
-    backgroundColor: '#E53935',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-    marginBottom: 16,
-  },
-  adminBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
-  statusSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#666666',
-    marginRight: 8,
-  },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  statusText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
-    textTransform: 'capitalize',
-  },
-  category: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 20,
-    textTransform: 'capitalize',
-  },
-  section: {
-    marginBottom: 20,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 8,
-  },
-  description: {
-    fontSize: 15,
-    color: '#666666',
-    lineHeight: 22,
-  },
-  locationText: {
-    fontSize: 15,
-    color: '#4A90E2',
-    fontWeight: '500',
-  },
-  dateText: {
-    fontSize: 15,
-    color: '#666666',
-  },
-  contactInfo: {
-    flexDirection: 'row',
-    marginBottom: 8,
-  },
-  contactLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#666666',
-    width: 60,
-  },
-  contactValue: {
-    flex: 1,
-    fontSize: 14,
-    color: '#333333',
-  },
-  adminNote: {
-    fontSize: 12,
-    color: '#E53935',
-    backgroundColor: '#FFEBEE',
-    padding: 8,
-    borderRadius: 6,
-    marginBottom: 12,
-  },
-  qaItem: {
-    flexDirection: 'row',
-    marginBottom: 16,
-    backgroundColor: '#F8F9FA',
-    padding: 12,
-    borderRadius: 8,
-  },
-  questionNumber: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#4A90E2',
-    marginRight: 8,
-    minWidth: 30,
-  },
-  qaContent: {
-    flex: 1,
-  },
-  questionText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 8,
-  },
-  answerBox: {
-    backgroundColor: '#E3F2FD',
-    padding: 10,
-    borderRadius: 6,
-    borderLeftWidth: 3,
-    borderLeftColor: '#4A90E2',
-  },
-  answerLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#1565C0',
-    marginBottom: 4,
-  },
-  answerText: {
-    fontSize: 13,
-    color: '#333333',
-    lineHeight: 18,
-  },
-  statusButtons: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  statusButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    elevation: 2,
-  },
-  statusButtonAvailable: {
-    backgroundColor: '#4CAF50',
-  },
-  statusButtonPending: {
-    backgroundColor: '#FF9800',
-  },
-  statusButtonClaimed: {
-    backgroundColor: '#9E9E9E',
-  },
-  statusButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  metadataSection: {
-    marginTop: 20,
-    paddingTop: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
-  },
-  metadataLabel: {
-    fontSize: 11,
-    color: '#999999',
-    marginBottom: 4,
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+    },
+    content: {
+      paddingTop: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
+      gap: theme.spacing.md,
+    },
+    mediaCard: {
+      marginBottom: 0,
+    },
+    mediaCardContent: {
+      padding: 0,
+    },
+    image: {
+      width: '100%',
+      height: 280,
+      borderTopLeftRadius: theme.radius.lg,
+      borderTopRightRadius: theme.radius.lg,
+      backgroundColor: theme.colors.inputMuted,
+    },
+    heroBody: {
+      padding: theme.spacing.md,
+    },
+    badgeRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.sm,
+    },
+    adminBadge: {
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 6,
+    },
+    adminBadgeText: {
+      ...theme.type.caption,
+      fontWeight: '700',
+    },
+    statusBadge: {
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 6,
+    },
+    statusText: {
+      ...theme.type.caption,
+      fontWeight: '700',
+      textTransform: 'capitalize',
+    },
+    visualMatchBadge: {
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 6,
+      backgroundColor: theme.colors.accentSoft,
+    },
+    visualMatchText: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+      fontWeight: '700',
+    },
+    eyebrow: {
+      ...theme.type.label,
+      color: theme.colors.textSubtle,
+      marginBottom: theme.spacing.xs,
+    },
+    category: {
+      ...theme.type.hero,
+      color: theme.colors.textStrong,
+      textTransform: 'capitalize',
+      marginBottom: theme.spacing.sm,
+    },
+    description: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+    metaGrid: {
+      gap: theme.spacing.md,
+    },
+    metaCard: {
+      minHeight: 108,
+    },
+    metaLabel: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.sm,
+    },
+    metaValue: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+      lineHeight: 22,
+    },
+    sectionCard: {
+      marginBottom: 0,
+    },
+    sectionEyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    sectionTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.sm,
+    },
+    sectionBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      marginBottom: theme.spacing.lg,
+    },
+    detailRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.md,
+    },
+    detailCopy: {
+      flex: 1,
+    },
+    detailLabel: {
+      ...theme.type.caption,
+      color: theme.colors.textSubtle,
+      marginBottom: 2,
+    },
+    detailValue: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+    },
+    warningNote: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+      alignItems: 'flex-start',
+      backgroundColor: theme.colors.dangerSoft,
+      borderRadius: theme.radius.md,
+      padding: theme.spacing.md,
+      marginBottom: theme.spacing.md,
+    },
+    warningText: {
+      ...theme.type.body,
+      color: theme.colors.textStrong,
+      flex: 1,
+    },
+    qaCard: {
+      marginBottom: theme.spacing.sm,
+    },
+    questionLabel: {
+      ...theme.type.caption,
+      color: theme.colors.textSubtle,
+      marginBottom: 4,
+      textTransform: 'uppercase',
+    },
+    questionText: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.md,
+    },
+    answerBlock: {
+      backgroundColor: theme.colors.cardMuted,
+      borderRadius: theme.radius.md,
+      padding: theme.spacing.md,
+      borderLeftWidth: 3,
+      borderLeftColor: theme.colors.accent,
+    },
+    answerLabel: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+      marginBottom: 4,
+      fontWeight: '700',
+    },
+    answerText: {
+      ...theme.type.body,
+      color: theme.colors.textStrong,
+    },
+    statusButtons: {
+      gap: theme.spacing.sm,
+      marginTop: theme.spacing.lg,
+    },
+    claimedButton: {
+      borderWidth: 1,
+    },
+    metadataCard: {
+      marginBottom: 0,
+    },
+    metadataLabel: {
+      ...theme.type.caption,
+      color: theme.colors.textSubtle,
+      marginBottom: 4,
+    },
+  });
 
 export default AdminItemDetailScreen;

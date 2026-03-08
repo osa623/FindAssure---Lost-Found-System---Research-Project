@@ -1,14 +1,14 @@
 import React from 'react';
 import {
-  KeyboardAvoidingView,
   Platform,
+  KeyboardAvoidingView,
   ScrollView,
   ScrollViewProps,
   StyleProp,
   StyleSheet,
   ViewStyle,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useHeaderHeight } from '@react-navigation/elements';
 
 type KeyboardAwareFormScreenProps = {
   children: React.ReactNode;
@@ -23,16 +23,10 @@ export const KeyboardAwareFormScreen = ({
   style,
   scrollProps,
 }: KeyboardAwareFormScreenProps) => {
-  // useSafeAreaInsets() is native-backed and always returns correct values from the
-  // first render — unlike useHeaderHeight() which can return 0 while the navigation
-  // entrance animation is running, causing the KAV to fight with the keyboard animation.
-  // 44pt = standard iOS navigation bar height for stack navigators without large titles.
-  const insets = useSafeAreaInsets();
-  const keyboardVerticalOffset = Platform.OS === 'ios' ? insets.top + 44 : 0;
-
+  const headerHeight = useHeaderHeight();
   const {
     keyboardShouldPersistTaps = 'handled',
-    keyboardDismissMode = (Platform.OS === 'ios' ? 'interactive' : 'on-drag') as ScrollViewProps['keyboardDismissMode'],
+    keyboardDismissMode = (Platform.OS === 'ios' ? 'none' : 'on-drag') as ScrollViewProps['keyboardDismissMode'],
     automaticallyAdjustKeyboardInsets = false,
     showsVerticalScrollIndicator = false,
     ...restScrollProps
@@ -42,7 +36,7 @@ export const KeyboardAwareFormScreen = ({
     <KeyboardAvoidingView
       style={[styles.container, style]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={keyboardVerticalOffset}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? headerHeight : 0}
     >
       <ScrollView
         keyboardShouldPersistTaps={keyboardShouldPersistTaps}

@@ -5,7 +5,6 @@ import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../../types/models';
 import { PrimaryButton } from '../../components/PrimaryButton';
-import { GlassCard } from '../../components/GlassCard';
 import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
 
 type ReportFoundSuccessNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundSuccess'>;
@@ -21,12 +20,6 @@ const ReportFoundSuccessScreen = () => {
           <Text style={styles.heroTitle}>Report submitted.</Text>
           <Text style={styles.heroBody}>The item is now ready for owner search and verification.</Text>
         </LinearGradient>
-
-        <GlassCard style={styles.cardGap}>
-          <Text style={styles.sectionEyebrow}>What happens next</Text>
-          <Text style={styles.sectionTitle}>Owners must prove ownership first</Text>
-          <Text style={styles.sectionBody}>Your contact details stay private until the claimant answers your verification prompts successfully.</Text>
-        </GlassCard>
 
         <PrimaryButton title="Back to Home" onPress={() => navigation.navigate('Home')} size="lg" />
       </View>
@@ -46,7 +39,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.xl,
     padding: spacing.xl,
     alignItems: 'center',
-    marginBottom: spacing.lg,
+    marginBottom: spacing.xl,
   },
   icon: {
     ...type.hero,
@@ -61,22 +54,6 @@ const styles = StyleSheet.create({
   heroBody: {
     ...type.body,
     color: 'rgba(255,255,255,0.84)',
-    textAlign: 'center',
-  },
-  cardGap: {
-    marginBottom: spacing.lg,
-  },
-  sectionEyebrow: {
-    ...type.label,
-    marginBottom: spacing.xs,
-  },
-  sectionTitle: {
-    ...type.section,
-    marginBottom: spacing.sm,
-    textAlign: 'center',
-  },
-  sectionBody: {
-    ...type.body,
     textAlign: 'center',
   },
 });

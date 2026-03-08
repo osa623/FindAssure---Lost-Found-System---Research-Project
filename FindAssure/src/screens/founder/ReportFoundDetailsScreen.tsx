@@ -1,23 +1,17 @@
-import React, { useState } from 'react';
-import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  Alert,
-  View,
-} from 'react-native';
-import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { RootStackParamList } from '../../types/models';
-import { PrimaryButton } from '../../components/PrimaryButton';
+import { Image } from 'expo-image';
+import React, { useMemo, useState } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ITEM_CATEGORIES } from '../../constants/appConstants';
 import { CategoryPicker } from '../../components/CategoryPicker';
 import { FormInput } from '../../components/FormInput';
 import { GlassCard } from '../../components/GlassCard';
 import { KeyboardAwareFormScreen } from '../../components/KeyboardAwareFormScreen';
-import { ITEM_CATEGORIES } from '../../constants/appConstants';
-import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
+import { PrimaryButton } from '../../components/PrimaryButton';
+import { useAppTheme } from '../../context/ThemeContext';
+import { useToast } from '../../context/ToastContext';
+import { RootStackParamList } from '../../types/models';
 
 type ReportFoundDetailsNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundDetails'>;
 type ReportFoundDetailsRouteProp = RouteProp<RootStackParamList, 'ReportFoundDetails'>;
@@ -25,6 +19,9 @@ type ReportFoundDetailsRouteProp = RouteProp<RootStackParamList, 'ReportFoundDet
 const ReportFoundDetailsScreen = () => {
   const navigation = useNavigation<ReportFoundDetailsNavigationProp>();
   const route = useRoute<ReportFoundDetailsRouteProp>();
+  const { theme } = useAppTheme();
+  const { showToast } = useToast();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const { images, preAnalysisToken, category: prefilledCategory, description: prefilledDescription, analysisMessage } = route.params;
 
   const [category, setCategory] = useState<string>(prefilledCategory || ITEM_CATEGORIES[0]);
@@ -32,7 +29,11 @@ const ReportFoundDetailsScreen = () => {
 
   const handleConfirm = () => {
     if (!category || !description.trim()) {
-      Alert.alert('Required Fields', 'Please fill in all fields');
+      showToast({
+        title: 'Missing details',
+        message: 'Please confirm the category and description.',
+        variant: 'warning',
+      });
       return;
     }
 
@@ -45,25 +46,20 @@ const ReportFoundDetailsScreen = () => {
   };
 
   return (
-    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+    <View style={styles.container}>
       <KeyboardAwareFormScreen contentContainerStyle={styles.content}>
         <GlassCard style={styles.hero}>
           <View style={styles.heroBadge}>
             <Text style={styles.heroBadgeText}>Founder flow</Text>
           </View>
-          <Text style={styles.heroEyebrow}>Founder flow</Text>
+          <Text style={styles.heroEyebrow}>Report details</Text>
           <Text style={styles.heroTitle}>Refine the report.</Text>
           <Text style={styles.heroBody}>Confirm the category and polish the public description before generating verification questions.</Text>
         </GlassCard>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imageStrip} contentContainerStyle={styles.imageStripContent}>
           {images.map((image, index) => (
-            <Image
-              key={`${image.uri}-${index}`}
-              source={{ uri: image.uri }}
-              style={styles.image}
-              contentFit="cover"
-            />
+            <Image key={`${image.uri}-${index}`} source={{ uri: image.uri }} style={styles.image} contentFit="cover" />
           ))}
         </ScrollView>
 
@@ -92,82 +88,84 @@ const ReportFoundDetailsScreen = () => {
 
         <PrimaryButton title="Next" onPress={handleConfirm} size="lg" />
       </KeyboardAwareFormScreen>
-    </LinearGradient>
+    </View>
   );
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: {
-    paddingTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  hero: {
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.lg,
-  },
-  heroBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: palette.primarySoft,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    marginBottom: spacing.sm,
-  },
-  heroBadgeText: {
-    ...type.caption,
-    color: palette.primaryDeep,
-    fontWeight: '700',
-  },
-  heroEyebrow: {
-    ...type.label,
-    color: palette.primaryDeep,
-    marginBottom: spacing.xs,
-  },
-  heroTitle: {
-    ...type.title,
-    color: palette.ink,
-    marginBottom: spacing.sm,
-  },
-  heroBody: {
-    ...type.body,
-    color: palette.inkSoft,
-  },
-  imageStrip: {
-    marginBottom: spacing.lg,
-  },
-  imageStripContent: {
-    gap: spacing.sm,
-  },
-  image: {
-    width: 188,
-    height: 202,
-    borderRadius: radius.lg,
-    backgroundColor: palette.shell,
-  },
-  cardGap: {
-    marginBottom: spacing.lg,
-  },
-  sectionEyebrow: {
-    ...type.label,
-    marginBottom: spacing.xs,
-  },
-  sectionTitle: {
-    ...type.section,
-    marginBottom: spacing.md,
-  },
-  sectionBody: {
-    ...type.body,
-  },
-  fieldLabel: {
-    ...type.label,
-    marginBottom: spacing.sm,
-  },
-  descriptionField: {
-    marginTop: spacing.md,
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.colors.background },
+    content: {
+      paddingTop: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
+    },
+    hero: {
+      padding: theme.spacing.lg,
+      marginBottom: theme.spacing.md,
+    },
+    heroBadge: {
+      alignSelf: 'flex-start',
+      backgroundColor: theme.colors.accentSoft,
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 5,
+      marginBottom: theme.spacing.sm,
+    },
+    heroBadgeText: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+      fontWeight: '700',
+    },
+    heroEyebrow: {
+      ...theme.type.label,
+      color: theme.colors.accent,
+      marginBottom: theme.spacing.xs,
+    },
+    heroTitle: {
+      ...theme.type.title,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.sm,
+    },
+    heroBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+    imageStrip: {
+      marginBottom: theme.spacing.md,
+    },
+    imageStripContent: {
+      gap: theme.spacing.sm,
+    },
+    image: {
+      width: 176,
+      height: 184,
+      borderRadius: theme.radius.lg,
+      backgroundColor: theme.colors.inputMuted,
+    },
+    cardGap: {
+      marginBottom: theme.spacing.md,
+    },
+    sectionEyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    sectionTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.md,
+    },
+    sectionBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+    fieldLabel: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.sm,
+    },
+    descriptionField: {
+      marginTop: theme.spacing.md,
+    },
+  });
 
 export default ReportFoundDetailsScreen;

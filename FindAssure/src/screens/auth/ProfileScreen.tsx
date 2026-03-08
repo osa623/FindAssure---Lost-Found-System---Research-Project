@@ -1,28 +1,26 @@
-import React, { useEffect, useState } from 'react';
-import {
-  Alert,
-  Image,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
 import { CommonActions, useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useAuth } from '../../context/AuthContext';
-import { RootStackParamList } from '../../types/models';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, Image, StyleSheet, Text, View } from 'react-native';
 import { authApi } from '../../api/authApi';
 import { FormInput } from '../../components/FormInput';
 import { GlassCard } from '../../components/GlassCard';
+import { InlineLoadingState } from '../../components/InlineLoadingState';
 import { KeyboardAwareFormScreen } from '../../components/KeyboardAwareFormScreen';
 import { PrimaryButton } from '../../components/PrimaryButton';
-import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
+import { useAuth } from '../../context/AuthContext';
+import { useAppTheme } from '../../context/ThemeContext';
+import { useToast } from '../../context/ToastContext';
+import { RootStackParamList } from '../../types/models';
 
 type ProfileScreenNavigationProp = StackNavigationProp<RootStackParamList, 'Profile'>;
 
 const ProfileScreen = () => {
   const navigation = useNavigation<ProfileScreenNavigationProp>();
   const { user, updateProfile, signOut } = useAuth();
+  const { theme } = useAppTheme();
+  const { showToast } = useToast();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -31,6 +29,23 @@ const ProfileScreen = () => {
   const [claimedItems, setClaimedItems] = useState<any[]>([]);
   const [loadingClaimed, setLoadingClaimed] = useState(false);
 
+  const fetchClaimedItems = useCallback(async () => {
+    try {
+      setLoadingClaimed(true);
+      const items = await authApi.getClaimedItems();
+      setClaimedItems(items);
+    } catch (error) {
+      console.error('Failed to fetch claimed items:', error);
+      showToast({
+        title: 'Could not load claimed items',
+        message: 'Please try again later.',
+        variant: 'error',
+      });
+    } finally {
+      setLoadingClaimed(false);
+    }
+  }, [showToast]);
+
   useEffect(() => {
     if (user) {
       setName(user.name || '');
@@ -38,31 +53,31 @@ const ProfileScreen = () => {
       setPhone(user.phone || '');
       fetchClaimedItems();
     }
-  }, [user]);
-
-  const fetchClaimedItems = async () => {
-    try {
-      setLoadingClaimed(true);
-      const items = await authApi.getClaimedItems();
-      setClaimedItems(items);
-    } catch (error) {
-      console.error('Failed to fetch claimed items:', error);
-    } finally {
-      setLoadingClaimed(false);
-    }
-  };
+  }, [fetchClaimedItems, user]);
 
   const handleSave = async () => {
     if (!name || !email || !phone) {
-      Alert.alert('Error', 'Please fill in all fields');
+      showToast({
+        title: 'Missing details',
+        message: 'Please fill in all fields.',
+        variant: 'warning',
+      });
       return;
     }
     try {
       setLoading(true);
       await updateProfile({ name, phone });
-      Alert.alert('Success', 'Profile updated successfully');
+      showToast({
+        title: 'Profile updated',
+        message: 'Your details were saved successfully.',
+        variant: 'success',
+      });
     } catch (error: any) {
-      Alert.alert('Update Failed', error.message || 'Please try again');
+      showToast({
+        title: 'Update failed',
+        message: error.message || 'Please try again.',
+        variant: 'error',
+      });
     } finally {
       setLoading(false);
     }
@@ -84,7 +99,11 @@ const ProfileScreen = () => {
               })
             );
           } catch (error: any) {
-            Alert.alert('Error', error.message || 'Failed to logout');
+            showToast({
+              title: 'Logout failed',
+              message: error.message || 'Please try again.',
+              variant: 'error',
+            });
           }
         },
       },
@@ -100,7 +119,7 @@ const ProfileScreen = () => {
   }
 
   return (
-    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+    <View style={styles.container}>
       <KeyboardAwareFormScreen contentContainerStyle={styles.content}>
         <GlassCard style={styles.hero}>
           <View style={styles.heroBadge}>
@@ -166,7 +185,7 @@ const ProfileScreen = () => {
           <Text style={styles.sectionEyebrow}>Claim history</Text>
           <Text style={styles.formTitle}>My claimed items</Text>
           {loadingClaimed ? (
-            <Text style={styles.sectionBody}>Loading claimed items...</Text>
+            <InlineLoadingState label="Loading claimed items…" />
           ) : claimedItems.length === 0 ? (
             <Text style={styles.sectionBody}>No claimed items yet.</Text>
           ) : (
@@ -191,143 +210,152 @@ const ProfileScreen = () => {
           )}
         </GlassCard>
       </KeyboardAwareFormScreen>
-    </LinearGradient>
+    </View>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  content: {
-    paddingTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  emptyWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.xl,
-  },
-  emptyText: {
-    ...type.body,
-  },
-  hero: {
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  heroBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: palette.primarySoft,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    marginBottom: spacing.md,
-  },
-  heroBadgeText: {
-    ...type.caption,
-    color: palette.primaryDeep,
-    fontWeight: '700',
-  },
-  avatar: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: palette.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-  },
-  avatarText: {
-    ...type.hero,
-    color: palette.primaryDeep,
-    fontSize: 24,
-    lineHeight: 28,
-  },
-  heroTitle: {
-    ...type.section,
-    color: palette.ink,
-    textAlign: 'center',
-    marginBottom: spacing.xs,
-  },
-  heroBody: {
-    ...type.body,
-    color: palette.inkSoft,
-    textAlign: 'center',
-  },
-  cardGap: {
-    marginBottom: spacing.lg,
-  },
-  sectionEyebrow: {
-    ...type.label,
-    marginBottom: spacing.xs,
-  },
-  formTitle: {
-    ...type.section,
-    marginBottom: spacing.lg,
-  },
-  fieldGap: {
-    marginBottom: spacing.md,
-  },
-  buttonGap: {
-    marginTop: spacing.xl,
-  },
-  sectionBody: {
-    ...type.body,
-  },
-  infoRow: {
-    marginBottom: spacing.md,
-  },
-  infoLabel: {
-    ...type.label,
-    marginBottom: 4,
-  },
-  infoValue: {
-    ...type.bodyStrong,
-    fontSize: 12,
-    lineHeight: 16,
-    flexShrink: 1,
-  },
-  claimCard: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    padding: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: palette.line,
-    marginTop: spacing.md,
-  },
-  itemImage: {
-    width: 78,
-    height: 78,
-    borderRadius: 18,
-    backgroundColor: palette.shell,
-  },
-  claimCopy: {
-    flex: 1,
-  },
-  claimTitle: {
-    ...type.cardTitle,
-    textTransform: 'capitalize',
-    marginBottom: 4,
-  },
-  claimBody: {
-    ...type.body,
-    marginBottom: 4,
-  },
-  claimMeta: {
-    ...type.caption,
-    marginBottom: 4,
-  },
-  claimContact: {
-    ...type.caption,
-    color: palette.primaryDeep,
-    lineHeight: 14,
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    content: {
+      paddingTop: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
+    },
+    emptyWrap: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: theme.spacing.xl,
+      backgroundColor: theme.colors.background,
+    },
+    emptyText: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+    hero: {
+      padding: theme.spacing.lg,
+      alignItems: 'center',
+      marginBottom: theme.spacing.md,
+    },
+    heroBadge: {
+      alignSelf: 'flex-start',
+      backgroundColor: theme.colors.accentSoft,
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 5,
+      marginBottom: theme.spacing.md,
+    },
+    heroBadgeText: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+      fontWeight: '700',
+    },
+    avatar: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      backgroundColor: theme.colors.accentSoft,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: theme.spacing.md,
+    },
+    avatarText: {
+      ...theme.type.hero,
+      color: theme.colors.accent,
+      fontSize: 24,
+      lineHeight: 28,
+    },
+    heroTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      textAlign: 'center',
+      marginBottom: theme.spacing.xs,
+    },
+    heroBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      textAlign: 'center',
+    },
+    cardGap: {
+      marginBottom: theme.spacing.md,
+    },
+    sectionEyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    formTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.lg,
+    },
+    fieldGap: {
+      marginBottom: theme.spacing.md,
+    },
+    buttonGap: {
+      marginTop: theme.spacing.lg,
+    },
+    sectionBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+    infoRow: {
+      marginBottom: theme.spacing.md,
+    },
+    infoLabel: {
+      ...theme.type.label,
+      marginBottom: 4,
+    },
+    infoValue: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+      fontSize: 12,
+      lineHeight: 16,
+      flexShrink: 1,
+    },
+    claimCard: {
+      flexDirection: 'row',
+      gap: theme.spacing.md,
+      padding: theme.spacing.sm,
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.cardMuted,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      marginTop: theme.spacing.md,
+    },
+    itemImage: {
+      width: 78,
+      height: 78,
+      borderRadius: 18,
+      backgroundColor: theme.colors.inputMuted,
+    },
+    claimCopy: {
+      flex: 1,
+    },
+    claimTitle: {
+      ...theme.type.cardTitle,
+      color: theme.colors.textStrong,
+      textTransform: 'capitalize',
+      marginBottom: 4,
+    },
+    claimBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      marginBottom: 4,
+    },
+    claimMeta: {
+      ...theme.type.caption,
+      color: theme.colors.textSubtle,
+      marginBottom: 4,
+    },
+    claimContact: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+      lineHeight: 14,
+    },
+  });
 
 export default ProfileScreen;

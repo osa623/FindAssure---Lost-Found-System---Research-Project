@@ -110,10 +110,12 @@ HOW TO DECIDE (STRICT)
   If a candidate phrase appears verbatim (case-insensitive) in CAPTION or DEFECTS_VQA_TEXT, include it.
 - VISUAL VERIFICATION:
   If the image clearly contradicts any evidence (e.g., evidence says "red" but image is "blue"), REJECT that piece of evidence.
-- COLOR CORRECTION:
-  Cross-check PRIMARY_COLOR against the CAPTION and the image.
-  If the CAPTION mentions a color that differs from PRIMARY_COLOR and the image supports the caption's color, use the caption's color instead.
-  Output the most accurate color in the "color" field. If uncertain, keep PRIMARY_COLOR.
+- COLOR ACCURACY:
+  PRIMARY_COLOR is the authoritative color — it comes from a direct visual question asked about the object.
+  Trust PRIMARY_COLOR. Do NOT override it based on caption text; captions often describe the background,
+  surface, or secondary objects, not the main item.
+  Only output a different color if PRIMARY_COLOR is "Unknown" AND you can clearly and unambiguously
+  see the object's color in the image. If uncertain, use PRIMARY_COLOR exactly as provided.
 - OCR RULE:
   If OCR_TEXT is not "None" and FEATURE_LIST contains "text", include "text".
   Only include "brand name" if OCR_TEXT looks like a brand AND FEATURE_LIST contains "brand name"
@@ -555,7 +557,7 @@ class GeminiReasoner:
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
-             return {
+            return {
                 "status": "rejected",
                 "message": "Gemini returned invalid JSON in Phase 2",
                 "label": None

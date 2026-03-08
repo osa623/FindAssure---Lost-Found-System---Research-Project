@@ -1,12 +1,11 @@
-import React from 'react';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { RootStackParamList, FoundItem } from '../../types/models';
-import { ItemCard } from '../../components/ItemCard';
+import React, { useMemo } from 'react';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { GlassCard } from '../../components/GlassCard';
-import { gradients, radius, spacing, type, palette } from '../../theme/designSystem';
+import { ItemCard } from '../../components/ItemCard';
+import { useAppTheme } from '../../context/ThemeContext';
+import { FoundItem, RootStackParamList } from '../../types/models';
 
 type FindLostResultsNavigationProp = StackNavigationProp<RootStackParamList, 'FindLostResults'>;
 type FindLostResultsRouteProp = RouteProp<RootStackParamList, 'FindLostResults'>;
@@ -14,6 +13,8 @@ type FindLostResultsRouteProp = RouteProp<RootStackParamList, 'FindLostResults'>
 const FindLostResultsScreen = () => {
   const navigation = useNavigation<FindLostResultsNavigationProp>();
   const route = useRoute<FindLostResultsRouteProp>();
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const { foundItems } = route.params;
 
   const handleItemPress = (item: FoundItem) => {
@@ -21,7 +22,7 @@ const FindLostResultsScreen = () => {
   };
 
   return (
-    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+    <View style={styles.container}>
       <FlatList
         data={foundItems}
         keyExtractor={(item) => item._id}
@@ -32,11 +33,9 @@ const FindLostResultsScreen = () => {
             <View style={styles.heroBadge}>
               <Text style={styles.heroBadgeText}>Search results</Text>
             </View>
-            <Text style={styles.heroEyebrow}>Search results</Text>
-            <Text style={styles.heroTitle}>Potential matches</Text>
-            <Text style={styles.heroBody}>
-              {foundItems.length} item{foundItems.length !== 1 ? 's' : ''} found for this search.
-            </Text>
+            <Text style={styles.heroEyebrow}>Potential matches</Text>
+            <Text style={styles.heroTitle}>{foundItems.length} item{foundItems.length !== 1 ? 's' : ''} found.</Text>
+            <Text style={styles.heroBody}>Open a result to review the item details and continue with verification.</Text>
           </GlassCard>
         }
         ListEmptyComponent={
@@ -46,61 +45,62 @@ const FindLostResultsScreen = () => {
           </GlassCard>
         }
       />
-    </LinearGradient>
+    </View>
   );
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  listContent: {
-    paddingTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  hero: {
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-  },
-  heroBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: palette.primarySoft,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    marginBottom: spacing.sm,
-  },
-  heroBadgeText: {
-    ...type.caption,
-    color: palette.primaryDeep,
-    fontWeight: '700',
-  },
-  heroEyebrow: {
-    ...type.label,
-    color: palette.primaryDeep,
-    marginBottom: spacing.xs,
-  },
-  heroTitle: {
-    ...type.section,
-    color: palette.ink,
-    marginBottom: spacing.xs,
-  },
-  heroBody: {
-    ...type.body,
-    color: palette.inkSoft,
-  },
-  emptyCard: {
-    marginTop: spacing.md,
-  },
-  emptyTitle: {
-    ...type.section,
-    textAlign: 'center',
-    marginBottom: spacing.sm,
-  },
-  emptyBody: {
-    ...type.body,
-    textAlign: 'center',
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.colors.background },
+    listContent: {
+      paddingTop: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
+    },
+    hero: {
+      marginBottom: theme.spacing.md,
+    },
+    heroBadge: {
+      alignSelf: 'flex-start',
+      backgroundColor: theme.colors.accentSoft,
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 5,
+      marginBottom: theme.spacing.sm,
+    },
+    heroBadgeText: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+      fontWeight: '700',
+    },
+    heroEyebrow: {
+      ...theme.type.label,
+      color: theme.colors.accent,
+      marginBottom: theme.spacing.xs,
+    },
+    heroTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.xs,
+    },
+    heroBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+    emptyCard: {
+      marginTop: theme.spacing.md,
+    },
+    emptyTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      textAlign: 'center',
+      marginBottom: theme.spacing.sm,
+    },
+    emptyBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      textAlign: 'center',
+    },
+  });
 
 export default FindLostResultsScreen;

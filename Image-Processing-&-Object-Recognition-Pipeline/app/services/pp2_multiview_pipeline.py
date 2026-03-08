@@ -222,6 +222,206 @@ class MultiViewPipeline:
             },
         }
 
+    @staticmethod
+    def _decision_pair_key(used_views: List[int]) -> Optional[str]:
+        cleaned = [int(idx) for idx in used_views if isinstance(idx, int)]
+        if len(cleaned) != 2:
+            return None
+        left, right = sorted(cleaned)
+        return f"{left}-{right}"
+
+    def _normalize_verification_result(
+        self,
+        verification: PP2VerificationResult,
+        *,
+        used_views: List[int],
+        decision_indices: List[int],
+        dropped_views: List[Dict[str, Any]],
+    ) -> PP2VerificationResult:
+        verification_payload = verification.model_dump()
+        verification_payload["used_views"] = used_views if len(used_views) == 2 else []
+        verification_payload["dropped_views"] = dropped_views
+        mode_value = str(verification_payload.get("mode", "") or "").strip().lower()
+        if mode_value not in {"two_view", "three_view"}:
+            if len(verification_payload["used_views"]) == 2:
+                mode_value = "two_view"
+            elif len(decision_indices) == 3:
+                mode_value = "three_view"
+            else:
+                mode_value = "unsupported"
+        verification_payload["mode"] = mode_value
+        return PP2VerificationResult(**verification_payload)
+
+    def _verification_pair_meta(
+        self,
+        verification: PP2VerificationResult,
+        used_views: List[int],
+    ) -> Dict[str, Any]:
+        pair_key = self._decision_pair_key(used_views)
+        if not pair_key:
+            return {}
+        scores = verification.geometric_scores if isinstance(verification.geometric_scores, dict) else {}
+        pair_meta = scores.get(pair_key, {})
+        return pair_meta if isinstance(pair_meta, dict) else {}
+
+    def _should_retry_smartphone_front_back_rescue(
+        self,
+        verification: PP2VerificationResult,
+        *,
+        consensus_label: Optional[str],
+        used_views: List[int],
+    ) -> bool:
+        if verification.passed:
+            return False
+        if canonicalize_label(consensus_label or "") != "Smart Phone":
+            return False
+        pair_meta = self._verification_pair_meta(verification, used_views)
+        return bool(pair_meta.get("smartphone_front_back_retryable", False))
+
+    def _resolve_detail_targets(
+        self,
+        *,
+        verification_passed: bool,
+        verification_used_views: List[int],
+        fallback_used_views: List[int],
+        force_grounding: bool,
+        early_exit_pair: Optional[Tuple[int, int]],
+        pass_caption_refinement: bool,
+        total_views: int,
+    ) -> Tuple[set[int], str, bool]:
+        used_targets = [int(idx) for idx in verification_used_views if isinstance(idx, int)]
+        if len(used_targets) < 2 and len(fallback_used_views) == 2:
+            used_targets = [int(fallback_used_views[0]), int(fallback_used_views[1])]
+
+        if not verification_passed:
+            if len(used_targets) == 2:
+                return set(used_targets), "verification_failed_used_pair", total_views > 2
+            return set(range(total_views)), "verification_failed_all_views", False
+
+        if force_grounding and early_exit_pair is not None:
+            return set(verification_used_views or list(early_exit_pair)), "force_grounding_early_exit_used_pair", True
+        if force_grounding:
+            return set(range(total_views)), "force_grounding_all_views", False
+        if pass_caption_refinement:
+            return set(used_targets), "pass_sparse_refinement_used_pair", total_views > len(set(used_targets))
+        return set(), "detail_skipped", False
+
+    def _run_detail_enrichment_for_targets(
+        self,
+        *,
+        per_view_results: List[PP2PerViewResult],
+        crop_by_index: Dict[int, Image.Image],
+        canonical_label_by_index: Dict[int, str],
+        detail_targets: set[int],
+        mark_non_targets_skipped: bool,
+    ) -> float:
+        if not detail_targets:
+            return 0.0
+
+        detail_start = time.perf_counter()
+        per_view_by_index: Dict[int, PP2PerViewResult] = {res.view_index: res for res in per_view_results}
+        for idx in range(len(per_view_results)):
+            if idx not in detail_targets:
+                if mark_non_targets_skipped:
+                    existing_raw = per_view_by_index[idx].extraction.raw or {}
+                    per_view_by_index[idx].extraction.raw = self._mark_extraction_skipped(existing_raw, ["detail_florence"])
+                    per_view_by_index[idx].extraction.extraction_confidence = self.LITE_FAILED_EXTRACTION_CONFIDENCE
+                continue
+            extraction_data = self.florence.analyze_ocr_first(
+                crop_by_index[idx],
+                canonical_label=canonical_label_by_index.get(idx),
+                fast=False,
+            )
+            normalized = self._normalize_extraction_payload(extraction_data)
+            detail_nonempty = (
+                self._is_stage1_nonempty(normalized)
+                or bool(normalized.get("grounded_features"))
+            )
+            detail_failed = self._is_florence_failed(normalized)
+            per_view_by_index[idx].extraction = PP2PerViewExtraction(
+                caption=normalized["caption"],
+                ocr_text=normalized["ocr_text"],
+                grounded_features=normalized["grounded_features"],
+                extraction_confidence=(
+                    self.LITE_FAILED_EXTRACTION_CONFIDENCE
+                    if detail_failed
+                    else (1.0 if detail_nonempty else self.LITE_FAILED_EXTRACTION_CONFIDENCE)
+                ),
+                raw=normalized.get("raw", {}) if isinstance(normalized.get("raw", {}), dict) else {},
+            )
+        return (time.perf_counter() - detail_start) * 1000.0
+
+    def _rerun_smartphone_front_back_rescue_if_needed(
+        self,
+        *,
+        verification: PP2VerificationResult,
+        per_view_results: List[PP2PerViewResult],
+        vectors_np: List[np.ndarray],
+        crops: List[Image.Image],
+        crop_by_index: Dict[int, Image.Image],
+        used_views: List[int],
+        dropped_views: List[Dict[str, Any]],
+        decision_indices: List[int],
+        consensus_label: Optional[str],
+        canonical_label_by_index: Dict[int, str],
+        embedding_variants_by_index: Dict[int, Dict[str, np.ndarray]],
+        trace_request_id: str,
+        item_id: str,
+        canonical_hint_by_index: Dict[int, Optional[str]],
+    ) -> Tuple[PP2VerificationResult, float, float, bool]:
+        retry_views = [int(idx) for idx in (verification.used_views or []) if isinstance(idx, int)]
+        if len(retry_views) < 2 and len(used_views) == 2:
+            retry_views = [int(used_views[0]), int(used_views[1])]
+        if len(retry_views) != 2:
+            return verification, 0.0, 0.0, False
+        if not self._should_retry_smartphone_front_back_rescue(
+            verification,
+            consensus_label=consensus_label,
+            used_views=retry_views,
+        ):
+            return verification, 0.0, 0.0, False
+
+        detail_targets = set(retry_views)
+        detail_ms = self._run_detail_enrichment_for_targets(
+            per_view_results=per_view_results,
+            crop_by_index=crop_by_index,
+            canonical_label_by_index=canonical_label_by_index,
+            detail_targets=detail_targets,
+            mark_non_targets_skipped=len(per_view_results) > len(detail_targets),
+        )
+        rerun_start = time.perf_counter()
+        rerun_verification = self.verifier.verify(
+            per_view_results,
+            vectors_np,
+            crops,
+            self.faiss,
+            eligible_indices=retry_views,
+            used_views_override=retry_views,
+            dropped_views=dropped_views,
+            decision_category=consensus_label,
+            embedding_variants_by_index=embedding_variants_by_index,
+            request_id=trace_request_id,
+            item_id=item_id,
+            canonical_hints=canonical_hint_by_index,
+        )
+        rerun_verify_ms = (time.perf_counter() - rerun_start) * 1000.0
+        rerun_verification = self._normalize_verification_result(
+            rerun_verification,
+            used_views=retry_views,
+            decision_indices=decision_indices,
+            dropped_views=dropped_views,
+        )
+        logger.debug(
+            "PP2_SMART_PHONE_FRONT_BACK_RERUN request_id=%s item_id=%s used_views=%s detail_ms=%.2f rerun_verify_ms=%.2f passed=%s",
+            trace_request_id,
+            item_id,
+            retry_views,
+            detail_ms,
+            rerun_verify_ms,
+            bool(rerun_verification.passed),
+        )
+        return rerun_verification, detail_ms, rerun_verify_ms, True
+
     def _run_gemini_for_views_parallel(
         self,
         *,
@@ -2004,6 +2204,7 @@ class MultiViewPipeline:
 
         # 4. Verification
         # Convert vectors to numpy for verifier
+        florence_detail_ms = 0.0
         verify_start = time.perf_counter()
         vectors_np = [np.array(v, dtype=np.float32) for v in vectors]
         embedding_variants_by_index: Dict[int, Dict[str, np.ndarray]] = {
@@ -2091,20 +2292,35 @@ class MultiViewPipeline:
             item_id=item_id,
             canonical_hints=canonical_hint_by_index,
         )
-        verification_payload = verification.model_dump()
-        verification_payload["used_views"] = used_views if len(used_views) == 2 else []
-        verification_payload["dropped_views"] = dropped_views
-        mode_value = str(verification_payload.get("mode", "") or "").strip().lower()
-        if mode_value not in {"two_view", "three_view"}:
-            if len(verification_payload["used_views"]) == 2:
-                mode_value = "two_view"
-            elif len(decision_indices) == 3:
-                mode_value = "three_view"
-            else:
-                mode_value = "unsupported"
-        verification_payload["mode"] = mode_value
-        verification = PP2VerificationResult(**verification_payload)
+        verification = self._normalize_verification_result(
+            verification,
+            used_views=used_views,
+            decision_indices=decision_indices,
+            dropped_views=dropped_views,
+        )
         verify_ms = (time.perf_counter() - verify_start) * 1000.0
+        detail_already_applied = False
+        if not verification.passed:
+            verification, retry_detail_ms, retry_verify_ms, rerun_performed = self._rerun_smartphone_front_back_rescue_if_needed(
+                verification=verification,
+                per_view_results=per_view_results,
+                vectors_np=vectors_np,
+                crops=crops,
+                crop_by_index=crop_by_index,
+                used_views=used_views,
+                dropped_views=dropped_views,
+                decision_indices=decision_indices,
+                consensus_label=consensus_label,
+                canonical_label_by_index=canonical_label_by_index,
+                embedding_variants_by_index=embedding_variants_by_index,
+                trace_request_id=trace_request_id,
+                item_id=item_id,
+                canonical_hint_by_index=canonical_hint_by_index,
+            )
+            if rerun_performed:
+                florence_detail_ms += retry_detail_ms
+                verify_ms += retry_verify_ms
+                detail_already_applied = True
 
         gemini_evidence_by_index: Dict[int, Dict[str, Any]] = {}
         gemini_enabled = bool(getattr(settings, "PP2_ENABLE_GEMINI", False))
@@ -2172,10 +2388,9 @@ class MultiViewPipeline:
                 logger.warning("PP2_PHASE2_SUBMIT_FAILED request_id=%s: %s", trace_request_id, _exc)
 
         # 5. Optional detailed enrichment:
-        # - verification fail => all views
+        # - verification fail => used pair only when available
         # - force grounding => all views (or used pair when early-exit skipped others)
         # - verification pass + sparse text on used pair => used pair only
-        florence_detail_ms = 0.0
         force_grounding = bool(getattr(settings, "PP2_FORCE_GROUNDING", False))
         used_for_refinement = [int(idx) for idx in (verification.used_views or []) if isinstance(idx, int)]
         if len(used_for_refinement) < 2 and len(used_views) == 2:
@@ -2183,57 +2398,28 @@ class MultiViewPipeline:
         pass_caption_refinement = (
             bool(verification.passed)
             and (not force_grounding)
+            and (not detail_already_applied)
             and self._needs_pass_caption_refinement(per_view_results, used_for_refinement)
         )
-        should_run_detail = (not verification.passed) or force_grounding or pass_caption_refinement
+        should_run_detail = ((not verification.passed) and (not detail_already_applied)) or force_grounding or pass_caption_refinement
         if should_run_detail:
-            detail_start = time.perf_counter()
-            per_view_by_index: Dict[int, PP2PerViewResult] = {res.view_index: res for res in per_view_results}
-            detail_reason = "verification_failed"
-            mark_non_targets_skipped = False
-            if not verification.passed:
-                detail_targets = set(range(len(per_view_results)))
-                detail_reason = "verification_failed"
-            elif force_grounding and early_exit_pair is not None:
-                detail_targets = set(verification.used_views or list(early_exit_pair))
-                detail_reason = "force_grounding_early_exit_used_pair"
-                mark_non_targets_skipped = True
-            elif force_grounding:
-                detail_targets = set(range(len(per_view_results)))
-                detail_reason = "force_grounding_all_views"
-            else:
-                detail_targets = set(used_for_refinement)
-                detail_reason = "pass_sparse_refinement_used_pair"
-            for idx in range(len(per_view_results)):
-                if idx not in detail_targets:
-                    if mark_non_targets_skipped:
-                        existing_raw = per_view_by_index[idx].extraction.raw or {}
-                        per_view_by_index[idx].extraction.raw = self._mark_extraction_skipped(existing_raw, ["detail_florence"])
-                        per_view_by_index[idx].extraction.extraction_confidence = self.LITE_FAILED_EXTRACTION_CONFIDENCE
-                    continue
-                extraction_data = self.florence.analyze_ocr_first(
-                    crop_by_index[idx],
-                    canonical_label=canonical_label_by_index.get(idx),
-                    fast=False,
-                )
-                normalized = self._normalize_extraction_payload(extraction_data)
-                detail_nonempty = (
-                    self._is_stage1_nonempty(normalized)
-                    or bool(normalized.get("grounded_features"))
-                )
-                detail_failed = self._is_florence_failed(normalized)
-                per_view_by_index[idx].extraction = PP2PerViewExtraction(
-                    caption=normalized["caption"],
-                    ocr_text=normalized["ocr_text"],
-                    grounded_features=normalized["grounded_features"],
-                    extraction_confidence=(
-                        self.LITE_FAILED_EXTRACTION_CONFIDENCE
-                        if detail_failed
-                        else (1.0 if detail_nonempty else self.LITE_FAILED_EXTRACTION_CONFIDENCE)
-                    ),
-                    raw=normalized.get("raw", {}) if isinstance(normalized.get("raw", {}), dict) else {},
-                )
-            florence_detail_ms = (time.perf_counter() - detail_start) * 1000.0
+            detail_targets, detail_reason, mark_non_targets_skipped = self._resolve_detail_targets(
+                verification_passed=bool(verification.passed),
+                verification_used_views=list(verification.used_views or []),
+                fallback_used_views=used_views,
+                force_grounding=force_grounding,
+                early_exit_pair=early_exit_pair,
+                pass_caption_refinement=pass_caption_refinement,
+                total_views=len(per_view_results),
+            )
+            detail_elapsed_ms = self._run_detail_enrichment_for_targets(
+                per_view_results=per_view_results,
+                crop_by_index=crop_by_index,
+                canonical_label_by_index=canonical_label_by_index,
+                detail_targets=detail_targets,
+                mark_non_targets_skipped=mark_non_targets_skipped,
+            )
+            florence_detail_ms += detail_elapsed_ms
             logger.debug(
                 "PP2_FLORENCE_OCR_FIRST_DETAILED request_id=%s item_id=%s executed_views=%s verify_passed=%s forced=%s pass_refinement=%s reason=%s detail_ms=%.2f",
                 trace_request_id,
@@ -2243,7 +2429,7 @@ class MultiViewPipeline:
                 force_grounding,
                 pass_caption_refinement,
                 detail_reason,
-                florence_detail_ms,
+                detail_elapsed_ms,
             )
         else:
             if early_exit_pair is not None:

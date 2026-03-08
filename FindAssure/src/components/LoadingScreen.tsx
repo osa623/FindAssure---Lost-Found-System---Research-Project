@@ -1,8 +1,10 @@
-import React from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import React, { useMemo } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { AnimatedHeroIllustration } from './AnimatedHeroIllustration';
+import { StaggeredEntrance } from './StaggeredEntrance';
+import { useAppTheme } from '../context/ThemeContext';
 import { GlassCard } from './GlassCard';
-import { gradients, palette, spacing, type } from '../theme/designSystem';
 
 interface LoadingScreenProps {
   message?: string;
@@ -10,72 +12,73 @@ interface LoadingScreenProps {
 }
 
 export const LoadingScreen: React.FC<LoadingScreenProps> = ({
-  message = 'Loading...',
+  message = 'Loading…',
   subtitle,
 }) => {
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   return (
-    <LinearGradient
-      colors={gradients.heroAlt}
-      style={styles.container}
-    >
+    <LinearGradient colors={theme.gradients.appBackground} style={styles.container}>
       <View style={styles.content}>
-        <GlassCard style={styles.card}>
-          <View style={styles.iconContainer}>
-            <Text style={styles.icon}>⌾</Text>
-          </View>
-          <Text style={styles.appName}>FIND ASSURE</Text>
-          <ActivityIndicator size="large" color={palette.primaryDeep} style={styles.loader} />
-          <Text style={styles.message}>{message}</Text>
-          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-        </GlassCard>
+        <StaggeredEntrance>
+          <GlassCard style={styles.card}>
+            <View style={styles.iconContainer}>
+              <AnimatedHeroIllustration size={104} variant="auth" />
+            </View>
+            <Text style={styles.appName}>FindAssure</Text>
+            <ActivityIndicator size="large" color={theme.colors.accent} style={styles.loader} />
+            <Text style={styles.message}>{message}</Text>
+            {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+          </GlassCard>
+        </StaggeredEntrance>
       </View>
     </LinearGradient>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  content: {
-    width: '100%',
-    paddingHorizontal: 24,
-  },
-  card: {
-    borderRadius: 32,
-  },
-  iconContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 92,
-    height: 92,
-    borderRadius: 46,
-    backgroundColor: palette.primarySoft,
-    alignSelf: 'center',
-    marginBottom: spacing.lg,
-  },
-  icon: {
-    fontSize: 40,
-    color: palette.primaryDeep,
-  },
-  appName: {
-    ...type.brand,
-    color: palette.ink,
-    textAlign: 'center',
-    marginBottom: spacing.xl,
-  },
-  loader: {
-    marginBottom: spacing.lg,
-  },
-  message: {
-    ...type.section,
-    textAlign: 'center',
-  },
-  subtitle: {
-    ...type.body,
-    marginTop: spacing.sm,
-    textAlign: 'center',
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    content: {
+      width: '100%',
+      paddingHorizontal: 24,
+    },
+    card: {
+      borderRadius: 32,
+    },
+    iconContainer: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 120,
+      height: 120,
+      borderRadius: 60,
+      backgroundColor: theme.colors.cardMuted,
+      alignSelf: 'center',
+      marginBottom: theme.spacing.lg,
+    },
+    appName: {
+      ...theme.type.brand,
+      color: theme.colors.textStrong,
+      textAlign: 'center',
+      marginBottom: theme.spacing.xl,
+    },
+    loader: {
+      marginBottom: theme.spacing.lg,
+    },
+    message: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      textAlign: 'center',
+    },
+    subtitle: {
+      ...theme.type.body,
+      marginTop: theme.spacing.sm,
+      color: theme.colors.textMuted,
+      textAlign: 'center',
+    },
+  });

@@ -8,13 +8,22 @@ import {
   sendPasswordResetEmail,
   getAuth,
   Auth,
+  Dependencies,
   User as FirebaseUser,
-  initializeAuth,
-  getReactNativePersistence,
+  initializeAuth as FirebaseInitializeAuth,
 } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axiosClient from '../api/axiosClient';
 import { API_CONFIG, BASE_URL, HEALTH_CHECK_URL } from '../config/api.config';
+import { getFriendlyAuthErrorMessage } from '../utils/authErrors';
+
+// Metro supports the package root, but TypeScript does not surface the RN-only helper.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const firebaseNativeAuth = require('@firebase/auth') as {
+  initializeAuth: typeof FirebaseInitializeAuth;
+  getReactNativePersistence: (storage: typeof AsyncStorage) => Dependencies['persistence'];
+};
+const { initializeAuth, getReactNativePersistence } = firebaseNativeAuth;
 
 // Firebase configuration
 const firebaseConfig = {
@@ -71,21 +80,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const getSuspensionErrorMessage = (error: any): string | null => {
-  const status = error?.response?.status;
-  if (status !== 403) return null;
-
-  const backendMessage = String(error?.response?.data?.message || '').toLowerCase();
-  if (!backendMessage.includes('suspend')) return null;
-
-  const suspendedUntil = error?.response?.data?.suspendedUntil;
-  if (suspendedUntil) {
-    return `You cannot access the app right now. Your account is suspended until ${new Date(suspendedUntil).toLocaleString()}. Please contact us.`;
-  }
-
-  return 'You cannot access the app right now. Your account is suspended. Please contact us.';
-};
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -144,10 +138,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(response.data);
       
     } catch (error: any) {
-      const suspensionMessage = getSuspensionErrorMessage(error);
-      if (suspensionMessage) {
+      const friendlyMessage = getFriendlyAuthErrorMessage(
+        error,
+        'We could not connect your account to the app right now.'
+      );
+      if (friendlyMessage.toLowerCase().includes('suspended')) {
         if (throwOnError) {
-          throw new Error(suspensionMessage);
+          throw new Error(friendlyMessage);
         }
         console.warn('Suspended user sync blocked');
         return;
@@ -223,14 +220,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signUp = async (data: { email: string; password: string; name: string; phone?: string }) => {
-    let firebaseUserCreated = false;
-    
     try {
       const { email, password, name, phone } = data;
       
       // 1. Create user in Firebase
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      firebaseUserCreated = true;
       
       // 2. Get token
       const idToken = await userCredential.user.getIdToken();
@@ -262,25 +256,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
     } catch (error: any) {
       console.error('Sign up error:', error);
-      
-      // Handle specific error cases with user-friendly messages
-      if (error.code === 'auth/email-already-in-use') {
-        throw new Error('This email is already registered. Please sign in instead.');
-      } else if (error.code === 'auth/invalid-email') {
-        throw new Error('Please enter a valid email address.');
-      } else if (error.code === 'auth/weak-password') {
-        throw new Error('Password should be at least 6 characters long.');
-      } else if (error.code === 'auth/network-request-failed') {
-        throw new Error('Network error. Please check your internet connection.');
-      } else if (error.response?.status === 409) {
-        throw new Error('This account already exists. Please sign in instead.');
-      } else if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-        throw new Error('Connection timeout. Please check your internet connection and try again.');
-      } else if (error.code === 'ERR_NETWORK') {
-        throw new Error('Cannot connect to server. Please check if backend is running.');
-      }
-      
-      throw new Error(error.response?.data?.message || error.message || 'Sign up failed');
+
+      throw new Error(
+        getFriendlyAuthErrorMessage(error, 'We could not create your account. Please try again.')
+      );
     }
   };
 
@@ -306,33 +285,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
     } catch (error: any) {
       console.error('Sign in error:', error);
-
-      const suspensionMessage = getSuspensionErrorMessage(error);
-      if (suspensionMessage) {
+      const friendlyMessage = getFriendlyAuthErrorMessage(
+        error,
+        'We could not sign you in. Please try again.'
+      );
+      if (friendlyMessage.toLowerCase().includes('suspended')) {
         try {
           await firebaseSignOut(auth);
-        } catch (_) {}
-        throw new Error(suspensionMessage);
+        } catch {}
+        throw new Error(friendlyMessage);
       }
-      
-      // Handle specific error cases with user-friendly messages
-      if (error.code === 'auth/user-not-found') {
-        throw new Error('No account found with this email. Please sign up first.');
-      } else if (error.code === 'auth/wrong-password') {
-        throw new Error('Incorrect password. Please try again.');
-      } else if (error.code === 'auth/invalid-email') {
-        throw new Error('Please enter a valid email address.');
-      } else if (error.code === 'auth/user-disabled') {
-        throw new Error('This account has been disabled.');
-      } else if (error.code === 'auth/too-many-requests') {
-        throw new Error('Too many failed attempts. Please try again later.');
-      } else if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-        throw new Error('Connection timeout. Please check your internet connection.');
-      } else if (error.code === 'ERR_NETWORK') {
-        throw new Error('Cannot connect to server. Please check if backend is running.');
-      }
-      
-      throw new Error(error.response?.data?.message || error.message || 'Sign in failed');
+
+      throw new Error(friendlyMessage);
     }
   };
 
@@ -361,19 +325,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await sendPasswordResetEmail(auth, email);
     } catch (error: any) {
       console.error('Password reset error:', error);
-      
-      // Handle specific error cases with user-friendly messages
-      if (error.code === 'auth/user-not-found') {
-        throw new Error('No account found with this email address.');
-      } else if (error.code === 'auth/invalid-email') {
-        throw new Error('Please enter a valid email address.');
-      } else if (error.code === 'auth/too-many-requests') {
-        throw new Error('Too many requests. Please try again later.');
-      } else if (error.code === 'auth/network-request-failed') {
-        throw new Error('Network error. Please check your internet connection.');
-      }
-      
-      throw new Error(error.message || 'Failed to send password reset email');
+
+      throw new Error(
+        getFriendlyAuthErrorMessage(error, 'We could not send the reset email. Please try again.')
+      );
     }
   };
 
@@ -385,7 +340,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return response.data;
     } catch (error: any) {
       console.error('Update profile error:', error);
-      throw new Error(error.response?.data?.message || error.message || 'Update failed');
+      throw new Error(
+        getFriendlyAuthErrorMessage(error, 'We could not save your profile changes right now.')
+      );
     }
   };
 

@@ -650,6 +650,26 @@ export const createLostRequest = async (
             0.5,
             category
           );
+          const rawImageMatches = Array.isArray(imageSearchResult?.matches)
+            ? imageSearchResult.matches.map((match: any) => ({
+                item_id: match?.item_id ?? null,
+                score: typeof match?.score === 'number' ? Number(match.score) : null,
+                vector_hits_count: match?.vector_hits_count ?? null,
+              }))
+            : [];
+
+          console.log(
+            '[IMAGE-MATCH] Raw pipeline matches:',
+            JSON.stringify(
+              {
+                ownerId: req.user.id,
+                category,
+                matches: rawImageMatches,
+              },
+              null,
+              2
+            )
+          );
 
           imageMatchMap = new Map();
           for (const match of imageSearchResult?.matches || []) {
@@ -657,6 +677,11 @@ export const createLostRequest = async (
               imageMatchMap.set(String(match.item_id), Number(match.score));
             }
           }
+
+          console.log(
+            '[IMAGE-MATCH] Derived image score map:',
+            JSON.stringify(Object.fromEntries(imageMatchMap.entries()), null, 2)
+          );
         } catch (imageSearchError: any) {
           console.error('Image search failed (non-fatal):', imageSearchError?.message || imageSearchError);
         }
@@ -689,6 +714,19 @@ export const createLostRequest = async (
             imageMatch: imageScore !== null ? { score: imageScore } : null,
           };
         });
+
+      console.log(
+        '[IMAGE-MATCH] Final matched items returned to app:',
+        JSON.stringify(
+          results.map((item: any) => ({
+            foundItemId: String(item._id),
+            category: item.category,
+            imageMatchScore: item.imageMatch?.score ?? null,
+          })),
+          null,
+          2
+        )
+      );
 
       const imageMatchResults = results
         .filter((item) => item.imageMatch)

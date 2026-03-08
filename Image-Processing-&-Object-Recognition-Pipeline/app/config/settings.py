@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     PP2_VERIFIER_THREE_VIEW_TEXTURE_RICH: float | None = None
     PP2_VERIFIER_THREE_VIEW_SMALL_AMBIGUOUS: float | None = None
     PP2_VERIFIER_ANGLE_HARD_BRAND_RESCUE_FLOOR: float | None = None  # override MultiViewVerifier.ANGLE_HARD_BRAND_RESCUE_FLOOR (default 0.38)
+    PP2_VERIFIER_SMART_PHONE_FRONT_BACK_RESCUE_FLOOR: float = 0.18
 
     class Config:
         env_file = ".env"

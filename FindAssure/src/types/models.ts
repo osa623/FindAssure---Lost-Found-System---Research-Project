@@ -143,6 +143,8 @@ export type RootStackParamList = {
   Register: undefined;
   ForgotPassword: undefined;
   Profile: undefined;
+  Settings: undefined;
+  FAQ: undefined;
   
   // Founder Flow
   ReportFoundStart: undefined;

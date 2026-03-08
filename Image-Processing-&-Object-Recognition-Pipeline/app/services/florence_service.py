@@ -934,20 +934,19 @@ class FlorenceService:
 
         ocr_text = self.ocr(crop, profile=profile_key)
         color_q = (
-            "What is the primary color of the object? "
-            "Answer with a short phrase or 'unknown'."
+            "What is the primary color of the main foreground object? "
+            "Ignore the background, hands, and any surface the object rests on. "
+            "Answer with a short color phrase (e.g. 'black', 'navy blue'). If unsure, answer 'unknown'."
         )
         color_vqa = self.vqa(crop, color_q, profile=profile_key).strip() or None
         if color_vqa and color_vqa.lower() == "unknown":
             color_vqa = None
 
-        # Normalize color and cross-check with caption
+        # Normalize VQA color; use caption only as a fallback when VQA yielded nothing
         if color_vqa:
             color_vqa = normalize_color(color_vqa) or color_vqa
         caption_color = extract_color_from_text(final_caption) if final_caption else None
-        if caption_color and color_vqa and caption_color != normalize_color(color_vqa):
-            color_vqa = caption_color
-        elif caption_color and not color_vqa:
+        if caption_color and not color_vqa:
             color_vqa = caption_color
 
         reason = self._lite_reason(final_caption, ocr_text)
@@ -1266,13 +1265,11 @@ class FlorenceService:
                 color_vqa = str(color_ans or "").strip() or None
                 if isinstance(color_vqa, str) and color_vqa.lower() == "unknown":
                     color_vqa = None
-                # Normalize color and cross-check with caption
+                # Normalize VQA color; use caption only as a fallback when VQA yielded nothing
                 if color_vqa:
                     color_vqa = normalize_color(color_vqa) or color_vqa
                 caption_color_ocr_first = extract_color_from_text(caption_text) if caption_text else None
-                if caption_color_ocr_first and color_vqa and caption_color_ocr_first != normalize_color(color_vqa):
-                    color_vqa = caption_color_ocr_first
-                elif caption_color_ocr_first and not color_vqa:
+                if caption_color_ocr_first and not color_vqa:
                     color_vqa = caption_color_ocr_first
             except TimeoutError as exc:
                 raw["color_error"] = {"type": "timeout", "message": str(exc)}
