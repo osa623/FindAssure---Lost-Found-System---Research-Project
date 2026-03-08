@@ -1,14 +1,21 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Modal,
   FlatList,
-  Platform,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 import { ITEM_CATEGORIES } from '../constants/appConstants';
+import { GlassCard } from './GlassCard';
+import { motion, palette, radius, spacing, type } from '../theme/designSystem';
 
 interface CategoryPickerProps {
   selectedValue: string;
@@ -20,6 +27,17 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({
   onValueChange,
 }) => {
   const [modalVisible, setModalVisible] = useState(false);
+  const translateY = useSharedValue(40);
+
+  useEffect(() => {
+    translateY.value = modalVisible ? withSpring(0, motion.spring) : 40;
+  }, [modalVisible, translateY]);
+
+  const animatedSheet = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  const selectedLabel = useMemo(() => selectedValue || 'Select category', [selectedValue]);
 
   const handleSelect = (value: string) => {
     onValueChange(value);
@@ -28,59 +46,59 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({
 
   return (
     <>
-      <TouchableOpacity
-        style={styles.pickerButton}
-        onPress={() => setModalVisible(true)}
-        activeOpacity={0.7}
-      >
-        <Text style={styles.pickerButtonText}>{selectedValue}</Text>
-        <Text style={styles.pickerIcon}>▼</Text>
-      </TouchableOpacity>
+      <Pressable style={styles.trigger} onPress={() => setModalVisible(true)}>
+        <Text numberOfLines={1} style={styles.triggerText}>{selectedLabel}</Text>
+        <Ionicons name="chevron-down" size={18} color={palette.mist} />
+      </Pressable>
 
       <Modal
         visible={modalVisible}
-        transparent={true}
-        animationType="slide"
+        transparent
+        animationType="fade"
         onRequestClose={() => setModalVisible(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Category</Text>
-              <TouchableOpacity
-                onPress={() => setModalVisible(false)}
-                style={styles.closeButton}
-              >
-                <Text style={styles.closeButtonText}>✕</Text>
-              </TouchableOpacity>
-            </View>
+        <View style={styles.overlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setModalVisible(false)} />
+          <Animated.View style={[styles.sheetWrap, animatedSheet]}>
+            <GlassCard style={styles.sheet}>
+              <View style={styles.sheetHeader}>
+                <View>
+                  <Text style={styles.eyebrow}>Browse</Text>
+                  <Text style={styles.sheetTitle}>Item Category</Text>
+                </View>
+                <Pressable style={styles.closeButton} onPress={() => setModalVisible(false)}>
+                  <Ionicons name="close" size={18} color={palette.ink} />
+                </Pressable>
+              </View>
 
-            <FlatList
-              data={ITEM_CATEGORIES}
-              keyExtractor={(item) => item}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[
-                    styles.optionItem,
-                    selectedValue === item && styles.optionItemSelected,
-                  ]}
-                  onPress={() => handleSelect(item)}
-                >
-                  <Text
-                    style={[
-                      styles.optionText,
-                      selectedValue === item && styles.optionTextSelected,
-                    ]}
-                  >
-                    {item}
-                  </Text>
-                  {selectedValue === item && (
-                    <Text style={styles.checkmark}>✓</Text>
-                  )}
-                </TouchableOpacity>
-              )}
-            />
-          </View>
+              <FlatList
+                data={ITEM_CATEGORIES}
+                keyExtractor={(item) => item}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.options}
+                renderItem={({ item }) => {
+                  const selected = item === selectedValue;
+                  return (
+                    <Pressable
+                      style={[styles.option, selected && styles.optionSelected]}
+                      onPress={() => handleSelect(item)}
+                    >
+                      <View style={styles.optionCopy}>
+                        <Text numberOfLines={1} style={[styles.optionText, selected && styles.optionTextSelected]}>{item}</Text>
+                      </View>
+                      {selected ? (
+                        <View style={styles.checkBadge}>
+                          <Ionicons name="checkmark" size={14} color={palette.paperStrong} />
+                        </View>
+                      ) : (
+                        <Ionicons name="chevron-forward" size={16} color={palette.mist} />
+                      )}
+                    </Pressable>
+                  );
+                }}
+              />
+            </GlassCard>
+          </Animated.View>
         </View>
       </Modal>
     </>
@@ -88,80 +106,96 @@ export const CategoryPicker: React.FC<CategoryPickerProps> = ({
 };
 
 const styles = StyleSheet.create({
-  pickerButton: {
+  trigger: {
+    minHeight: 52,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#DDDDDD',
-    borderRadius: 8,
-    padding: 12,
-    backgroundColor: '#FAFAFA',
+    borderColor: palette.line,
+    backgroundColor: palette.paperStrong,
+    paddingHorizontal: spacing.md,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    minHeight: 50,
+    justifyContent: 'space-between',
   },
-  pickerButtonText: {
-    fontSize: 16,
-    color: '#333333',
-  },
-  pickerIcon: {
-    fontSize: 12,
-    color: '#666666',
-  },
-  modalOverlay: {
+  triggerText: {
+    ...type.bodyStrong,
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    minWidth: 0,
+    marginRight: spacing.sm,
+  },
+  overlay: {
+    flex: 1,
     justifyContent: 'flex-end',
+    backgroundColor: 'rgba(15,23,42,0.16)',
   },
-  modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '70%',
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+  sheetWrap: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: 16,
   },
-  modalHeader: {
+  sheet: {
+    borderBottomLeftRadius: radius.xl,
+    borderBottomRightRadius: radius.xl,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+  },
+  sheetHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
+    marginBottom: spacing.lg,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333333',
+  eyebrow: {
+    ...type.label,
+    marginBottom: spacing.xs,
+  },
+  sheetTitle: {
+    ...type.section,
   },
   closeButton: {
-    padding: 5,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.paper,
   },
-  closeButtonText: {
-    fontSize: 24,
-    color: '#666666',
-    fontWeight: '300',
+  options: {
+    gap: spacing.sm,
   },
-  optionItem: {
+  option: {
+    minHeight: 48,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    backgroundColor: palette.paperStrong,
+    borderWidth: 1,
+    borderColor: palette.line,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
   },
-  optionItemSelected: {
-    backgroundColor: '#E3F2FD',
+  optionSelected: {
+    backgroundColor: palette.primarySoft,
+    borderColor: 'rgba(79,124,255,0.2)',
+  },
+  optionCopy: {
+    flex: 1,
+    minWidth: 0,
+    marginRight: spacing.md,
   },
   optionText: {
-    fontSize: 16,
-    color: '#333333',
+    ...type.bodyStrong,
+    textTransform: 'capitalize',
   },
   optionTextSelected: {
-    color: '#1565C0',
-    fontWeight: '600',
+    color: palette.primaryDeep,
   },
-  checkmark: {
-    fontSize: 20,
-    color: '#1565C0',
-    fontWeight: 'bold',
+  checkBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: palette.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

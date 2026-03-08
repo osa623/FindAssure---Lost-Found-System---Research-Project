@@ -1,22 +1,30 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Modal,
-  FlatList,
-  Platform,
   ActivityIndicator,
+  Dimensions,
+  FlatList,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
 import axiosClient from '../api/axiosClient';
 import {
-  getLocationOptions,
   getFloorOptions,
   getHallOptions,
+  getLocationOptions,
   hasFloors,
   LocationDetail,
 } from '../constants/locationData';
+import { GlassCard } from './GlassCard';
+import { motion, palette, radius, spacing, type } from '../theme/designSystem';
 
 interface LocationPickerProps {
   selectedValue: LocationDetail | null;
@@ -37,19 +45,26 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
 }) => {
   const [modalVisible, setModalVisible] = useState(false);
   const [currentStep, setCurrentStep] = useState<'location' | 'floor' | 'hall'>('location');
-  
   const [selectedLocation, setSelectedLocation] = useState<string>(selectedValue?.location || '');
   const [selectedFloor, setSelectedFloor] = useState<string | null>(selectedValue?.floor_id || null);
   const [selectedHall, setSelectedHall] = useState<string | null>(selectedValue?.hall_name || null);
-  const [locationOptions, setLocationOptions] = useState<Array<{ label: string; value: string }>>([]);
-  const [floorOptions, setFloorOptions] = useState<Array<{ label: string; value: string }>>([]);
-  const [hallOptions, setHallOptions] = useState<Array<{ label: string; value: string }>>([]);
+  const [locationOptions, setLocationOptions] = useState<{ label: string; value: string }[]>([]);
+  const [floorOptions, setFloorOptions] = useState<{ label: string; value: string }[]>([]);
+  const [hallOptions, setHallOptions] = useState<{ label: string; value: string }[]>([]);
   const [locationsWithFloors, setLocationsWithFloors] = useState<Set<string>>(new Set());
   const [loadingOptions, setLoadingOptions] = useState(false);
 
-  const locationHasFloors = (location: string): boolean => {
-    return locationsWithFloors.has(location) || hasFloors(location);
-  };
+  const translateY = useSharedValue(40);
+
+  useEffect(() => {
+    translateY.value = modalVisible ? withSpring(0, motion.spring) : 40;
+  }, [modalVisible, translateY]);
+
+  const animatedSheet = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  const locationHasFloors = (location: string): boolean => locationsWithFloors.has(location) || hasFloors(location);
 
   const loadLocations = async () => {
     setLoadingOptions(true);
@@ -57,24 +72,12 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
       const response = await axiosClient.get('/locations/main');
       const items = response.data?.data;
       if (Array.isArray(items) && items.length > 0) {
-        setLocationOptions(
-          items.map((item: any) => ({
-            label: item.label,
-            value: item.value,
-          }))
-        );
-        setLocationsWithFloors(
-          new Set(
-            items
-              .filter((item: any) => Boolean(item.hasFloors))
-              .map((item: any) => item.value)
-          )
-        );
+        setLocationOptions(items.map((item: any) => ({ label: item.label, value: item.value })));
+        setLocationsWithFloors(new Set(items.filter((item: any) => Boolean(item.hasFloors)).map((item: any) => item.value)));
       } else {
         setLocationOptions(getLocationOptions());
       }
-    } catch (error) {
-      console.warn('Failed to fetch locations from backend, using local fallback');
+    } catch {
       setLocationOptions(getLocationOptions());
     } finally {
       setLoadingOptions(false);
@@ -86,24 +89,11 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
       setFloorOptions([]);
       return;
     }
-
     try {
-      const response = await axiosClient.get(
-        `/locations/${encodeURIComponent(location)}/floors`
-      );
+      const response = await axiosClient.get(`/locations/${encodeURIComponent(location)}/floors`);
       const items = response.data?.data;
-      if (Array.isArray(items) && items.length > 0) {
-        setFloorOptions(
-          items.map((item: any) => ({
-            label: item.label,
-            value: item.value,
-          }))
-        );
-      } else {
-        setFloorOptions(getFloorOptions(location));
-      }
-    } catch (error) {
-      console.warn('Failed to fetch floors from backend, using local fallback');
+      setFloorOptions(Array.isArray(items) && items.length > 0 ? items.map((item: any) => ({ label: item.label, value: item.value })) : getFloorOptions(location));
+    } catch {
       setFloorOptions(getFloorOptions(location));
     }
   };
@@ -114,18 +104,8 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
         `/locations/${encodeURIComponent(location)}/floors/${encodeURIComponent(floorId)}/halls`
       );
       const items = response.data?.data;
-      if (Array.isArray(items) && items.length > 0) {
-        setHallOptions(
-          items.map((item: any) => ({
-            label: item.label,
-            value: item.value,
-          }))
-        );
-      } else {
-        setHallOptions(getHallOptions(location, floorId));
-      }
-    } catch (error) {
-      console.warn('Failed to fetch halls from backend, using local fallback');
+      setHallOptions(Array.isArray(items) && items.length > 0 ? items.map((item: any) => ({ label: item.label, value: item.value })) : getHallOptions(location, floorId));
+    } catch {
       setHallOptions(getHallOptions(location, floorId));
     }
   };
@@ -153,72 +133,56 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
 
   const handleLocationSelect = (value: string) => {
     setSelectedLocation(value);
-    
     if (locationHasFloors(value)) {
       setCurrentStep('floor');
       setSelectedFloor(null);
       setSelectedHall(null);
-    } else {
-      // No floors, complete selection
-      onValueChange({
-        location: value,
-        floor_id: null,
-        hall_name: null,
-      });
-      setModalVisible(false);
-      setCurrentStep('location');
+      return;
     }
+    onValueChange({ location: value, floor_id: null, hall_name: null });
+    setModalVisible(false);
+    setCurrentStep('location');
   };
 
   const handleFloorSelect = (value: string) => {
     if (value === 'do_not_remember') {
-      // Owner can choose not to remember
-      onValueChange({
-        location: selectedLocation,
-        floor_id: null,
-        hall_name: null,
-      });
+      onValueChange({ location: selectedLocation, floor_id: null, hall_name: null });
       setModalVisible(false);
       setCurrentStep('location');
       setSelectedFloor(null);
       setSelectedHall(null);
-    } else {
-      setSelectedFloor(value);
-      // Both founder and owner should see hall selection
-      setCurrentStep('hall');
-      setSelectedHall(null);
+      return;
     }
+    setSelectedFloor(value);
+    setCurrentStep('hall');
+    setSelectedHall(null);
   };
 
   const handleHallSelect = (value: string) => {
-    if (value === 'do_not_remember') {
-      // Owner can choose not to remember hall
-      setSelectedHall(null);
-      onValueChange({
-        location: selectedLocation,
-        floor_id: selectedFloor,
-        hall_name: null,
-      });
-    } else {
-      setSelectedHall(value);
-      onValueChange({
-        location: selectedLocation,
-        floor_id: selectedFloor,
-        hall_name: value,
-      });
-    }
+    const hallName = value === 'do_not_remember' ? null : value;
+    setSelectedHall(hallName);
+    onValueChange({
+      location: selectedLocation,
+      floor_id: selectedFloor,
+      hall_name: hallName,
+    });
     setModalVisible(false);
     setCurrentStep('location');
+  };
+
+  const handleOptionSelect = (value: string) => {
+    if (currentStep === 'location') handleLocationSelect(value);
+    if (currentStep === 'floor') handleFloorSelect(value);
+    if (currentStep === 'hall') handleHallSelect(value);
   };
 
   const handleBack = () => {
     if (currentStep === 'hall') {
       setCurrentStep('floor');
-      setSelectedHall(null);
-    } else if (currentStep === 'floor') {
+      return;
+    }
+    if (currentStep === 'floor') {
       setCurrentStep('location');
-      setSelectedFloor(null);
-      setSelectedHall(null);
     }
   };
 
@@ -227,145 +191,153 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
     setCurrentStep('location');
   };
 
-  const getDisplayText = () => {
-    if (!selectedValue || !selectedValue.location) {
-      return 'Select Location';
+  const formatLabel = (value: string) =>
+    value
+      .split('_')
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+
+  const getDisplayContent = () => {
+    if (!selectedValue?.location) {
+      return {
+        title: 'Select location',
+        subtitle: userType === 'owner' ? 'Location, floor, and hall if you remember them' : 'Location, floor, and hall',
+      };
     }
 
-    let text = selectedValue.location.split('_').map(word => 
-      word.charAt(0).toUpperCase() + word.slice(1)
-    ).join(' ');
+    const parts: string[] = [];
+    if (selectedValue.floor_id) parts.push(`Floor ${selectedValue.floor_id}`);
+    if (selectedValue.hall_name) parts.push(formatLabel(selectedValue.hall_name));
 
-    if (selectedValue.floor_id) {
-      text += ` - Floor ${selectedValue.floor_id}`;
-    }
-
-    if (selectedValue.hall_name) {
-      text += ` - ${selectedValue.hall_name.split('_').map(word => 
-        word.charAt(0).toUpperCase() + word.slice(1)
-      ).join(' ')}`;
-    }
-
-    return text;
+    return {
+      title: formatLabel(selectedValue.location),
+      subtitle: parts.join(' · '),
+    };
   };
 
   const getModalTitle = () => {
-    switch (currentStep) {
-      case 'location':
-        return 'Select Location';
-      case 'floor':
-        return 'Select Floor';
-      case 'hall':
-        return 'Select Hall';
-      default:
-        return 'Select Location';
+    if (currentStep === 'location') return 'Choose location';
+    if (currentStep === 'floor') return 'Choose floor';
+    return 'Choose hall';
+  };
+
+  const getContextText = () => {
+    if (currentStep === 'floor' && selectedLocation) {
+      return formatLabel(selectedLocation);
     }
+    if (currentStep === 'hall' && selectedLocation) {
+      const parts = [formatLabel(selectedLocation)];
+      if (selectedFloor) parts.push(`Floor ${selectedFloor}`);
+      return parts.join(' · ');
+    }
+    return '';
   };
 
   const getCurrentOptions = () => {
-    switch (currentStep) {
-      case 'location':
-        return locationOptions;
-      case 'floor':
-        const options = floorOptions;
-        if (userType === 'owner' && allowDoNotRemember) {
-          return [{ label: 'Do Not Remember', value: 'do_not_remember' }, ...options];
-        }
-        return options;
-      case 'hall':
-        const hallOpts = hallOptions;
-        if (userType === 'owner' && allowDoNotRemember) {
-          return [{ label: 'Do Not Remember', value: 'do_not_remember' }, ...hallOpts];
-        }
-        return hallOpts;
-      default:
-        return [];
+    if (currentStep === 'location') return locationOptions;
+    if (currentStep === 'floor') {
+      return userType === 'owner' && allowDoNotRemember
+        ? [{ label: 'Do Not Remember', value: 'do_not_remember' }, ...floorOptions]
+        : floorOptions;
     }
+    return userType === 'owner' && allowDoNotRemember
+      ? [{ label: 'Do Not Remember', value: 'do_not_remember' }, ...hallOptions]
+      : hallOptions;
   };
 
-  const handleOptionSelect = (value: string) => {
-    switch (currentStep) {
-      case 'location':
-        handleLocationSelect(value);
-        break;
-      case 'floor':
-        handleFloorSelect(value);
-        break;
-      case 'hall':
-        handleHallSelect(value);
-        break;
-    }
-  };
+  const display = getDisplayContent();
+  const sheetMaxHeight = Math.round(Dimensions.get('window').height * 0.74);
 
   return (
     <View style={styles.container}>
-      {label && <Text style={styles.label}>{label}</Text>}
-      
-      <TouchableOpacity
-        style={[styles.pickerButton, error ? styles.pickerButtonError : null]}
-        onPress={() => setModalVisible(true)}
-        activeOpacity={0.7}
-      >
-        <Text style={styles.pickerButtonText}>{getDisplayText()}</Text>
-        <Text style={styles.pickerIcon}>▼</Text>
-      </TouchableOpacity>
+      {label ? <Text style={styles.label}>{label}</Text> : null}
 
-      {error && <Text style={styles.errorText}>{error}</Text>}
+      <Pressable style={[styles.trigger, error ? styles.triggerError : null]} onPress={() => setModalVisible(true)}>
+        <View style={styles.triggerCopy}>
+          <Text numberOfLines={1} style={styles.triggerTitle}>{display.title}</Text>
+          {display.subtitle ? <Text numberOfLines={1} style={styles.triggerCaption}>{display.subtitle}</Text> : null}
+        </View>
+        <View style={styles.triggerIconWrap}>
+          <Ionicons name="chevron-down" size={18} color={palette.mist} />
+        </View>
+      </Pressable>
+
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
       <Modal
         visible={modalVisible}
-        transparent={true}
-        animationType="slide"
+        transparent
+        animationType="fade"
         onRequestClose={handleModalClose}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              {currentStep !== 'location' && (
-                <TouchableOpacity
-                  onPress={handleBack}
-                  style={styles.backButton}
-                >
-                  <Text style={styles.backButtonText}>← Back</Text>
-                </TouchableOpacity>
-              )}
-              <Text style={styles.modalTitle}>{getModalTitle()}</Text>
-              <TouchableOpacity
-                onPress={handleModalClose}
-                style={styles.closeButton}
-              >
-                <Text style={styles.closeButtonText}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <FlatList
-              data={getCurrentOptions()}
-              keyExtractor={(item) => item.value}
-              ListEmptyComponent={
-                <View style={styles.emptyState}>
-                  {loadingOptions ? (
-                    <>
-                      <ActivityIndicator size="small" color="#1565C0" />
-                      <Text style={styles.emptyText}>Loading locations...</Text>
-                    </>
-                  ) : (
-                    <Text style={styles.emptyText}>No options available</Text>
-                  )}
+        <View style={styles.overlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={handleModalClose} />
+          <Animated.View style={[styles.sheetWrap, animatedSheet]}>
+            <GlassCard style={[styles.sheet, { maxHeight: sheetMaxHeight }]}>
+              <View style={styles.sheetHeader}>
+                <View style={styles.headerCopy}>
+                  <Text style={styles.eyebrow}>{currentStep.toUpperCase()}</Text>
+                  <Text style={styles.sheetTitle}>{getModalTitle()}</Text>
+                  {getContextText() ? <Text style={styles.contextText}>{getContextText()}</Text> : null}
                 </View>
-              }
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.optionItem}
-                  onPress={() => handleOptionSelect(item.value)}
-                >
-                  <Text style={styles.optionText}>
-                    {item.label}
-                  </Text>
-                  <Text style={styles.optionIcon}>→</Text>
-                </TouchableOpacity>
-              )}
-            />
-          </View>
+                <View style={styles.headerActions}>
+                  {currentStep !== 'location' ? (
+                    <Pressable style={styles.smallButton} onPress={handleBack}>
+                      <Ionicons name="chevron-back" size={16} color={palette.ink} />
+                    </Pressable>
+                  ) : null}
+                  <Pressable style={styles.smallButton} onPress={handleModalClose}>
+                    <Ionicons name="close" size={18} color={palette.ink} />
+                  </Pressable>
+                </View>
+              </View>
+
+              <FlatList
+                data={getCurrentOptions()}
+                keyExtractor={(item) => item.value}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.options}
+                ListEmptyComponent={
+                  <View style={styles.emptyState}>
+                    {loadingOptions ? (
+                      <>
+                        <ActivityIndicator size="small" color={palette.primaryDeep} />
+                        <Text style={styles.emptyText}>Loading locations...</Text>
+                      </>
+                    ) : (
+                      <Text style={styles.emptyText}>No options available</Text>
+                    )}
+                  </View>
+                }
+                renderItem={({ item }) => {
+                  const selected =
+                    (currentStep === 'location' && item.value === selectedLocation) ||
+                    (currentStep === 'floor' && item.value === selectedFloor) ||
+                    (currentStep === 'hall' && item.value === selectedHall);
+
+                  return (
+                    <Pressable
+                      style={[styles.option, selected && styles.optionSelected]}
+                      onPress={() => handleOptionSelect(item.value)}
+                    >
+                      <View style={styles.optionCopy}>
+                        <Text numberOfLines={1} style={[styles.optionText, selected && styles.optionTextSelected]}>{item.label}</Text>
+                      </View>
+                      <View style={styles.optionIconWrap}>
+                        {selected ? (
+                          <View style={styles.checkBadge}>
+                            <Ionicons name="checkmark" size={14} color={palette.paperStrong} />
+                          </View>
+                        ) : (
+                          <Ionicons name="chevron-forward" size={16} color={palette.mist} />
+                        )}
+                      </View>
+                    </Pressable>
+                  );
+                }}
+              />
+            </GlassCard>
+          </Animated.View>
         </View>
       </Modal>
     </View>
@@ -374,111 +346,144 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 16,
+    marginBottom: spacing.md,
   },
   label: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 8,
+    ...type.label,
+    marginBottom: spacing.sm,
   },
-  pickerButton: {
+  trigger: {
+    minHeight: 56,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#DDDDDD',
-    borderRadius: 8,
-    padding: 12,
-    backgroundColor: '#FAFAFA',
+    borderColor: palette.lineStrong,
+    backgroundColor: palette.paperStrong,
+    paddingHorizontal: spacing.md,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    minHeight: 50,
   },
-  pickerButtonError: {
-    borderColor: '#D32F2F',
+  triggerError: {
+    borderColor: 'rgba(239,68,68,0.35)',
   },
-  pickerButtonText: {
-    fontSize: 16,
-    color: '#333333',
+  triggerCopy: {
     flex: 1,
+    minWidth: 0,
+    marginRight: spacing.sm,
   },
-  pickerIcon: {
-    fontSize: 12,
-    color: '#666666',
+  triggerTitle: {
+    ...type.bodyStrong,
+    color: palette.ink,
+  },
+  triggerCaption: {
+    ...type.caption,
+    marginTop: 2,
+    color: palette.inkSoft,
+  },
+  triggerIconWrap: {
+    width: 18,
+    alignItems: 'flex-end',
   },
   errorText: {
-    fontSize: 14,
-    color: '#D32F2F',
-    marginTop: 4,
+    ...type.caption,
+    color: palette.danger,
+    marginTop: spacing.xs,
   },
-  modalOverlay: {
+  overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
+    backgroundColor: 'rgba(15,23,42,0.16)',
   },
-  modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '70%',
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+  sheetWrap: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: 16,
   },
-  modalHeader: {
+  sheet: {
+    borderRadius: radius.xl,
+  },
+  sheetHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
+    marginBottom: spacing.lg,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333333',
+  headerCopy: {
     flex: 1,
-    textAlign: 'center',
+    marginRight: spacing.md,
   },
-  backButton: {
-    padding: 5,
-    marginRight: 10,
+  eyebrow: {
+    ...type.label,
+    marginBottom: spacing.xs,
   },
-  backButtonText: {
-    fontSize: 16,
-    color: '#1565C0',
-    fontWeight: '500',
+  sheetTitle: {
+    ...type.section,
   },
-  closeButton: {
-    padding: 5,
+  contextText: {
+    ...type.caption,
+    marginTop: 4,
+    color: palette.inkSoft,
   },
-  closeButtonText: {
-    fontSize: 24,
-    color: '#666666',
-    fontWeight: '300',
+  headerActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
-  optionItem: {
+  smallButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.paper,
+  },
+  options: {
+    gap: spacing.sm,
+  },
+  option: {
+    minHeight: 50,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    backgroundColor: palette.paperStrong,
+    borderWidth: 1,
+    borderColor: palette.lineStrong,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+  },
+  optionSelected: {
+    backgroundColor: palette.primarySoft,
+    borderColor: 'rgba(79,124,255,0.2)',
+  },
+  optionCopy: {
+    flex: 1,
+    minWidth: 0,
+    marginRight: spacing.md,
   },
   optionText: {
-    fontSize: 16,
-    color: '#333333',
-    flex: 1,
+    ...type.bodyStrong,
   },
-  optionIcon: {
-    fontSize: 16,
-    color: '#666666',
+  optionTextSelected: {
+    color: palette.primaryDeep,
   },
-  emptyState: {
-    padding: 24,
+  optionIconWrap: {
+    width: 24,
+    alignItems: 'flex-end',
+  },
+  checkBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  emptyState: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xl,
+  },
   emptyText: {
-    marginTop: 8,
-    fontSize: 14,
-    color: '#666666',
+    ...type.body,
+    marginTop: spacing.sm,
   },
 });

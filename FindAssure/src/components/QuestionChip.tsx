@@ -1,5 +1,8 @@
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, View } from 'react-native';
+import { Text, StyleSheet, View, Pressable } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import { GlassCard } from './GlassCard';
+import { motion, palette, radius, spacing, type } from '../theme/designSystem';
 
 interface QuestionChipProps {
   question: string;
@@ -12,68 +15,74 @@ export const QuestionChip: React.FC<QuestionChipProps> = ({
   selected,
   onPress,
 }) => {
+  const scale = useSharedValue(1);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
   return (
-    <TouchableOpacity
-      style={[styles.chip, selected && styles.chipSelected]}
-      onPress={onPress}
-      activeOpacity={0.7}
-    >
-      <View style={styles.checkboxContainer}>
-        <View style={[styles.checkbox, selected && styles.checkboxSelected]}>
-          {selected && <Text style={styles.checkmark}>✓</Text>}
-        </View>
-      </View>
-      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-        {question}
-      </Text>
-    </TouchableOpacity>
+    <Animated.View style={animatedStyle}>
+      <Pressable
+        onPress={onPress}
+        onPressIn={() => {
+          scale.value = withSpring(0.985, motion.springSoft);
+        }}
+        onPressOut={() => {
+          scale.value = withSpring(1, motion.spring);
+        }}
+      >
+        <GlassCard style={[styles.chip, selected && styles.chipSelected]}>
+          <View style={styles.row}>
+            <View style={[styles.checkbox, selected && styles.checkboxSelected]}>
+              {selected ? <Text style={styles.checkmark}>✓</Text> : null}
+            </View>
+            <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{question}</Text>
+          </View>
+        </GlassCard>
+      </Pressable>
+    </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
   chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F0F0F0',
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: radius.md,
     marginBottom: 10,
-    borderWidth: 2,
-    borderColor: 'transparent',
   },
   chipSelected: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#4A90E2',
+    borderColor: 'rgba(79,124,255,0.22)',
+    backgroundColor: '#F6F9FF',
   },
-  checkboxContainer: {
-    marginRight: 12,
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
   },
   checkbox: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#B0B0B0',
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: palette.line,
+    backgroundColor: palette.paperStrong,
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkboxSelected: {
-    backgroundColor: '#4A90E2',
-    borderColor: '#4A90E2',
+    backgroundColor: palette.primary,
+    borderColor: palette.primary,
   },
   checkmark: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: 'bold',
+    color: palette.paperStrong,
+    fontSize: 13,
+    fontWeight: '900',
   },
   chipText: {
     flex: 1,
-    fontSize: 14,
-    color: '#333333',
+    ...type.body,
   },
   chipTextSelected: {
-    color: '#1565C0',
-    fontWeight: '500',
+    color: palette.ink,
+    fontWeight: '700',
   },
 });

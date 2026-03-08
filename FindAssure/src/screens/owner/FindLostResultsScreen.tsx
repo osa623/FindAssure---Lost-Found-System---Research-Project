@@ -1,10 +1,12 @@
-// FindLostResultsScreen – follow the spec
 import React from 'react';
-import { View, Text, StyleSheet, FlatList } from 'react-native';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList, FoundItem } from '../../types/models';
 import { ItemCard } from '../../components/ItemCard';
+import { GlassCard } from '../../components/GlassCard';
+import { gradients, radius, spacing, type, palette } from '../../theme/designSystem';
 
 type FindLostResultsNavigationProp = StackNavigationProp<RootStackParamList, 'FindLostResults'>;
 type FindLostResultsRouteProp = RouteProp<RootStackParamList, 'FindLostResults'>;
@@ -18,90 +20,86 @@ const FindLostResultsScreen = () => {
     navigation.navigate('ItemDetail', { foundItem: item });
   };
 
-  const renderItem = ({ item }: { item: FoundItem }) => (
-    <ItemCard item={item} onPress={() => handleItemPress(item)} />
-  );
-
-  const renderEmpty = () => (
-    <View style={styles.emptyContainer}>
-      <Text style={styles.emptyIcon}>🔍</Text>
-      <Text style={styles.emptyTitle}>No Items Found</Text>
-      <Text style={styles.emptyText}>
-        We couldn't find any matching items at the moment.
-      </Text>
-      <Text style={styles.emptyText}>
-        Your search has been saved and you'll be notified if a match is found.
-      </Text>
-    </View>
-  );
-
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Found Items</Text>
-        <Text style={styles.subtitle}>
-          {foundItems.length} item{foundItems.length !== 1 ? 's' : ''} found
-        </Text>
-      </View>
-
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
       <FlatList
         data={foundItems}
-        renderItem={renderItem}
         keyExtractor={(item) => item._id}
         contentContainerStyle={styles.listContent}
-        ListEmptyComponent={renderEmpty}
+        renderItem={({ item }) => <ItemCard item={item} onPress={() => handleItemPress(item)} />}
+        ListHeaderComponent={
+          <GlassCard style={styles.hero}>
+            <View style={styles.heroBadge}>
+              <Text style={styles.heroBadgeText}>Search results</Text>
+            </View>
+            <Text style={styles.heroEyebrow}>Search results</Text>
+            <Text style={styles.heroTitle}>Potential matches</Text>
+            <Text style={styles.heroBody}>
+              {foundItems.length} item{foundItems.length !== 1 ? 's' : ''} found for this search.
+            </Text>
+          </GlassCard>
+        }
+        ListEmptyComponent={
+          <GlassCard style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>No items found</Text>
+            <Text style={styles.emptyBody}>We could not find any matching items right now. Your request is still recorded for future matches.</Text>
+          </GlassCard>
+        }
       />
-    </View>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  header: {
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666666',
-  },
+  container: { flex: 1 },
   listContent: {
-    padding: 20,
-    flexGrow: 1,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
+  hero: {
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
   },
-  emptyIcon: {
-    fontSize: 64,
-    marginBottom: 16,
+  heroBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    marginBottom: spacing.sm,
+  },
+  heroBadgeText: {
+    ...type.caption,
+    color: palette.primaryDeep,
+    fontWeight: '700',
+  },
+  heroEyebrow: {
+    ...type.label,
+    color: palette.primaryDeep,
+    marginBottom: spacing.xs,
+  },
+  heroTitle: {
+    ...type.section,
+    color: palette.ink,
+    marginBottom: spacing.xs,
+  },
+  heroBody: {
+    ...type.body,
+    color: palette.inkSoft,
+  },
+  emptyCard: {
+    marginTop: spacing.md,
   },
   emptyTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 12,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#666666',
+    ...type.section,
     textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 8,
+    marginBottom: spacing.sm,
+  },
+  emptyBody: {
+    ...type.body,
+    textAlign: 'center',
   },
 });
 

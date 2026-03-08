@@ -1,136 +1,86 @@
-// VerificationPendingScreen – follow the spec
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../../types/models';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { GlassCard } from '../../components/GlassCard';
+import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
 
 type VerificationPendingNavigationProp = StackNavigationProp<RootStackParamList, 'VerificationPending'>;
 
 const VerificationPendingScreen = () => {
   const navigation = useNavigation<VerificationPendingNavigationProp>();
 
-  const handleGoHome = () => {
-    navigation.navigate('Home');
-  };
-
   return (
-    <View style={styles.container}>
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
       <View style={styles.content}>
-        <View style={styles.iconContainer}>
-          <Text style={styles.icon}>⏳</Text>
-        </View>
+        <LinearGradient colors={gradients.violet} style={styles.hero}>
+          <Text style={styles.icon}>◎</Text>
+          <Text style={styles.heroTitle}>Verification pending.</Text>
+          <Text style={styles.heroBody}>Your answers are in the review pipeline and will be processed before finder contact details are revealed.</Text>
+        </LinearGradient>
 
-        <Text style={styles.title}>Verification Pending</Text>
-        <Text style={styles.message}>
-          Your answers have been submitted
-        </Text>
+        <GlassCard style={styles.cardGap}>
+          <Text style={styles.sectionEyebrow}>What happens next</Text>
+          <Text style={styles.sectionBody}>1. Your video answers are processed.</Text>
+          <Text style={styles.sectionBody}>2. AI scoring checks semantic and visual consistency.</Text>
+          <Text style={styles.sectionBody}>3. If you pass, the finder contact details become available.</Text>
+          <Text style={styles.sectionBody}>4. You will be notified about the result.</Text>
+        </GlassCard>
 
-        <View style={styles.infoBox}>
-          <Text style={styles.infoTitle}>What's Next?</Text>
-          <Text style={styles.infoText}>
-            1. Your video answers are being processed
-          </Text>
-          <Text style={styles.infoText}>
-            2. Our AI system will verify your responses
-          </Text>
-          <Text style={styles.infoText}>
-            3. If verification passes, you'll receive the founder's contact information
-          </Text>
-          <Text style={styles.infoText}>
-            4. You'll be notified via email about the verification result
-          </Text>
-        </View>
+        <GlassCard style={styles.cardGap}>
+          <Text style={styles.sectionEyebrow}>Timing</Text>
+          <Text style={styles.sectionBody}>This can take a few minutes to a few hours depending on processing and review load.</Text>
+        </GlassCard>
 
-        <View style={styles.warningBox}>
-          <Text style={styles.warningText}>
-            ⚠️ Please note: This process may take a few minutes to a few hours. 
-            You will be notified once verification is complete.
-          </Text>
-        </View>
-
-        <PrimaryButton
-          title="Back to Home"
-          onPress={handleGoHome}
-          style={styles.button}
-        />
+        <PrimaryButton title="Back to Home" onPress={() => navigation.navigate('Home')} size="lg" />
       </View>
-    </View>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
+  container: { flex: 1 },
   content: {
     flex: 1,
-    padding: 20,
     justifyContent: 'center',
-    alignItems: 'center',
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xl,
   },
-  iconContainer: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#FFF3E0',
-    justifyContent: 'center',
+  hero: {
+    borderRadius: radius.xl,
+    padding: spacing.xl,
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: spacing.lg,
   },
   icon: {
-    fontSize: 64,
+    ...type.hero,
+    color: palette.paperStrong,
+    marginBottom: spacing.sm,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 12,
-  },
-  message: {
-    fontSize: 16,
-    color: '#666666',
+  heroTitle: {
+    ...type.hero,
     textAlign: 'center',
-    marginBottom: 32,
+    marginBottom: spacing.sm,
   },
-  infoBox: {
-    backgroundColor: '#E3F2FD',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 20,
-    width: '100%',
-  },
-  infoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 12,
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#666666',
-    lineHeight: 22,
-    marginBottom: 6,
-  },
-  warningBox: {
-    backgroundColor: '#FFF3E0',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 32,
-    width: '100%',
-    borderLeftWidth: 4,
-    borderLeftColor: '#FF9800',
-  },
-  warningText: {
-    fontSize: 13,
-    color: '#666666',
-    lineHeight: 20,
+  heroBody: {
+    ...type.body,
+    color: 'rgba(255,255,255,0.82)',
     textAlign: 'center',
   },
-  button: {
-    width: '100%',
+  cardGap: {
+    marginBottom: spacing.lg,
+  },
+  sectionEyebrow: {
+    ...type.label,
+    marginBottom: spacing.xs,
+  },
+  sectionBody: {
+    ...type.body,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
   },
 });
 

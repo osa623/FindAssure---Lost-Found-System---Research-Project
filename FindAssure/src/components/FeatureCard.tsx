@@ -7,7 +7,7 @@ interface FeatureCardProps {
   title: string;
   description: string;
   onPress: () => void;
-  gradient?: string[];
+  gradient?: readonly [string, string, ...string[]];
 }
 
 export const FeatureCard: React.FC<FeatureCardProps> = ({

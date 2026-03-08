@@ -1,20 +1,23 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  ScrollView,
+  Alert,
   KeyboardAvoidingView,
   Platform,
-  Alert,
-  TouchableOpacity
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../context/AuthContext';
 import { RootStackParamList } from '../../types/models';
+import { FormInput } from '../../components/FormInput';
+import { GlassCard } from '../../components/GlassCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { gradients, palette, spacing, type } from '../../theme/designSystem';
 
 type ForgotPasswordNavigationProp = StackNavigationProp<RootStackParamList, 'ForgotPassword'>;
 
@@ -31,8 +34,6 @@ const ForgotPasswordScreen = () => {
       Alert.alert('Error', 'Please enter your email address');
       return;
     }
-
-    // Basic email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       Alert.alert('Error', 'Please enter a valid email address');
@@ -46,12 +47,7 @@ const ForgotPasswordScreen = () => {
       Alert.alert(
         'Email Sent!',
         'Password reset instructions have been sent to your email address. Please check your inbox (and spam folder).',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack()
-          }
-        ]
+        [{ text: 'OK', onPress: () => navigation.goBack() }]
       );
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to send password reset email');
@@ -60,163 +56,128 @@ const ForgotPasswordScreen = () => {
     }
   };
 
-  const handleBackToLogin = () => {
-    navigation.goBack();
-  };
-
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.content}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Forgot Password?</Text>
-            <Text style={styles.subtitle}>
-              Enter your email address and we'll send you instructions to reset your password
-            </Text>
-          </View>
-
-          <View style={styles.form}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your email"
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                autoComplete="email"
-                editable={!emailSent}
-              />
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <GlassCard style={styles.hero}>
+            <View style={styles.heroBadge}>
+              <Text style={styles.heroBadgeText}>Recovery</Text>
             </View>
+            <Text style={styles.wordmark}>FIND ASSURE</Text>
+            <Text style={styles.heroTitle}>Reset your password.</Text>
+            <Text style={styles.heroBody}>Enter the email tied to your account and we will send you a reset link.</Text>
+          </GlassCard>
 
+          <GlassCard style={styles.formCard}>
+            <Text style={styles.sectionEyebrow}>Recovery</Text>
+            <Text style={styles.formTitle}>Send reset email</Text>
+            <FormInput
+              label="Email"
+              placeholder="name@example.com"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoComplete="email"
+              editable={!emailSent}
+              leadingIcon="mail-outline"
+            />
             <PrimaryButton
-              title={emailSent ? 'Email Sent!' : 'Send Reset Email'}
+              title={emailSent ? 'Email Sent' : 'Send Reset Email'}
               onPress={handleResetPassword}
               loading={loading}
               disabled={emailSent}
-              style={styles.resetButton}
+              size="lg"
+              style={styles.buttonGap}
             />
+            <Pressable onPress={() => navigation.goBack()} style={styles.backWrap}>
+              <Text style={styles.linkText}>Back to login</Text>
+            </Pressable>
+          </GlassCard>
 
-            <View style={styles.backSection}>
-              <TouchableOpacity onPress={handleBackToLogin}>
-                <Text style={styles.backLink}>← Back to Login</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={styles.infoBox}>
-            <Text style={styles.infoTitle}>📧 What happens next?</Text>
-            <Text style={styles.infoText}>
-              1. Check your email inbox{'\n'}
-              2. Click the reset link in the email{'\n'}
-              3. Create a new password{'\n'}
-              4. Log in with your new password
-            </Text>
-            <Text style={styles.infoNote}>
-              💡 Tip: If you don't see the email, check your spam folder
-            </Text>
-          </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+          <GlassCard>
+            <Text style={styles.sectionEyebrow}>Next steps</Text>
+            <Text style={styles.formTitle}>What happens after sending it</Text>
+            <Text style={styles.tipText}>1. Check your inbox and spam folder.</Text>
+            <Text style={styles.tipText}>2. Open the reset email from Firebase authentication.</Text>
+            <Text style={styles.tipText}>3. Set a new password, then return to the app.</Text>
+            <Text style={styles.tipText}>4. Sign back in with the updated password.</Text>
+          </GlassCard>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
   },
   scrollContent: {
-    flexGrow: 1,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
+    gap: spacing.lg,
   },
-  content: {
-    flex: 1,
-    padding: 20,
-    justifyContent: 'center',
+  hero: {
+    borderRadius: 24,
+    padding: spacing.lg,
   },
-  header: {
-    marginBottom: 30,
-    alignItems: 'center',
+  heroBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.primarySoft,
+    borderRadius: 999,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    marginBottom: spacing.md,
   },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 12,
+  heroBadgeText: {
+    ...type.caption,
+    color: palette.primaryDeep,
+    fontWeight: '700',
   },
-  subtitle: {
+  wordmark: {
+    ...type.brand,
     fontSize: 15,
-    color: '#666666',
-    textAlign: 'center',
-    lineHeight: 22,
-    paddingHorizontal: 10,
+    lineHeight: 17,
+    color: palette.primaryDeep,
+    marginBottom: spacing.sm,
   },
-  form: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+  heroTitle: {
+    ...type.title,
+    color: palette.ink,
+    marginBottom: spacing.sm,
   },
-  inputGroup: {
-    marginBottom: 20,
+  heroBody: {
+    ...type.body,
+    color: palette.inkSoft,
   },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 8,
+  formCard: {
+    marginTop: 0,
   },
-  input: {
-    borderWidth: 1,
-    borderColor: '#DDDDDD',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: '#FAFAFA',
+  sectionEyebrow: {
+    ...type.label,
+    marginBottom: spacing.xs,
   },
-  resetButton: {
-    marginTop: 10,
+  formTitle: {
+    ...type.section,
+    marginBottom: spacing.lg,
   },
-  backSection: {
-    alignItems: 'center',
-    marginTop: 20,
+  buttonGap: {
+    marginTop: spacing.lg,
   },
-  backLink: {
-    fontSize: 14,
-    color: '#4A90E2',
-    fontWeight: '600',
+  backWrap: {
+    marginTop: spacing.lg,
+    alignSelf: 'center',
   },
-  infoBox: {
-    backgroundColor: '#E3F2FD',
-    borderRadius: 12,
-    padding: 16,
-    marginTop: 20,
+  linkText: {
+    ...type.bodyStrong,
+    color: palette.primaryDeep,
   },
-  infoTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1976D2',
-    marginBottom: 12,
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#424242',
-    lineHeight: 24,
-    marginBottom: 12,
-  },
-  infoNote: {
-    fontSize: 13,
-    color: '#616161',
-    fontStyle: 'italic',
+  tipText: {
+    ...type.body,
+    marginBottom: spacing.sm,
   },
 });
 

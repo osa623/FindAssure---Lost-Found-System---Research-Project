@@ -1,19 +1,21 @@
-// ReportFoundAnswersScreen – follow the spec
 import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  StyleSheet, 
-  ScrollView, 
+import {
   Alert,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../../types/models';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { FormInput } from '../../components/FormInput';
+import { GlassCard } from '../../components/GlassCard';
+import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
 
 type ReportFoundAnswersNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundAnswers'>;
 type ReportFoundAnswersRouteProp = RouteProp<RootStackParamList, 'ReportFoundAnswers'>;
@@ -22,20 +24,16 @@ const ReportFoundAnswersScreen = () => {
   const navigation = useNavigation<ReportFoundAnswersNavigationProp>();
   const route = useRoute<ReportFoundAnswersRouteProp>();
   const { images, preAnalysisToken, category, description, selectedQuestions } = route.params;
-
-  const [answers, setAnswers] = useState<string[]>(
-    new Array(selectedQuestions.length).fill('')
-  );
+  const [answers, setAnswers] = useState<string[]>(new Array(selectedQuestions.length).fill(''));
 
   const handleAnswerChange = (index: number, text: string) => {
-    const newAnswers = [...answers];
-    newAnswers[index] = text;
-    setAnswers(newAnswers);
+    const next = [...answers];
+    next[index] = text;
+    setAnswers(next);
   };
 
   const handleNext = () => {
-    const allAnswered = answers.every(answer => answer.trim().length > 0);
-    
+    const allAnswered = answers.every((answer) => answer.trim().length > 0);
     if (!allAnswered) {
       Alert.alert('Incomplete', 'Please answer all questions');
       return;
@@ -47,147 +45,106 @@ const ReportFoundAnswersScreen = () => {
       category,
       description,
       selectedQuestions,
-      founderAnswers: answers.map(a => a.trim()),
+      founderAnswers: answers.map((a) => a.trim()),
     });
   };
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView style={styles.scrollView}>
-        <View style={styles.content}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Answer the Questions</Text>
-            <Text style={styles.subtitle}>
-              Type your answers to help verify the true owner. Owners will provide video answers to claim items.
-            </Text>
-          </View>
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <GlassCard style={styles.hero}>
+            <View style={styles.heroBadge}>
+              <Text style={styles.heroBadgeText}>Founder answers</Text>
+            </View>
+            <Text style={styles.heroEyebrow}>Founder answers</Text>
+            <Text style={styles.heroTitle}>Store the correct answers privately.</Text>
+            <Text style={styles.heroBody}>Owners answer these later during verification, so be specific and consistent.</Text>
+          </GlassCard>
 
-          <View style={styles.questionsContainer}>
-            {selectedQuestions.map((question, index) => (
-              <View key={index} style={styles.questionGroup}>
-                <Text style={styles.questionNumber}>Question {index + 1}</Text>
-                <Text style={styles.questionText}>{question}</Text>
-                
-                {/* Text Input Only for Founders */}
-                <TextInput
-                  style={styles.answerInput}
-                  placeholder="Type your answer here..."
-                  value={answers[index]}
-                  onChangeText={(text) => handleAnswerChange(index, text)}
-                  multiline
-                  numberOfLines={4}
-                  textAlignVertical="top"
-                />
-              </View>
-            ))}
-          </View>
+          {selectedQuestions.map((question, index) => (
+            <GlassCard key={index} style={styles.cardGap}>
+              <Text style={styles.questionLabel}>Question {index + 1}</Text>
+              <Text style={styles.questionText}>{question}</Text>
+              <FormInput
+                placeholder="Type your answer here..."
+                value={answers[index]}
+                onChangeText={(text) => handleAnswerChange(index, text)}
+                multiline
+              />
+            </GlassCard>
+          ))}
 
-          <View style={styles.tipsBox}>
-            <Text style={styles.tipsTitle}>💡 Tips for Answering Questions:</Text>
-            <Text style={styles.tipText}>• Examine the found item carefully before answering</Text>
-            <Text style={styles.tipText}>• Look at all visible details, labels, and unique features</Text>
-            <Text style={styles.tipText}>• Be specific and accurate in your descriptions</Text>
-            <Text style={styles.tipText}>• Include colors, brands, size, or any identifying marks</Text>
-            <Text style={styles.tipText}>• Your answers will help verify the true owner</Text>
-            <Text style={styles.tipText}>• Only the real owner will be able to match your details</Text>
-          </View>
+          <GlassCard style={styles.cardGap}>
+            <Text style={styles.tipTitle}>Answering tips</Text>
+            <Text style={styles.tipText}>Examine the item closely and include details like color, brand, materials, size, or unique marks.</Text>
+            <Text style={styles.tipText}>Keep answers truthful and specific so only the real owner can match them later.</Text>
+          </GlassCard>
 
-          <PrimaryButton
-            title="Next"
-            onPress={handleNext}
-            style={styles.nextButton}
-          />
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+          <PrimaryButton title="Next" onPress={handleNext} size="lg" />
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  scrollView: {
-    flex: 1,
-  },
+  container: { flex: 1 },
   content: {
-    padding: 20,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
-  header: {
-    marginBottom: 24,
+  hero: {
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
   },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 8,
+  heroBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    marginBottom: spacing.sm,
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#666666',
-    lineHeight: 20,
+  heroBadgeText: {
+    ...type.caption,
+    color: palette.primaryDeep,
+    fontWeight: '700',
   },
-  questionsContainer: {
-    marginBottom: 20,
+  heroEyebrow: {
+    ...type.label,
+    color: palette.primaryDeep,
+    marginBottom: spacing.xs,
   },
-  questionGroup: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+  heroTitle: {
+    ...type.title,
+    color: palette.ink,
+    marginBottom: spacing.sm,
   },
-  questionNumber: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#4A90E2',
-    marginBottom: 6,
+  heroBody: {
+    ...type.body,
+    color: palette.inkSoft,
+  },
+  cardGap: {
+    marginBottom: spacing.lg,
+  },
+  questionLabel: {
+    ...type.label,
+    marginBottom: spacing.xs,
   },
   questionText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 12,
+    ...type.cardTitle,
+    marginBottom: spacing.lg,
   },
-  answerInput: {
-    borderWidth: 1,
-    borderColor: '#DDDDDD',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    backgroundColor: '#FAFAFA',
-    minHeight: 100,
-  },
-  tipsBox: {
-    backgroundColor: '#E8F5E9',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4CAF50',
-  },
-  tipsTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#2E7D32',
-    marginBottom: 12,
+  tipTitle: {
+    ...type.section,
+    marginBottom: spacing.sm,
   },
   tipText: {
-    fontSize: 13,
-    color: '#1B5E20',
-    lineHeight: 20,
-    marginBottom: 6,
-  },
-  nextButton: {
-    marginBottom: 20,
+    ...type.body,
+    marginBottom: spacing.sm,
   },
 });
 

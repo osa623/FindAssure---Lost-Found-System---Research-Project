@@ -1,103 +1,83 @@
-// ReportFoundSuccessScreen – follow the spec
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../../types/models';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { GlassCard } from '../../components/GlassCard';
+import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
 
 type ReportFoundSuccessNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundSuccess'>;
 
 const ReportFoundSuccessScreen = () => {
   const navigation = useNavigation<ReportFoundSuccessNavigationProp>();
 
-  const handleGoHome = () => {
-    navigation.navigate('Home');
-  };
-
   return (
-    <View style={styles.container}>
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
       <View style={styles.content}>
-        <View style={styles.iconContainer}>
-          <Text style={styles.icon}>✅</Text>
-        </View>
+        <LinearGradient colors={gradients.success} style={styles.hero}>
+          <Text style={styles.icon}>✓</Text>
+          <Text style={styles.heroTitle}>Report submitted.</Text>
+          <Text style={styles.heroBody}>The item is now ready for owner search and verification.</Text>
+        </LinearGradient>
 
-        <Text style={styles.title}>Success!</Text>
-        <Text style={styles.message}>
-          Found item reported successfully
-        </Text>
+        <GlassCard style={styles.cardGap}>
+          <Text style={styles.sectionEyebrow}>What happens next</Text>
+          <Text style={styles.sectionTitle}>Owners must prove ownership first</Text>
+          <Text style={styles.sectionBody}>Your contact details stay private until the claimant answers your verification prompts successfully.</Text>
+        </GlassCard>
 
-        <View style={styles.infoBox}>
-          <Text style={styles.infoText}>
-            Thank you for helping someone find their lost item! 
-          </Text>
-          <Text style={styles.infoText}>
-            The owner will need to verify their ownership by answering your questions 
-            before they can see your contact information.
-          </Text>
-        </View>
-
-        <PrimaryButton
-          title="Back to Home"
-          onPress={handleGoHome}
-          style={styles.button}
-        />
+        <PrimaryButton title="Back to Home" onPress={() => navigation.navigate('Home')} size="lg" />
       </View>
-    </View>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
+  container: { flex: 1 },
   content: {
     flex: 1,
-    padding: 20,
     justifyContent: 'center',
-    alignItems: 'center',
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xl,
   },
-  iconContainer: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#E8F5E9',
-    justifyContent: 'center',
+  hero: {
+    borderRadius: radius.xl,
+    padding: spacing.xl,
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: spacing.lg,
   },
   icon: {
-    fontSize: 64,
+    ...type.hero,
+    color: palette.paperStrong,
+    marginBottom: spacing.sm,
   },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 12,
-  },
-  message: {
-    fontSize: 18,
-    color: '#666666',
+  heroTitle: {
+    ...type.hero,
     textAlign: 'center',
-    marginBottom: 32,
+    marginBottom: spacing.sm,
   },
-  infoBox: {
-    backgroundColor: '#E3F2FD',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 32,
-    width: '100%',
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#666666',
-    lineHeight: 20,
-    marginBottom: 8,
+  heroBody: {
+    ...type.body,
+    color: 'rgba(255,255,255,0.84)',
     textAlign: 'center',
   },
-  button: {
-    width: '100%',
+  cardGap: {
+    marginBottom: spacing.lg,
+  },
+  sectionEyebrow: {
+    ...type.label,
+    marginBottom: spacing.xs,
+  },
+  sectionTitle: {
+    ...type.section,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
+  sectionBody: {
+    ...type.body,
+    textAlign: 'center',
   },
 });
 

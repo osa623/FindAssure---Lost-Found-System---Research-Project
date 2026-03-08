@@ -6,6 +6,7 @@ import re
 import time
 import uuid
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from app.services.yolo_service import YoloService
 from app.services.florence_service import FlorenceService
@@ -58,6 +59,7 @@ class UnifiedPipeline:
         # Gemini circuit breaker state
         self._gemini_fail_count: int = 0
         self._gemini_open_until: float = 0.0
+        self._pp1_thread_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pp1_dino")
 
     @staticmethod
     def _validate_embedding(vec, label: str = "embedding") -> bool:
@@ -811,6 +813,13 @@ class UnifiedPipeline:
                 "crop_analysis": analysis
             }
 
+            # Submit DINO embedding concurrently with upcoming Gemini API call
+            _dino_future = None
+            try:
+                _dino_future = self._pp1_thread_pool.submit(self.dino.embed_both, crop)
+            except Exception as _exc:
+                logger.warning("PP1_DINO_SUBMIT_FAILED: %s", _exc)
+
             # 5. Reason (Gemini)
             gemini_start = time.perf_counter()
             gemini_error_meta = None
@@ -978,12 +987,16 @@ class UnifiedPipeline:
                     )
                 final_label = florence_strong_label
             
-            # 6. Embeddings (DINOv2) from a single forward pass
+            # 6. Embeddings (DINOv2) — collect from background thread (submitted before Gemini call)
             embeddings_start = time.perf_counter()
             vec_768_list = []
             vec_128_list = []
             try:
-                vec_768, vec_128 = self.dino.embed_both(crop)
+                if _dino_future is not None:
+                    embed_timeout = float(getattr(settings, "PP1_DINO_TIMEOUT_S", 10))
+                    vec_768, vec_128 = _dino_future.result(timeout=embed_timeout)
+                else:
+                    vec_768, vec_128 = self.dino.embed_both(crop)
                 if self._validate_embedding(vec_768, "yolo_768") and self._validate_embedding(vec_128, "yolo_128"):
                     vec_768_list = vec_768.tolist()
                     vec_128_list = vec_128.tolist()

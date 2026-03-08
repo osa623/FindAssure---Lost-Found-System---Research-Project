@@ -13,7 +13,8 @@ ALLOWED_LABELS: List[str] = [
     "Laptop/Mobile chargers & cables",
     "Earbuds - Earbuds case",
     "Headphone",
-    "Student ID"
+    "Student ID",
+    "NIC / National ID Card"
 ]
 
 def is_allowed_label(label: str) -> bool:
@@ -73,7 +74,10 @@ def canonicalize_label(label: str) -> Optional[str]:
     if "headphone" in l or "headset" in l:
         return "Headphone"
 
-    if "nic" == l or "national id" in l or "identity card" in l:
+    if "nic" == l or "national id" in l or "national identity" in l or "identity card" in l or "government id" in l:
+        return "NIC / National ID Card"
+
+    if "student id" in l or "school id" in l or "campus card" in l or "university id" in l or "university card" in l or "student card" in l:
         return "Student ID"
         
     if "id" in l or "card" in l:
@@ -184,10 +188,19 @@ CATEGORY_SPECS = {
         "attachments": ["audio cable", "headband", "mic boom"]
     },
     "Student ID": {
-        "features": ["photo", "name", "id number", "barcode", "logo"],
+        "features": ["photo", "name", "id number", "barcode", "logo", "institution name", "student number"],
         "defects": [
             "cracked card", "bent card", "scratched surface", "faded text",
             "torn corner", "damaged holder", "broken clip"
+        ],
+        "attachments": ["lanyard", "card holder", "clip"]
+    },
+    "NIC / National ID Card": {
+        "features": ["photo", "name", "id number", "date of birth", "barcode",
+                     "national flag", "issuing authority", "signature", "place of birth"],
+        "defects": [
+            "cracked card", "bent card", "scratched surface", "faded text",
+            "torn corner", "damaged holder"
         ],
         "attachments": ["lanyard", "card holder", "clip"]
     }

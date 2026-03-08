@@ -48,6 +48,7 @@ class MultiViewVerifier:
         GROUP_SMALL_AMBIGUOUS: 0.08,
     }
     LEGACY_FALLBACK_MARGIN = 0.05
+    ANGLE_HARD_BRAND_RESCUE_FLOOR = 0.38  # minimum cosine for brand-identity rescue; override via PP2_VERIFIER_ANGLE_HARD_BRAND_RESCUE_FLOOR
     FALLBACK_THRESHOLD_ENTRY = "legacy_pp2_sim_threshold_fallback"
 
     CATEGORY_GROUPS: Dict[str, Set[str]] = {
@@ -250,6 +251,18 @@ class MultiViewVerifier:
         ocr_i = str(per_view_results[i].extraction.ocr_text or "").strip()
         ocr_j = str(per_view_results[j].extraction.ocr_text or "").strip()
         return bool(ocr_i or ocr_j)
+
+    @classmethod
+    def _pair_has_any_brand(
+        cls,
+        per_view_results: List[PP2PerViewResult],
+        i: int,
+        j: int,
+    ) -> bool:
+        """Return True if at least one of the two views has a visible brand identifier."""
+        if i >= len(per_view_results) or j >= len(per_view_results):
+            return False
+        return bool(cls._extract_brand(per_view_results[i]) or cls._extract_brand(per_view_results[j]))
 
     @staticmethod
     def _pair_matches_consensus_category(
@@ -944,6 +957,32 @@ class MultiViewVerifier:
                         f"floor={cos_th - near_miss_margin:.2f}, "
                         f"labels_match_consensus={labels_match_consensus}, {mode_context})."
                     )
+                elif (
+                    pair_cos >= cos_th - near_miss_margin
+                    and labels_match_consensus
+                    and has_any_ocr
+                ):
+                    passed = True
+                    pair_info["ocr_evidence_rescue_applied"] = True
+                    reasons.append(
+                        "Salvaged: angle_hard near-miss accepted via label consensus + OCR evidence presence "
+                        f"(pair={pair_name}, selected_cos={pair_cos:.2f}, "
+                        f"floor={cos_th - near_miss_margin:.2f}, "
+                        f"labels_match_consensus={labels_match_consensus}, {mode_context})."
+                    )
+                elif (
+                    pair_cos >= float(getattr(settings, "PP2_VERIFIER_ANGLE_HARD_BRAND_RESCUE_FLOOR", self.ANGLE_HARD_BRAND_RESCUE_FLOOR))
+                    and labels_match_consensus
+                    and self._pair_has_any_brand(per_view_results, pair_key[0], pair_key[1])
+                ):
+                    passed = True
+                    pair_info["brand_rescue_applied"] = True
+                    reasons.append(
+                        "Salvaged: angle_hard brand-identity rescue accepted "
+                        f"(pair={pair_name}, selected_cos={pair_cos:.2f}, "
+                        f"brand_rescue_floor={self.ANGLE_HARD_BRAND_RESCUE_FLOOR:.2f}, "
+                        f"labels_match_consensus={labels_match_consensus}, {mode_context})."
+                    )
                 else:
                     passed = False
                     reasons.append(
@@ -1059,6 +1098,26 @@ class MultiViewVerifier:
                             "Salvaged: angle_hard 3-view near-miss accepted via color consistency "
                             f"(pair={near_pair}, {mode_context})."
                         )
+                    elif (
+                        near_labels_match
+                        and self._pair_has_any_ocr(per_view_results, near_i, near_j)
+                    ):
+                        passed = True
+                        near_info["ocr_evidence_rescue_applied"] = True
+                        reasons.append(
+                            "Salvaged: angle_hard 3-view near-miss accepted via label consensus + OCR evidence "
+                            f"(pair={near_pair}, {mode_context})."
+                        )
+                    elif (
+                        near_labels_match
+                        and self._pair_has_any_brand(per_view_results, near_i, near_j)
+                    ):
+                        passed = True
+                        near_info["brand_rescue_applied"] = True
+                        reasons.append(
+                            "Salvaged: angle_hard 3-view near-miss brand-identity rescue accepted "
+                            f"(pair={near_pair}, {mode_context})."
+                        )
                     else:
                         passed = False
                         reasons.append(
@@ -1152,6 +1211,26 @@ class MultiViewVerifier:
                         weak_info["color_rescue_applied"] = True
                         reasons.append(
                             "Salvaged: angle_hard 3-view weak pair accepted via color consistency "
+                            f"(weak_pair={weak_pair}, {mode_context})."
+                        )
+                    elif (
+                        weak_labels_match
+                        and self._pair_has_any_ocr(per_view_results, weak_i, weak_j)
+                    ):
+                        passed = True
+                        weak_info["ocr_evidence_rescue_applied"] = True
+                        reasons.append(
+                            "Salvaged: angle_hard 3-view weak pair accepted via label consensus + OCR evidence "
+                            f"(weak_pair={weak_pair}, {mode_context})."
+                        )
+                    elif (
+                        weak_labels_match
+                        and self._pair_has_any_brand(per_view_results, weak_i, weak_j)
+                    ):
+                        passed = True
+                        weak_info["brand_rescue_applied"] = True
+                        reasons.append(
+                            "Salvaged: angle_hard 3-view weak pair brand-identity rescue accepted "
                             f"(weak_pair={weak_pair}, {mode_context})."
                         )
                     else:

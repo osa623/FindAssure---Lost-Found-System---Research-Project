@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { RootStackParamList } from '../types/models';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LoadingScreen } from '../components/LoadingScreen';
+import { palette, type } from '../theme/designSystem';
 
 // Import screens
 import OnboardingScreen from '../screens/OnboardingScreen';
@@ -40,7 +41,7 @@ import AdminUsersScreen from '../screens/admin/AdminUsersScreen';
 const Stack = createStackNavigator<RootStackParamList>();
 
 export const RootNavigator = () => {
-  const { user, loading } = useAuth();
+  const { loading } = useAuth();
   const [hasSeenOnboarding, setHasSeenOnboarding] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -67,14 +68,24 @@ export const RootNavigator = () => {
     <Stack.Navigator
       initialRouteName={initialRouteName}
       screenOptions={{
+        cardStyle: {
+          backgroundColor: palette.paper,
+        },
+        headerTransparent: false,
         headerStyle: {
-          backgroundColor: '#4A90E2',
+          backgroundColor: palette.paper,
+          elevation: 0,
+          shadowOpacity: 0,
+          borderBottomWidth: 1,
+          borderBottomColor: palette.line,
         },
-        headerTintColor: '#FFFFFF',
+        headerTintColor: palette.ink,
         headerTitleStyle: {
-          fontWeight: '600',
+          ...type.cardTitle,
         },
+        headerTitleAlign: 'center',
         headerBackTitle: '',
+        headerShadowVisible: false,
       }}
     >
       {/* Onboarding Screen */}

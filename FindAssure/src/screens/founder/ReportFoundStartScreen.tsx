@@ -1,13 +1,17 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Image, Alert, ScrollView, TouchableOpacity } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import * as ImagePicker from 'expo-image-picker';
 import { LoadingScreen } from '../../components/LoadingScreen';
+import { GlassCard } from '../../components/GlassCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { RootStackParamList, SelectedImageAsset } from '../../types/models';
 import { itemsApi } from '../../api/itemsApi';
 import { ITEM_CATEGORIES } from '../../constants/appConstants';
+import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
 
 type ReportFoundStartNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundStart'>;
 
@@ -21,13 +25,11 @@ const mapPickerAsset = (asset: ImagePicker.ImagePickerAsset): SelectedImageAsset
 
 const mergeImages = (current: SelectedImageAsset[], incoming: SelectedImageAsset[]) => {
   const merged = [...current];
-
   for (const image of incoming) {
     if (!merged.find((item) => item.uri === image.uri)) {
       merged.push(image);
     }
   }
-
   return merged.slice(0, MAX_IMAGES);
 };
 
@@ -56,7 +58,6 @@ const ReportFoundStartScreen = () => {
   const handleSelectImages = async () => {
     const hasPermission = await requestLibraryPermissions();
     if (!hasPermission) return;
-
     const remainingSlots = MAX_IMAGES - images.length;
     if (remainingSlots <= 0) {
       Alert.alert('Image Limit Reached', 'You can upload up to 3 photos.');
@@ -72,16 +73,6 @@ const ReportFoundStartScreen = () => {
     });
 
     if (!result.canceled) {
-      result.assets.forEach((asset, i) => {
-        console.log(`[GALLERY] Asset[${i}]:`, {
-          uri: asset.uri.substring(0, 100),
-          fileName: asset.fileName,
-          mimeType: asset.mimeType,
-          fileSize: asset.fileSize,
-          width: asset.width,
-          height: asset.height,
-        });
-      });
       setImages((current) => mergeImages(current, result.assets.map(mapPickerAsset)));
     }
   };
@@ -115,20 +106,13 @@ const ReportFoundStartScreen = () => {
 
   const normalizeDetectedCategory = (detectedCategory?: string | null): string | undefined => {
     if (!detectedCategory) return undefined;
-
     const normalized = detectedCategory.trim().toLowerCase();
-    const matchedCategory = ITEM_CATEGORIES.find(
-      (category) => category.trim().toLowerCase() === normalized
-    );
-
+    const matchedCategory = ITEM_CATEGORIES.find((category) => category.trim().toLowerCase() === normalized);
     return matchedCategory || undefined;
   };
 
   const handleNext = async () => {
-    if (isSubmitting.current) {
-      return;
-    }
-
+    if (isSubmitting.current) return;
     if (images.length === 0) {
       Alert.alert('Image Required', 'Please add at least one image first');
       return;
@@ -137,9 +121,7 @@ const ReportFoundStartScreen = () => {
     try {
       isSubmitting.current = true;
       setLoading(true);
-
       const preAnalysis = await itemsApi.preAnalyzeFoundImages(images);
-
       navigation.navigate('ReportFoundDetails', {
         images,
         preAnalysisToken: preAnalysis.preAnalysisToken || null,
@@ -169,145 +151,145 @@ const ReportFoundStartScreen = () => {
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Report a Found Item</Text>
-          <Text style={styles.subtitle}>
-            Add 1 to 3 photos. One clear photo enables basic analysis, and 2 to 3 angles improve matching.
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <LinearGradient colors={gradients.hero} style={styles.hero}>
+          <Text style={styles.heroEyebrow}>Founder flow</Text>
+          <Text style={styles.heroTitle}>Start with photos.</Text>
+          <Text style={styles.heroBody}>
+            Add one to three images. Clear multi-angle photos lead to stronger analysis and better future matches.
           </Text>
-        </View>
+        </LinearGradient>
 
-        <View style={styles.grid}>
-          {Array.from({ length: MAX_IMAGES }).map((_, index) => {
-            const image = images[index];
+        <GlassCard style={styles.cardGap}>
+          <Text style={styles.sectionEyebrow}>Image set</Text>
+          <Text style={styles.sectionTitle}>Capture the item from its best angles</Text>
+          <View style={styles.grid}>
+            {Array.from({ length: MAX_IMAGES }).map((_, index) => {
+              const image = images[index];
+              return (
+                <View key={index} style={styles.slot}>
+                  {image ? (
+                    <>
+                      <Image source={{ uri: image.uri }} style={styles.image} contentFit="cover" />
+                      <Pressable style={styles.removeButton} onPress={() => handleRemoveImage(image.uri)}>
+                        <Text style={styles.removeButtonText}>Remove</Text>
+                      </Pressable>
+                    </>
+                  ) : (
+                    <View style={styles.placeholder}>
+                      <Text style={styles.placeholderIcon}>＋</Text>
+                      <Text style={styles.placeholderText}>Photo {index + 1}</Text>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+          <Text style={styles.helperText}>
+            {images.length <= 1
+              ? 'One clear photo enables the basic analysis path.'
+              : 'Two or three photos improve multi-view analysis and matching quality.'}
+          </Text>
+        </GlassCard>
 
-            return (
-              <View key={index} style={styles.slot}>
-                {image ? (
-                  <>
-                    <Image
-                      source={{ uri: image.uri }}
-                      style={styles.image}
-                      resizeMode="contain"
-                    />
-                    <TouchableOpacity
-                      style={styles.removeButton}
-                      onPress={() => handleRemoveImage(image.uri)}
-                    >
-                      <Text style={styles.removeButtonText}>Remove</Text>
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  <View style={styles.placeholder}>
-                    <Text style={styles.placeholderIcon}>+</Text>
-                    <Text style={styles.placeholderText}>Photo {index + 1}</Text>
-                  </View>
-                )}
-              </View>
-            );
-          })}
-        </View>
+        <GlassCard style={styles.cardGap}>
+          <Text style={styles.sectionEyebrow}>Capture options</Text>
+          <Text style={styles.sectionTitle}>Bring in fresh photos or use your gallery</Text>
+          <View style={styles.buttonGroup}>
+            <PrimaryButton title="Capture Photo" onPress={handleCaptureImage} />
+            <PrimaryButton title="Select from Gallery" onPress={handleSelectImages} variant="secondary" />
+          </View>
+        </GlassCard>
 
-        <Text style={styles.helperText}>
-          {images.length <= 1
-            ? '1 photo = basic analysis for clear, well-lit items.'
-            : '2-3 photos = enhanced multi-view analysis from different angles.'}
-        </Text>
-
-        <View style={styles.buttonGroup}>
-          <PrimaryButton title="Capture Photo" onPress={handleCaptureImage} style={styles.button} />
-          <PrimaryButton title="Select from Gallery" onPress={handleSelectImages} style={styles.button} />
-        </View>
-
-        <PrimaryButton
-          title="Next"
-          onPress={handleNext}
-          disabled={images.length === 0}
-          style={styles.nextButton}
-        />
-      </View>
-    </ScrollView>
+        <PrimaryButton title="Next" onPress={handleNext} disabled={images.length === 0} size="lg" />
+      </ScrollView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
+  container: { flex: 1 },
   content: {
-    padding: 20,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
-  header: {
-    marginBottom: 24,
+  hero: {
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 8,
+  heroEyebrow: {
+    ...type.label,
+    color: 'rgba(255,255,255,0.72)',
+    marginBottom: spacing.sm,
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#666666',
-    lineHeight: 20,
+  heroTitle: {
+    ...type.title,
+    color: palette.paperStrong,
+    marginBottom: spacing.sm,
+  },
+  heroBody: {
+    ...type.body,
+    color: 'rgba(255,255,255,0.82)',
+  },
+  cardGap: {
+    marginBottom: spacing.lg,
+  },
+  sectionEyebrow: {
+    ...type.label,
+    marginBottom: spacing.xs,
+  },
+  sectionTitle: {
+    ...type.section,
+    marginBottom: spacing.md,
   },
   grid: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
+    gap: spacing.sm,
+    marginBottom: spacing.md,
   },
   slot: {
     flex: 1,
   },
   image: {
     width: '100%',
-    height: 160,
-    borderRadius: 12,
-    backgroundColor: '#E0E0E0',
+    height: 148,
+    borderRadius: radius.md,
+    backgroundColor: palette.shell,
   },
   placeholder: {
-    height: 160,
-    borderRadius: 12,
-    backgroundColor: '#E0E0E0',
+    height: 148,
+    borderRadius: radius.md,
+    backgroundColor: palette.paperStrong,
+    borderWidth: 1,
+    borderColor: palette.line,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#CCCCCC',
-    borderStyle: 'dashed',
   },
   placeholderIcon: {
-    fontSize: 28,
-    color: '#777777',
-    marginBottom: 8,
+    ...type.section,
+    color: palette.primaryDeep,
+    marginBottom: spacing.xs,
   },
   placeholderText: {
-    fontSize: 13,
-    color: '#777777',
+    ...type.caption,
   },
   removeButton: {
-    marginTop: 8,
-    alignItems: 'center',
+    alignSelf: 'center',
+    marginTop: spacing.sm,
   },
   removeButtonText: {
-    fontSize: 12,
-    color: '#C62828',
-    fontWeight: '600',
+    ...type.caption,
+    color: palette.danger,
+    fontWeight: '700',
   },
   helperText: {
-    fontSize: 13,
-    color: '#666666',
-    marginBottom: 20,
+    ...type.body,
   },
   buttonGroup: {
-    marginBottom: 16,
-  },
-  button: {
-    marginBottom: 12,
-  },
-  nextButton: {
-    marginBottom: 16,
+    gap: spacing.sm,
   },
 });
 

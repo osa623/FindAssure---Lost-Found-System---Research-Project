@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../../types/models';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { GlassCard } from '../../components/GlassCard';
 import axiosClient from '../../api/axiosClient';
+import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
 
 type VerificationResultRouteProp = RouteProp<RootStackParamList, 'VerificationResult'>;
 type VerificationResultNavigationProp = StackNavigationProp<RootStackParamList, 'VerificationResult'>;
@@ -73,294 +76,169 @@ const VerificationResultScreen = () => {
     }
   };
 
-  const handleGoHome = () => {
-    navigation.navigate('Home');
-  };
+  const handleGoHome = () => navigation.navigate('Home');
 
   if (loading) {
     return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#2563EB" />
+      <LinearGradient colors={gradients.appBackground} style={styles.centerContainer}>
+        <ActivityIndicator size="large" color={palette.primaryDeep} />
         <Text style={styles.loadingText}>Loading verification result...</Text>
-      </View>
+      </LinearGradient>
     );
   }
 
   if (!verification) {
     return (
-      <View style={styles.centerContainer}>
+      <LinearGradient colors={gradients.appBackground} style={styles.centerContainer}>
         <Text style={styles.errorText}>Failed to load verification result</Text>
         <PrimaryButton title="Go Home" onPress={handleGoHome} />
-      </View>
+      </LinearGradient>
     );
   }
 
   const pythonResult = verification.pythonVerificationResult;
   const fallbackAbsoluteOwner = pythonResult?.gemini_recommendation === 'MATCH';
   const isAbsoluteOwner = pythonResult?.is_absolute_owner ?? fallbackAbsoluteOwner;
-  // Keep backend status as source of truth, with fallback for newer Python payload formats.
   const isVerified = verification.status === 'passed' || (verification.status !== 'failed' && !!isAbsoluteOwner);
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        {/* Status Header */}
-        <View style={[styles.statusCard, isVerified ? styles.successCard : styles.failureCard]}>
-          <Text style={styles.statusIcon}>{isVerified ? 'OK' : 'NO'}</Text>
-          <Text style={styles.statusTitle}>
-            {isVerified ? 'Verification Successful!' : 'Verification Failed'}
-          </Text>
-          <Text style={styles.statusMessage}>
+    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <LinearGradient colors={isVerified ? gradients.success : gradients.violet} style={styles.hero}>
+          <Text style={styles.heroEyebrow}>{isVerified ? 'Verified owner' : 'Verification failed'}</Text>
+          <Text style={styles.heroTitle}>{isVerified ? 'Ownership confirmed.' : 'Ownership not confirmed.'}</Text>
+          <Text style={styles.heroBody}>
             {isVerified
-              ? 'You have been verified as the owner of this item'
-              : 'Your answers did not match sufficiently. This may not be your item.'}
+              ? 'You can now contact the finder and arrange item retrieval.'
+              : 'Your answers did not meet the confidence threshold for this item.'}
           </Text>
-          {!isVerified && !!pythonResult?.rejection_reason && (
-            <Text style={styles.failureReason}>{pythonResult.rejection_reason}</Text>
-          )}
-        </View>
+          {!isVerified && pythonResult?.rejection_reason ? <Text style={styles.failureReason}>{pythonResult.rejection_reason}</Text> : null}
+        </LinearGradient>
 
-        {/* Founder Contact Info - Only show if verified */}
-        {isVerified && verification.foundItemId.founderContact && (
-          <View style={styles.contactCard}>
-            <Text style={styles.contactTitle}>Founder Contact Information</Text>
-            <View style={styles.contactInfo}>
-              <View style={styles.contactRow}>
-                <Text style={styles.contactLabel}>Name:</Text>
-                <Text style={styles.contactValue}>{verification.foundItemId.founderContact.name}</Text>
-              </View>
-              <View style={styles.contactRow}>
-                <Text style={styles.contactLabel}>Email:</Text>
-                <Text style={styles.contactValue}>{verification.foundItemId.founderContact.email}</Text>
-              </View>
-              <View style={styles.contactRow}>
-                <Text style={styles.contactLabel}>Phone:</Text>
-                <Text style={styles.contactValue}>{verification.foundItemId.founderContact.phone}</Text>
-              </View>
-            </View>
-            <Text style={styles.contactInstructions}>
-              Please contact the finder to arrange retrieval of your item.
-            </Text>
-          </View>
-        )}
+        {isVerified && verification.foundItemId.founderContact ? (
+          <GlassCard style={styles.cardGap}>
+            <Text style={styles.sectionEyebrow}>Founder contact</Text>
+            <Text style={styles.sectionTitle}>Reach out to retrieve your item</Text>
+            <Text style={styles.sectionBody}>Name: {verification.foundItemId.founderContact.name}</Text>
+            <Text style={styles.sectionBody}>Email: {verification.foundItemId.founderContact.email}</Text>
+            <Text style={styles.sectionBody}>Phone: {verification.foundItemId.founderContact.phone}</Text>
+          </GlassCard>
+        ) : null}
 
-        {/* Question Results */}
-        {pythonResult?.results && pythonResult.results.length > 0 && (
-          <View style={styles.resultsCard}>
-            <Text style={styles.resultsTitle}>Question Analysis</Text>
+        {pythonResult?.results && pythonResult.results.length > 0 ? (
+          <GlassCard style={styles.cardGap}>
+            <Text style={styles.sectionEyebrow}>Question analysis</Text>
+            <Text style={styles.sectionTitle}>How each answer scored</Text>
             {pythonResult.results.map((result, index) => (
               <View key={result.question_id || index} style={styles.resultItem}>
                 <View style={styles.resultHeader}>
                   <Text style={styles.resultNumber}>Q{result.question_id}</Text>
                   <Text style={styles.resultSimilarity}>{result.final_similarity}</Text>
-                  <View
-                    style={[
-                      styles.resultStatus,
-                      result.status === 'match' && styles.statusMatch,
-                      result.status === 'partial_match' && styles.statusPartial,
-                      result.status === 'mismatch' && styles.statusMismatch,
-                    ]}
-                  >
-                    <Text style={styles.resultStatusText}>
-                      {result.status === 'match'
-                        ? 'Match'
-                        : result.status === 'partial_match'
-                          ? 'Partial'
-                          : 'Mismatch'}
-                    </Text>
-                  </View>
+                  <Text style={styles.resultStatus}>{result.status.replace('_', ' ')}</Text>
                 </View>
-                {result.gemini_analysis && (
-                  <Text style={styles.resultAnalysis}>{result.gemini_analysis}</Text>
-                )}
+                {result.gemini_analysis ? <Text style={styles.resultAnalysis}>{result.gemini_analysis}</Text> : null}
               </View>
             ))}
-          </View>
-        )}
+          </GlassCard>
+        ) : null}
 
-        {/* Action Buttons */}
-        <View style={styles.actions}>
-          {!isVerified && (
-            <Text style={styles.tryAgainText}>
-              If you believe this is your item, you can try again with more accurate answers.
-            </Text>
-          )}
-          <PrimaryButton title="Back to Home" onPress={handleGoHome} />
-        </View>
-      </View>
-    </ScrollView>
+        {!isVerified ? (
+          <GlassCard style={styles.cardGap}>
+            <Text style={styles.sectionEyebrow}>Retry</Text>
+            <Text style={styles.sectionBody}>If you still believe this is your item, try again with more accurate and specific answers.</Text>
+          </GlassCard>
+        ) : null}
+
+        <PrimaryButton title="Back to Home" onPress={handleGoHome} size="lg" />
+      </ScrollView>
+    </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F9FAFB',
-  },
+  container: { flex: 1 },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: spacing.xl,
   },
   content: {
-    padding: 20,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
   loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: '#6B7280',
+    ...type.bodyStrong,
+    marginTop: spacing.lg,
   },
   errorText: {
-    fontSize: 16,
-    color: '#EF4444',
-    marginBottom: 24,
-    textAlign: 'center',
+    ...type.body,
+    marginBottom: spacing.lg,
   },
-  statusCard: {
-    padding: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginBottom: 20,
+  hero: {
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
   },
-  successCard: {
-    backgroundColor: '#D1FAE5',
+  heroEyebrow: {
+    ...type.label,
+    color: 'rgba(255,255,255,0.72)',
+    marginBottom: spacing.sm,
   },
-  failureCard: {
-    backgroundColor: '#FEE2E2',
+  heroTitle: {
+    ...type.title,
+    color: palette.paperStrong,
+    marginBottom: spacing.sm,
   },
-  statusIcon: {
-    fontSize: 48,
-    marginBottom: 12,
-    fontWeight: '700',
-  },
-  statusTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  statusMessage: {
-    fontSize: 16,
-    color: '#6B7280',
-    textAlign: 'center',
+  heroBody: {
+    ...type.body,
+    color: 'rgba(255,255,255,0.82)',
   },
   failureReason: {
-    marginTop: 10,
-    fontSize: 13,
-    color: '#991B1B',
-    textAlign: 'center',
+    ...type.caption,
+    color: 'rgba(255,255,255,0.78)',
+    marginTop: spacing.md,
   },
-  contactCard: {
-    backgroundColor: '#EFF6FF',
-    padding: 20,
-    borderRadius: 12,
-    marginBottom: 20,
-    borderWidth: 2,
-    borderColor: '#2563EB',
+  cardGap: {
+    marginBottom: spacing.lg,
   },
-  contactTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    color: '#1F2937',
-    textAlign: 'center',
+  sectionEyebrow: {
+    ...type.label,
+    marginBottom: spacing.xs,
   },
-  contactInfo: {
-    marginBottom: 16,
+  sectionTitle: {
+    ...type.section,
+    marginBottom: spacing.md,
   },
-  contactRow: {
-    flexDirection: 'row',
-    marginBottom: 12,
-  },
-  contactLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
-    width: 80,
-  },
-  contactValue: {
-    fontSize: 16,
-    color: '#2563EB',
-    flex: 1,
-  },
-  contactInstructions: {
-    fontSize: 14,
-    color: '#6B7280',
-    fontStyle: 'italic',
-    textAlign: 'center',
-  },
-  resultsCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderRadius: 12,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  resultsTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    color: '#1F2937',
+  sectionBody: {
+    ...type.body,
+    marginBottom: spacing.sm,
   },
   resultItem: {
-    marginBottom: 16,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    paddingVertical: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: palette.line,
   },
   resultHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
   },
   resultNumber: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#1F2937',
-    marginRight: 12,
+    ...type.bodyStrong,
   },
   resultSimilarity: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#2563EB',
-    marginRight: 12,
+    ...type.bodyStrong,
+    color: palette.primaryDeep,
   },
   resultStatus: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  statusMatch: {
-    backgroundColor: '#D1FAE5',
-  },
-  statusPartial: {
-    backgroundColor: '#FEF3C7',
-  },
-  statusMismatch: {
-    backgroundColor: '#FEE2E2',
-  },
-  resultStatusText: {
-    fontSize: 12,
-    fontWeight: '600',
+    ...type.caption,
+    textTransform: 'capitalize',
   },
   resultAnalysis: {
-    fontSize: 14,
-    color: '#6B7280',
-    lineHeight: 20,
-  },
-  actions: {
-    marginBottom: 40,
-  },
-  tryAgainText: {
-    fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
-    marginBottom: 16,
+    ...type.body,
   },
 });
 
