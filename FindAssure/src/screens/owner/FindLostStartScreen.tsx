@@ -10,6 +10,7 @@ import {
   View,
   ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
@@ -28,6 +29,7 @@ import { AI_BACKEND_URL } from '../../config/api.config';
 import { FormInput } from '../../components/FormInput';
 import { GlassCard } from '../../components/GlassCard';
 import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
+import { showImageSourceOptions } from '../../utils/imageSourceOptions';
 
 type FindLostStartNavigationProp = StackNavigationProp<RootStackParamList, 'FindLostStart'>;
 
@@ -90,6 +92,29 @@ const FindLostStartScreen = () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: false,
+      quality: 0.8,
+    });
+
+    if (!result.canceled) {
+      const asset = result.assets[0];
+      setOwnerImage({
+        uri: asset.uri,
+        fileName: asset.fileName || null,
+        mimeType: asset.mimeType || null,
+      });
+    }
+  };
+
+  const handleCaptureOwnerImage = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Please allow access to your camera');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      aspect: [4, 3],
       quality: 0.8,
     });
 
@@ -203,17 +228,31 @@ const FindLostStartScreen = () => {
             <Text style={styles.sectionEyebrow}>Optional image</Text>
             <Text style={styles.sectionTitle}>Add a photo if you have one</Text>
             {ownerImage ? (
-              <View>
+              <View style={styles.ownerImageWrap}>
                 <Image source={{ uri: ownerImage.uri }} style={styles.ownerImagePreview} contentFit="cover" />
-                <Pressable onPress={() => setOwnerImage(null)} style={styles.removeWrap}>
-                  <Text style={styles.removeText}>Remove photo</Text>
+                <Pressable
+                  onPress={() => setOwnerImage(null)}
+                  style={styles.removeWrap}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove selected photo"
+                >
+                  <Ionicons name="close" size={14} color={palette.paperStrong} />
                 </Pressable>
               </View>
             ) : (
-              <Pressable style={styles.uploadCard} onPress={handleSelectOwnerImage}>
+              <Pressable
+                style={styles.uploadCard}
+                onPress={() =>
+                  showImageSourceOptions({
+                    title: 'Add Reference Photo',
+                    onTakePhoto: handleCaptureOwnerImage,
+                    onChooseFromLibrary: handleSelectOwnerImage,
+                  })
+                }
+              >
                 <Text style={styles.uploadIcon}>⌁</Text>
                 <Text style={styles.uploadTitle}>Upload photo</Text>
-                <Text style={styles.uploadBody}>Adding a reference image improves visual matching.</Text>
+                <Text style={styles.uploadBody}>Tap to take a photo or choose one from your library.</Text>
               </Pressable>
             )}
           </GlassCard>
@@ -340,6 +379,9 @@ const styles = StyleSheet.create({
     ...type.body,
     textAlign: 'center',
   },
+  ownerImageWrap: {
+    position: 'relative',
+  },
   ownerImagePreview: {
     width: '100%',
     height: 196,
@@ -347,13 +389,15 @@ const styles = StyleSheet.create({
     backgroundColor: palette.shell,
   },
   removeWrap: {
-    marginTop: spacing.sm,
-    alignSelf: 'center',
-  },
-  removeText: {
-    ...type.caption,
-    color: palette.danger,
-    fontWeight: '700',
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.sm,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(17,24,39,0.68)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
 

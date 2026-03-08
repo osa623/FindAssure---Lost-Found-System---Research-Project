@@ -1,5 +1,6 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
@@ -12,6 +13,7 @@ import { RootStackParamList, SelectedImageAsset } from '../../types/models';
 import { itemsApi } from '../../api/itemsApi';
 import { ITEM_CATEGORIES } from '../../constants/appConstants';
 import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
+import { showImageSourceOptions } from '../../utils/imageSourceOptions';
 
 type ReportFoundStartNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundStart'>;
 
@@ -170,17 +172,31 @@ const ReportFoundStartScreen = () => {
               return (
                 <View key={index} style={styles.slot}>
                   {image ? (
-                    <>
+                    <View style={styles.imageWrap}>
                       <Image source={{ uri: image.uri }} style={styles.image} contentFit="cover" />
-                      <Pressable style={styles.removeButton} onPress={() => handleRemoveImage(image.uri)}>
-                        <Text style={styles.removeButtonText}>Remove</Text>
+                      <Pressable
+                        style={styles.removeButton}
+                        onPress={() => handleRemoveImage(image.uri)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove photo ${index + 1}`}
+                      >
+                        <Ionicons name="close" size={14} color={palette.paperStrong} />
                       </Pressable>
-                    </>
+                    </View>
                   ) : (
-                    <View style={styles.placeholder}>
+                    <Pressable
+                      style={styles.placeholder}
+                      onPress={() =>
+                        showImageSourceOptions({
+                          title: `Add Photo ${index + 1}`,
+                          onTakePhoto: handleCaptureImage,
+                          onChooseFromLibrary: handleSelectImages,
+                        })
+                      }
+                    >
                       <Text style={styles.placeholderIcon}>＋</Text>
                       <Text style={styles.placeholderText}>Photo {index + 1}</Text>
-                    </View>
+                    </Pressable>
                   )}
                 </View>
               );
@@ -191,15 +207,6 @@ const ReportFoundStartScreen = () => {
               ? 'One clear photo enables the basic analysis path.'
               : 'Two or three photos improve multi-view analysis and matching quality.'}
           </Text>
-        </GlassCard>
-
-        <GlassCard style={styles.cardGap}>
-          <Text style={styles.sectionEyebrow}>Capture options</Text>
-          <Text style={styles.sectionTitle}>Bring in fresh photos or use your gallery</Text>
-          <View style={styles.buttonGroup}>
-            <PrimaryButton title="Capture Photo" onPress={handleCaptureImage} />
-            <PrimaryButton title="Select from Gallery" onPress={handleSelectImages} variant="secondary" />
-          </View>
         </GlassCard>
 
         <PrimaryButton title="Next" onPress={handleNext} disabled={images.length === 0} size="lg" />
@@ -253,6 +260,9 @@ const styles = StyleSheet.create({
   slot: {
     flex: 1,
   },
+  imageWrap: {
+    position: 'relative',
+  },
   image: {
     width: '100%',
     height: 148,
@@ -264,7 +274,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: palette.paperStrong,
     borderWidth: 1,
-    borderColor: palette.line,
+    borderColor: palette.lineStrong,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -277,19 +287,18 @@ const styles = StyleSheet.create({
     ...type.caption,
   },
   removeButton: {
-    alignSelf: 'center',
-    marginTop: spacing.sm,
-  },
-  removeButtonText: {
-    ...type.caption,
-    color: palette.danger,
-    fontWeight: '700',
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.sm,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(17,24,39,0.68)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   helperText: {
     ...type.body,
-  },
-  buttonGroup: {
-    gap: spacing.sm,
   },
 });
 

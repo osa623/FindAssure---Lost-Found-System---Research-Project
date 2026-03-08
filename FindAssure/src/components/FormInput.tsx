@@ -9,7 +9,6 @@ import {
   ViewStyle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { GlassCard } from './GlassCard';
 import { palette, radius, spacing, type } from '../theme/designSystem';
 
 interface FormInputProps extends TextInputProps {
@@ -35,32 +34,41 @@ export const FormInput: React.FC<FormInputProps> = ({
   ...props
 }) => {
   const [focused, setFocused] = useState(false);
+  const disabled = props.editable === false;
 
   return (
     <View style={containerStyle}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
-      <GlassCard
-        intensity={0}
+      <View
         style={[
           styles.wrapper,
           focused && styles.wrapperFocused,
+          disabled && styles.wrapperDisabled,
           error ? styles.wrapperError : null,
+          inputContainerStyle,
         ]}
-        contentStyle={[styles.field, inputContainerStyle]}
       >
         {leadingIcon ? (
-          <Ionicons name={leadingIcon} size={18} color={palette.mist} style={styles.icon} />
+          <View style={[styles.iconWrap, multiline && styles.iconWrapMultiline]}>
+            <Ionicons name={leadingIcon} size={18} color={disabled ? palette.mist : palette.inkSoft} style={styles.icon} />
+          </View>
         ) : null}
         <TextInput
           placeholderTextColor={palette.inkSoft}
           multiline={multiline}
-          style={[styles.input, multiline && styles.multiline, style]}
+          style={[
+            styles.input,
+            !leadingIcon && styles.inputWithoutIcon,
+            multiline && styles.multiline,
+            disabled && styles.inputDisabled,
+            style,
+          ]}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           {...props}
         />
-        {trailing}
-      </GlassCard>
+        {trailing ? <View style={styles.trailingWrap}>{trailing}</View> : null}
+      </View>
       {error ? <Text style={styles.error}>{error}</Text> : hint ? <Text style={styles.hint}>{hint}</Text> : null}
     </View>
   );
@@ -76,6 +84,8 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: palette.lineStrong,
     backgroundColor: palette.paperStrong,
+    flexDirection: 'row',
+    alignItems: 'stretch',
     shadowOpacity: 0,
     shadowRadius: 0,
     elevation: 0,
@@ -83,39 +93,55 @@ const styles = StyleSheet.create({
   wrapperFocused: {
     borderColor: palette.primary,
     shadowColor: palette.primary,
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
     elevation: 1,
+  },
+  wrapperDisabled: {
+    backgroundColor: palette.shellAlt,
   },
   wrapperError: {
     borderColor: palette.danger,
   },
-  field: {
-    paddingVertical: 0,
-    paddingHorizontal: 0,
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    minHeight: 52,
-    backgroundColor: palette.paperStrong,
+  iconWrap: {
+    width: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconWrapMultiline: {
+    justifyContent: 'flex-start',
+    paddingTop: 14,
   },
   icon: {
-    marginLeft: spacing.md,
-    marginRight: spacing.sm,
-    alignSelf: 'center',
+    marginLeft: spacing.sm,
   },
   input: {
     flex: 1,
     minHeight: 52,
     color: palette.ink,
     fontSize: 15,
+    lineHeight: 20,
     fontFamily: type.body.fontFamily,
-    paddingVertical: 13,
+    paddingTop: 14,
+    paddingBottom: 14,
     paddingRight: spacing.md,
   },
+  inputWithoutIcon: {
+    paddingLeft: spacing.md,
+  },
   multiline: {
-    minHeight: 92,
+    minHeight: 104,
     textAlignVertical: 'top',
-    paddingTop: 13,
+    paddingTop: 14,
+    paddingBottom: 14,
+  },
+  inputDisabled: {
+    color: palette.inkSoft,
+  },
+  trailingWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingRight: spacing.md,
   },
   hint: {
     ...type.caption,
