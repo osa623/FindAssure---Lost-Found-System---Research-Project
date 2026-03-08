@@ -18,6 +18,7 @@ const ReportFoundQuestionsScreen = () => {
   const { images, preAnalysisToken, category, description } = route.params;
 
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
+  const [suggestedAnswersByQuestion, setSuggestedAnswersByQuestion] = useState<Record<string, string>>({});
   const [selectedQuestions, setSelectedQuestions] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +45,15 @@ const ReportFoundQuestionsScreen = () => {
       console.log('📝 First question:', response.questions[0]);
       
       setSuggestedQuestions(response.questions);
+
+      const answerMap: Record<string, string> = {};
+      response.questions.forEach((question, index) => {
+        const suggested = response.suggestedFounderAnswers?.[index];
+        if (suggested && suggested.trim().length > 0) {
+          answerMap[question] = suggested.trim();
+        }
+      });
+      setSuggestedAnswersByQuestion(answerMap);
     } catch (err: any) {
       console.error('❌ Error generating questions:', err);
       console.error('Error details:', err.response?.data || err.message);
@@ -96,6 +106,7 @@ const ReportFoundQuestionsScreen = () => {
       category,
       description,
       selectedQuestions,
+      suggestedAnswersByQuestion,
     });
   };
 

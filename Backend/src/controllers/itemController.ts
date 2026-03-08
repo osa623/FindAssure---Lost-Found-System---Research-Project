@@ -922,7 +922,13 @@ export const generateQuestions = async (
       description,
     });
 
-    res.status(200).json({ questions });
+    const suggestedFounderAnswers = await geminiService.generateSuggestedFounderAnswers({
+      category,
+      description,
+      questions,
+    });
+
+    res.status(200).json({ questions, suggestedFounderAnswers });
   } catch (error) {
     next(error);
   }

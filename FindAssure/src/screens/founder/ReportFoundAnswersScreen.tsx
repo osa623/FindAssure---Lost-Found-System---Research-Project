@@ -21,10 +21,17 @@ type ReportFoundAnswersRouteProp = RouteProp<RootStackParamList, 'ReportFoundAns
 const ReportFoundAnswersScreen = () => {
   const navigation = useNavigation<ReportFoundAnswersNavigationProp>();
   const route = useRoute<ReportFoundAnswersRouteProp>();
-  const { images, preAnalysisToken, category, description, selectedQuestions } = route.params;
+  const {
+    images,
+    preAnalysisToken,
+    category,
+    description,
+    selectedQuestions,
+    suggestedAnswersByQuestion,
+  } = route.params;
 
   const [answers, setAnswers] = useState<string[]>(
-    new Array(selectedQuestions.length).fill('')
+    selectedQuestions.map((question) => suggestedAnswersByQuestion?.[question] || '')
   );
 
   const handleAnswerChange = (index: number, text: string) => {
@@ -61,7 +68,7 @@ const ReportFoundAnswersScreen = () => {
           <View style={styles.header}>
             <Text style={styles.title}>Answer the Questions</Text>
             <Text style={styles.subtitle}>
-              Type your answers to help verify the true owner. Owners will provide video answers to claim items.
+              AI suggested answers are prefilled. Review and edit each answer before submitting.
             </Text>
           </View>
 
@@ -70,6 +77,11 @@ const ReportFoundAnswersScreen = () => {
               <View key={index} style={styles.questionGroup}>
                 <Text style={styles.questionNumber}>Question {index + 1}</Text>
                 <Text style={styles.questionText}>{question}</Text>
+                {suggestedAnswersByQuestion?.[question] ? (
+                  <Text style={styles.suggestionText}>
+                    Suggested: {suggestedAnswersByQuestion[question]}
+                  </Text>
+                ) : null}
                 
                 {/* Text Input Only for Founders */}
                 <TextInput
@@ -156,6 +168,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333333',
     marginBottom: 12,
+  },
+  suggestionText: {
+    fontSize: 12,
+    color: '#2E7D32',
+    marginBottom: 8,
+    fontStyle: 'italic',
   },
   answerInput: {
     borderWidth: 1,

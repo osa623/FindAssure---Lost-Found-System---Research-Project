@@ -165,6 +165,7 @@ export type RootStackParamList = {
     category: string;
     description: string;
     selectedQuestions: string[];
+    suggestedAnswersByQuestion?: Record<string, string>;
   };
   ReportFoundLocation: { 
     images: SelectedImageAsset[];
