@@ -101,8 +101,11 @@ export const itemsApi = {
   generateQuestions: async (data: {
     category: string;
     description: string;
-  }): Promise<{ questions: string[] }> => {
-    const response = await axiosClient.post<{ questions: string[] }>('/items/generate-questions', data);
+  }): Promise<{ questions: string[]; suggestedFounderAnswers?: string[] }> => {
+    const response = await axiosClient.post<{ questions: string[]; suggestedFounderAnswers?: string[] }>(
+      '/items/generate-questions',
+      data
+    );
     return response.data;
   },
 
