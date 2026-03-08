@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from app.config.settings import settings
 
 load_dotenv()
 
@@ -11,7 +12,7 @@ if not BASE_MODELS_DIR:
 
 # --- DINOv2 Configuration ---
 # If using a local clone of the DINOv2 repository
-DINOV2_REPO_PATH = os.path.join(BASE_MODELS_DIR, "DINOv2") 
+DINOV2_REPO_PATH = settings.DINO_MODEL_PATH or os.path.join(BASE_MODELS_DIR, "DINOv2")
 # Path to local weights if not downloading automatically
 DINOV2_WEIGHTS_PATH = os.path.join(DINOV2_REPO_PATH, "model.safetensors")
 
@@ -28,8 +29,6 @@ FLORENCE2_MODEL_PATH = os.path.join(BASE_MODELS_DIR, "florence2-base-ft")
 FINAL_MASTER_MODEL_PATH = os.path.join(BASE_MODELS_DIR, "final_master_model.pt")
 
 # --- FAISS Configuration ---
-# Ensure the data directory exists
-from app.config.settings import settings
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data"))
 FAISS_INDEX_PATH = settings.FAISS_INDEX_PATH
 FAISS_MAPPING_PATH = settings.FAISS_MAPPING_PATH

@@ -1,21 +1,12 @@
-import React, { useState } from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
+import React, { useMemo, useState } from 'react';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { RootStackParamList } from '../../types/models';
-import { PrimaryButton } from '../../components/PrimaryButton';
-import { FormInput } from '../../components/FormInput';
 import { GlassCard } from '../../components/GlassCard';
-import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
+import { PrimaryButton } from '../../components/PrimaryButton';
+import { useAppTheme } from '../../context/ThemeContext';
+import { useToast } from '../../context/ToastContext';
+import { RootStackParamList } from '../../types/models';
 
 type ReportFoundAnswersNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundAnswers'>;
 type ReportFoundAnswersRouteProp = RouteProp<RootStackParamList, 'ReportFoundAnswers'>;
@@ -23,6 +14,9 @@ type ReportFoundAnswersRouteProp = RouteProp<RootStackParamList, 'ReportFoundAns
 const ReportFoundAnswersScreen = () => {
   const navigation = useNavigation<ReportFoundAnswersNavigationProp>();
   const route = useRoute<ReportFoundAnswersRouteProp>();
+  const { theme } = useAppTheme();
+  const { showToast } = useToast();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const {
     images,
     preAnalysisToken,
@@ -37,15 +31,20 @@ const ReportFoundAnswersScreen = () => {
   );
 
   const handleAnswerChange = (index: number, text: string) => {
-    const next = [...answers];
-    next[index] = text;
-    setAnswers(next);
+    const newAnswers = [...answers];
+    newAnswers[index] = text;
+    setAnswers(newAnswers);
   };
 
   const handleNext = () => {
     const allAnswered = answers.every((answer) => answer.trim().length > 0);
+
     if (!allAnswered) {
-      Alert.alert('Incomplete', 'Please answer all questions');
+      showToast({
+        title: 'Incomplete answers',
+        message: 'Please answer every verification question before continuing.',
+        variant: 'warning',
+      });
       return;
     }
 
@@ -55,131 +54,147 @@ const ReportFoundAnswersScreen = () => {
       category,
       description,
       selectedQuestions,
-      founderAnswers: answers.map((a) => a.trim()),
+      founderAnswers: answers.map((answer) => answer.trim()),
     });
   };
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView style={styles.scrollView}>
-        <View style={styles.content}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Answer the Questions</Text>
-            <Text style={styles.subtitle}>
-              AI suggested answers are prefilled. Review and edit each answer before submitting.
-            </Text>
-          </View>
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <GlassCard style={styles.hero}>
+          <Text style={styles.heroEyebrow}>Founder answers</Text>
+          <Text style={styles.title}>Answer the Questions</Text>
+          <GlassCard style={styles.tipsBox}>
+           <Text style={styles.tipText}>Examine the found item carefully before answering.</Text>
+          <Text style={styles.tipText}>Look at visible labels, colors, wear marks, and unique details.</Text>
+          <Text style={styles.tipText}>Be specific and accurate instead of generic.</Text>
+          <Text style={styles.tipText}>These answers are what the real owner will need to match later.</Text>
+        </GlassCard>
+        </GlassCard>
 
-          <View style={styles.questionsContainer}>
-            {selectedQuestions.map((question, index) => (
-              <View key={index} style={styles.questionGroup}>
-                <Text style={styles.questionNumber}>Question {index + 1}</Text>
-                <Text style={styles.questionText}>{question}</Text>
-                {suggestedAnswersByQuestion?.[question] ? (
-                  <Text style={styles.suggestionText}>
-                    Suggested: {suggestedAnswersByQuestion[question]}
-                  </Text>
-                ) : null}
-                
-                {/* Text Input Only for Founders */}
-                <TextInput
-                  style={styles.answerInput}
-                  placeholder="Type your answer here..."
-                  value={answers[index]}
-                  onChangeText={(text) => handleAnswerChange(index, text)}
-                  multiline
-                  numberOfLines={4}
-                  textAlignVertical="top"
-                />
-              </View>
-            ))}
-          </View>
+        <View style={styles.questionsContainer}>
+          {selectedQuestions.map((question, index) => (
+            <GlassCard key={question} style={styles.questionGroup}>
+              <Text style={styles.questionNumber}>Question {index + 1}</Text>
+              <Text style={styles.questionText}>{question}</Text>
+              {suggestedAnswersByQuestion?.[question] ? (
+                <View style={styles.suggestionChip}>
+                  <Text style={styles.suggestionText}>Suggested answer available</Text>
+                </View>
+              ) : null}
 
-          <GlassCard style={styles.cardGap}>
-            <Text style={styles.tipTitle}>Answering tips</Text>
-            <Text style={styles.tipText}>Examine the item closely and include details like color, brand, materials, size, or unique marks.</Text>
-            <Text style={styles.tipText}>Keep answers truthful and specific so only the real owner can match them later.</Text>
-          </GlassCard>
+              <TextInput
+                style={styles.answerInput}
+                placeholder="Type your answer here..."
+                placeholderTextColor={theme.colors.placeholder}
+                value={answers[index]}
+                onChangeText={(text) => handleAnswerChange(index, text)}
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+              />
+            </GlassCard>
+          ))}
+        </View>
 
-          <PrimaryButton title="Next" onPress={handleNext} size="lg" />
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </LinearGradient>
+        
+
+        <PrimaryButton title="Next" onPress={handleNext} style={styles.nextButton} />
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: {
-    paddingTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  hero: {
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.lg,
-  },
-  heroBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: palette.primarySoft,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    marginBottom: spacing.sm,
-  },
-  heroBadgeText: {
-    ...type.caption,
-    color: palette.primaryDeep,
-    fontWeight: '700',
-  },
-  heroEyebrow: {
-    ...type.label,
-    color: palette.primaryDeep,
-    marginBottom: spacing.xs,
-  },
-  heroTitle: {
-    ...type.title,
-    color: palette.ink,
-    marginBottom: spacing.sm,
-  },
-  heroBody: {
-    ...type.body,
-    color: palette.inkSoft,
-  },
-  cardGap: {
-    marginBottom: spacing.lg,
-  },
-  suggestionText: {
-    fontSize: 12,
-    color: '#2E7D32',
-    marginBottom: 8,
-    fontStyle: 'italic',
-  },
-  answerInput: {
-    borderWidth: 1,
-    borderColor: '#DDDDDD',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    backgroundColor: '#FAFAFA',
-    minHeight: 100,
-  },
-  questionText: {
-    ...type.cardTitle,
-    marginBottom: spacing.lg,
-  },
-  tipTitle: {
-    ...type.section,
-    marginBottom: spacing.sm,
-  },
-  tipText: {
-    ...type.body,
-    marginBottom: spacing.sm,
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    scrollView: {
+      flex: 1,
+    },
+    content: {
+      padding: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
+    },
+    hero: {
+      marginBottom: theme.spacing.lg,
+    },
+    heroEyebrow: {
+      ...theme.type.label,
+      color: theme.colors.accent,
+      marginBottom: theme.spacing.xs,
+    },
+    title: {
+      ...theme.type.title,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.sm,
+    },
+    subtitle: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      lineHeight: 20,
+    },
+    questionsContainer: {
+      marginBottom: theme.spacing.lg,
+    },
+    questionGroup: {
+      marginBottom: theme.spacing.md,
+    },
+    questionNumber: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+      fontWeight: '700',
+      marginBottom: theme.spacing.xs,
+    },
+    questionText: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.sm,
+    },
+    suggestionChip: {
+      alignSelf: 'flex-start',
+      backgroundColor: theme.colors.successSoft,
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 6,
+      marginBottom: theme.spacing.sm,
+    },
+    suggestionText: {
+      ...theme.type.caption,
+      color: theme.colors.success,
+      fontWeight: '700',
+    },
+    answerInput: {
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
+      borderRadius: theme.radius.md,
+      padding: theme.spacing.md,
+      fontSize: 14,
+      lineHeight: 20,
+      color: theme.colors.textStrong,
+      backgroundColor: theme.colors.input,
+      minHeight: 112,
+    },
+    tipsBox: {
+      marginBottom: theme.spacing.lg,
+      borderColor: theme.colors.successSoft,
+    },
+    tipsTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.md,
+    },
+    tipText: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      lineHeight: 20,
+      marginBottom: theme.spacing.sm,
+    },
+    nextButton: {
+      marginBottom: theme.spacing.md,
+    },
+  });
 
 export default ReportFoundAnswersScreen;

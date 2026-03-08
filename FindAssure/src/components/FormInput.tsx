@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import React, { useMemo, useRef, useState } from 'react';
 import {
+  Pressable,
   StyleProp,
   StyleSheet,
   Text,
@@ -8,8 +10,7 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { palette, radius, spacing, type } from '../theme/designSystem';
+import { useAppTheme } from '../context/ThemeContext';
 
 interface FormInputProps extends TextInputProps {
   label?: string;
@@ -33,13 +34,19 @@ export const FormInput: React.FC<FormInputProps> = ({
   style,
   ...props
 }) => {
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [focused, setFocused] = useState(false);
+  const inputRef = useRef<TextInput>(null);
   const disabled = props.editable === false;
 
   return (
     <View style={containerStyle}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
-      <View
+      <Pressable
+        onPress={() => {
+          if (!disabled) inputRef.current?.focus();
+        }}
         style={[
           styles.wrapper,
           focused && styles.wrapperFocused,
@@ -50,11 +57,17 @@ export const FormInput: React.FC<FormInputProps> = ({
       >
         {leadingIcon ? (
           <View style={[styles.iconWrap, multiline && styles.iconWrapMultiline]}>
-            <Ionicons name={leadingIcon} size={18} color={disabled ? palette.mist : palette.inkSoft} style={styles.icon} />
+            <Ionicons
+              name={leadingIcon}
+              size={18}
+              color={disabled ? theme.colors.textSubtle : theme.colors.textMuted}
+              style={styles.icon}
+            />
           </View>
         ) : null}
         <TextInput
-          placeholderTextColor={palette.inkSoft}
+          ref={inputRef}
+          placeholderTextColor={theme.colors.placeholder}
           multiline={multiline}
           style={[
             styles.input,
@@ -68,89 +81,90 @@ export const FormInput: React.FC<FormInputProps> = ({
           {...props}
         />
         {trailing ? <View style={styles.trailingWrap}>{trailing}</View> : null}
-      </View>
+      </Pressable>
       {error ? <Text style={styles.error}>{error}</Text> : hint ? <Text style={styles.hint}>{hint}</Text> : null}
     </View>
   );
 };
 
-const styles = StyleSheet.create({
-  label: {
-    ...type.label,
-    marginBottom: spacing.xs,
-  },
-  wrapper: {
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: palette.lineStrong,
-    backgroundColor: palette.paperStrong,
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    shadowOpacity: 0,
-    shadowRadius: 0,
-    elevation: 0,
-  },
-  wrapperFocused: {
-    borderColor: palette.primary,
-    shadowColor: palette.primary,
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 1,
-  },
-  wrapperDisabled: {
-    backgroundColor: palette.shellAlt,
-  },
-  wrapperError: {
-    borderColor: palette.danger,
-  },
-  iconWrap: {
-    width: 42,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconWrapMultiline: {
-    justifyContent: 'flex-start',
-    paddingTop: 14,
-  },
-  icon: {
-    marginLeft: spacing.sm,
-  },
-  input: {
-    flex: 1,
-    minHeight: 52,
-    color: palette.ink,
-    fontSize: 15,
-    lineHeight: 20,
-    fontFamily: type.body.fontFamily,
-    paddingTop: 14,
-    paddingBottom: 14,
-    paddingRight: spacing.md,
-  },
-  inputWithoutIcon: {
-    paddingLeft: spacing.md,
-  },
-  multiline: {
-    minHeight: 104,
-    textAlignVertical: 'top',
-    paddingTop: 14,
-    paddingBottom: 14,
-  },
-  inputDisabled: {
-    color: palette.inkSoft,
-  },
-  trailingWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingRight: spacing.md,
-  },
-  hint: {
-    ...type.caption,
-    marginTop: spacing.xs,
-    color: palette.inkSoft,
-  },
-  error: {
-    ...type.caption,
-    marginTop: spacing.xs,
-    color: palette.danger,
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    label: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    wrapper: {
+      borderRadius: theme.radius.md,
+      borderWidth: 1.5,
+      borderColor: theme.colors.borderStrong,
+      backgroundColor: theme.colors.input,
+      flexDirection: 'row',
+      alignItems: 'stretch',
+      minHeight: 54,
+    },
+    wrapperFocused: {
+      borderColor: theme.colors.accent,
+      shadowColor: theme.colors.accent,
+      shadowOpacity: theme.isDark ? 0.2 : 0.08,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 2,
+    },
+    wrapperDisabled: {
+      backgroundColor: theme.colors.inputMuted,
+    },
+    wrapperError: {
+      borderColor: theme.colors.danger,
+    },
+    iconWrap: {
+      width: 42,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    iconWrapMultiline: {
+      justifyContent: 'flex-start',
+      paddingTop: 14,
+    },
+    icon: {
+      marginLeft: theme.spacing.sm,
+    },
+    input: {
+      flex: 1,
+      minHeight: 52,
+      color: theme.colors.textStrong,
+      fontSize: 15,
+      lineHeight: 20,
+      fontFamily: theme.type.body.fontFamily,
+      paddingTop: 14,
+      paddingBottom: 14,
+      paddingRight: theme.spacing.md,
+    },
+    inputWithoutIcon: {
+      paddingLeft: theme.spacing.md,
+    },
+    multiline: {
+      minHeight: 108,
+      textAlignVertical: 'top',
+      lineHeight: 21,
+      paddingTop: 14,
+      paddingBottom: 14,
+    },
+    inputDisabled: {
+      color: theme.colors.textMuted,
+    },
+    trailingWrap: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingRight: theme.spacing.md,
+    },
+    hint: {
+      ...theme.type.caption,
+      marginTop: theme.spacing.xs,
+      color: theme.colors.textMuted,
+    },
+    error: {
+      ...theme.type.caption,
+      marginTop: theme.spacing.xs,
+      color: theme.colors.danger,
+    },
+  });

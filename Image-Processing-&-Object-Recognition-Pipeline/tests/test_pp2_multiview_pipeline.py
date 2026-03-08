@@ -24,6 +24,13 @@ for name, module in patched_modules.items():
     sys.modules[name] = module
 
 from app.services.pp2_multiview_pipeline import MultiViewPipeline
+from app.schemas.pp2_schemas import (
+    PP2PerViewDetection,
+    PP2PerViewEmbedding,
+    PP2PerViewExtraction,
+    PP2PerViewResult,
+    PP2VerificationResult,
+)
 
 # Restore module table so unrelated tests use real implementations.
 for name, module in original_modules.items():
@@ -575,6 +582,107 @@ class TestODCaptionAdoptedRefinement(unittest.TestCase):
         ]
         result = self.pipeline._needs_pass_caption_refinement(views, [0, 1])
         self.assertTrue(result)
+
+
+class TestSmartPhoneFrontBackFailurePath(unittest.TestCase):
+    def setUp(self):
+        self.pipeline = MultiViewPipeline(
+            yolo=MagicMock(),
+            florence=MagicMock(),
+            dino=MagicMock(),
+            verifier=MagicMock(),
+            fusion=MagicMock(),
+            faiss=MagicMock(),
+        )
+
+    @staticmethod
+    def _make_view(view_index: int) -> PP2PerViewResult:
+        return PP2PerViewResult(
+            view_index=view_index,
+            filename=f"view_{view_index}.jpg",
+            detection=PP2PerViewDetection(bbox=(0, 0, 10, 10), cls_name="Smart Phone", confidence=0.9),
+            extraction=PP2PerViewExtraction(caption="", ocr_text="", grounded_features={}, raw={}),
+            embedding=PP2PerViewEmbedding(dim=2, vector_preview=[1.0, 0.0], vector_id=f"v{view_index}"),
+            quality_score=0.9,
+        )
+
+    def test_failed_phone_candidate_reruns_once_after_targeted_detail(self):
+        verification = PP2VerificationResult(
+            mode="two_view",
+            cosine_sim_matrix=[[1.0, 0.2], [0.2, 1.0]],
+            faiss_sim_matrix=[[1.0, 0.2], [0.2, 1.0]],
+            geometric_scores={
+                "0-1": {
+                    "smartphone_front_back_retryable": True,
+                    "smartphone_front_back_candidate": True,
+                    "smartphone_front_back_evidence_ready": False,
+                }
+            },
+            passed=False,
+            failure_reasons=["initial fail"],
+            used_views=[0, 1],
+            dropped_views=[],
+        )
+        rerun_verification = PP2VerificationResult(
+            mode="two_view",
+            cosine_sim_matrix=[[1.0, 0.2], [0.2, 1.0]],
+            faiss_sim_matrix=[[1.0, 0.2], [0.2, 1.0]],
+            geometric_scores={
+                "0-1": {
+                    "smartphone_front_back_retryable": False,
+                    "smartphone_front_back_candidate": True,
+                    "smartphone_front_back_evidence_ready": True,
+                }
+            },
+            passed=True,
+            failure_reasons=["rescued"],
+            used_views=[0, 1],
+            dropped_views=[],
+        )
+        self.pipeline.florence.analyze_ocr_first.side_effect = [
+            {"caption": "front side", "ocr_text": "Home to unlock", "grounded_features": {}, "raw": {}},
+            {"caption": "back side", "ocr_text": "", "grounded_features": {"features": ["camera module"]}, "raw": {}},
+        ]
+        self.pipeline.verifier.verify.return_value = rerun_verification
+
+        updated_verification, detail_ms, rerun_verify_ms, rerun_performed = self.pipeline._rerun_smartphone_front_back_rescue_if_needed(
+            verification=verification,
+            per_view_results=[self._make_view(0), self._make_view(1)],
+            vectors_np=[],
+            crops=["c0", "c1"],
+            crop_by_index={0: "c0", 1: "c1"},
+            used_views=[0, 1],
+            dropped_views=[],
+            decision_indices=[0, 1],
+            consensus_label="Smart Phone",
+            canonical_label_by_index={0: "Smart Phone", 1: "Smart Phone"},
+            embedding_variants_by_index={},
+            trace_request_id="req-1",
+            item_id="item-1",
+            canonical_hint_by_index={0: "Smart Phone", 1: "Smart Phone"},
+        )
+
+        self.assertTrue(rerun_performed)
+        self.assertTrue(updated_verification.passed)
+        self.assertGreaterEqual(detail_ms, 0.0)
+        self.assertGreaterEqual(rerun_verify_ms, 0.0)
+        self.assertEqual(self.pipeline.florence.analyze_ocr_first.call_count, 2)
+        self.assertEqual(self.pipeline.verifier.verify.call_count, 1)
+
+    def test_failure_detail_targets_only_used_pair(self):
+        detail_targets, detail_reason, mark_non_targets_skipped = self.pipeline._resolve_detail_targets(
+            verification_passed=False,
+            verification_used_views=[0, 2],
+            fallback_used_views=[0, 2],
+            force_grounding=False,
+            early_exit_pair=None,
+            pass_caption_refinement=False,
+            total_views=3,
+        )
+
+        self.assertEqual(detail_targets, {0, 2})
+        self.assertEqual(detail_reason, "verification_failed_used_pair")
+        self.assertTrue(mark_non_targets_skipped)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ export interface IVerification extends Document {
   answers: IVerificationAnswer[];
   status: VerificationStatus;
   similarityScore: number | null;
+  founderNotificationSentAt?: Date | null;
   pythonVerificationResult?: any; // Store complete Python backend response
   createdAt: Date;
   updatedAt: Date;
@@ -107,6 +108,10 @@ const verificationSchema = new Schema<IVerification>(
     },
     similarityScore: {
       type: Number,
+      default: null,
+    },
+    founderNotificationSentAt: {
+      type: Date,
       default: null,
     },
     pythonVerificationResult: {

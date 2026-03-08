@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -11,13 +11,42 @@ import { GlassCard } from '../../components/GlassCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { RootStackParamList, SelectedImageAsset } from '../../types/models';
 import { itemsApi } from '../../api/itemsApi';
-import { ITEM_CATEGORIES } from '../../constants/appConstants';
-import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
+import { useAppTheme } from '../../context/ThemeContext';
+import { resolveItemCategory } from '../../utils/itemCategory';
 import { showImageSourceOptions } from '../../utils/imageSourceOptions';
 
 type ReportFoundStartNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundStart'>;
 
 const MAX_IMAGES = 3;
+const SINGLE_IMAGE_LOADING_STEPS = [
+  {
+    title: 'Preparing your photo',
+    subtitle: 'Optimizing the image so we can inspect the item clearly.',
+  },
+  {
+    title: 'Analyzing item details',
+    subtitle: 'Looking for the category and a useful public description from the photo.',
+  },
+  {
+    title: 'Preparing the next step',
+    subtitle: 'Packing the suggested details so you can review before continuing.',
+  },
+] as const;
+
+const MULTI_IMAGE_LOADING_STEPS = [
+  {
+    title: 'Preparing your photo set',
+    subtitle: 'Organizing the angles so we can compare the item more reliably.',
+  },
+  {
+    title: 'Analyzing item details',
+    subtitle: 'Combining multiple views to infer a stronger category and description.',
+  },
+  {
+    title: 'Preparing the next step',
+    subtitle: 'Saving the analysis outcome so you can confirm the report details.',
+  },
+] as const;
 
 const mapPickerAsset = (asset: ImagePicker.ImagePickerAsset): SelectedImageAsset => ({
   uri: asset.uri,
@@ -37,8 +66,11 @@ const mergeImages = (current: SelectedImageAsset[], incoming: SelectedImageAsset
 
 const ReportFoundStartScreen = () => {
   const navigation = useNavigation<ReportFoundStartNavigationProp>();
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [images, setImages] = useState<SelectedImageAsset[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingStageIndex, setLoadingStageIndex] = useState(0);
   const isSubmitting = useRef(false);
 
   useLayoutEffect(() => {
@@ -47,6 +79,19 @@ const ReportFoundStartScreen = () => {
       headerLeft: loading ? () => null : undefined,
     });
   }, [loading, navigation]);
+
+  useEffect(() => {
+    if (!loading) {
+      setLoadingStageIndex(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setLoadingStageIndex((current) => Math.min(current + 1, 2));
+    }, 1800);
+
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const requestLibraryPermissions = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -106,13 +151,6 @@ const ReportFoundStartScreen = () => {
     setImages((current) => current.filter((image) => image.uri !== uri));
   };
 
-  const normalizeDetectedCategory = (detectedCategory?: string | null): string | undefined => {
-    if (!detectedCategory) return undefined;
-    const normalized = detectedCategory.trim().toLowerCase();
-    const matchedCategory = ITEM_CATEGORIES.find((category) => category.trim().toLowerCase() === normalized);
-    return matchedCategory || undefined;
-  };
-
   const handleNext = async () => {
     if (isSubmitting.current) return;
     if (images.length === 0) {
@@ -127,15 +165,16 @@ const ReportFoundStartScreen = () => {
       navigation.navigate('ReportFoundDetails', {
         images,
         preAnalysisToken: preAnalysis.preAnalysisToken || null,
-        category: normalizeDetectedCategory(preAnalysis.detectedCategory),
+        category: resolveItemCategory(preAnalysis.detectedCategory),
         description: preAnalysis.detectedDescription || undefined,
-        analysisMessage: preAnalysis.message || undefined,
+        analysisMessage: preAnalysis.analysisSummary || preAnalysis.message || undefined,
       });
     } catch (error: any) {
       navigation.navigate('ReportFoundDetails', {
         images,
         preAnalysisToken: null,
-        analysisMessage: error?.message || 'Image analysis unavailable. Please enter details manually.',
+        analysisMessage:
+          error?.message || 'We could not finish the photo analysis. Continue manually and confirm the details yourself.',
       });
     } finally {
       isSubmitting.current = false;
@@ -144,19 +183,30 @@ const ReportFoundStartScreen = () => {
   };
 
   if (loading) {
+    const loadingSteps = images.length > 1 ? MULTI_IMAGE_LOADING_STEPS : SINGLE_IMAGE_LOADING_STEPS;
+    const currentStep = loadingSteps[loadingStageIndex] || loadingSteps[loadingSteps.length - 1];
+
     return (
       <LoadingScreen
-        message="Analyzing your photos..."
-        subtitle="This may take a few seconds while we identify the item and prepare the next step."
+        badge="Photo analysis"
+        message={currentStep.title}
+        subtitle={currentStep.subtitle}
+        stageLabel={`Step ${Math.min(loadingStageIndex + 1, loadingSteps.length)} of ${loadingSteps.length}`}
+        note={
+          images.length > 1
+            ? 'Multi-angle photos can improve matching quality. If we cannot prefill confidently, you can still continue manually.'
+            : 'One clear photo can still prefill the report. If confidence is low, you can continue manually.'
+        }
+        illustrationVariant="auth"
       />
     );
   }
 
   return (
-    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+    <LinearGradient colors={theme.gradients.appBackground} style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
-        <LinearGradient colors={gradients.hero} style={styles.hero}>
-          <Text style={styles.heroEyebrow}>Founder flow</Text>
+        <LinearGradient colors={theme.gradients.hero} style={styles.hero}>
+          <Text style={styles.heroEyebrow}>Report item</Text>
           <Text style={styles.heroTitle}>Start with photos.</Text>
           <Text style={styles.heroBody}>
             Add one to three images. Clear multi-angle photos lead to stronger analysis and better future matches.
@@ -180,7 +230,7 @@ const ReportFoundStartScreen = () => {
                         accessibilityRole="button"
                         accessibilityLabel={`Remove photo ${index + 1}`}
                       >
-                        <Ionicons name="close" size={14} color={palette.paperStrong} />
+                        <Ionicons name="close" size={14} color={theme.colors.onTint} />
                       </Pressable>
                     </View>
                   ) : (
@@ -194,7 +244,7 @@ const ReportFoundStartScreen = () => {
                         })
                       }
                     >
-                      <Text style={styles.placeholderIcon}>＋</Text>
+                      <Text style={styles.placeholderIcon}>+</Text>
                       <Text style={styles.placeholderText}>Photo {index + 1}</Text>
                     </Pressable>
                   )}
@@ -215,91 +265,95 @@ const ReportFoundStartScreen = () => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: {
-    paddingTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  hero: {
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.lg,
-  },
-  heroEyebrow: {
-    ...type.label,
-    color: 'rgba(255,255,255,0.72)',
-    marginBottom: spacing.sm,
-  },
-  heroTitle: {
-    ...type.title,
-    color: palette.paperStrong,
-    marginBottom: spacing.sm,
-  },
-  heroBody: {
-    ...type.body,
-    color: 'rgba(255,255,255,0.82)',
-  },
-  cardGap: {
-    marginBottom: spacing.lg,
-  },
-  sectionEyebrow: {
-    ...type.label,
-    marginBottom: spacing.xs,
-  },
-  sectionTitle: {
-    ...type.section,
-    marginBottom: spacing.md,
-  },
-  grid: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  slot: {
-    flex: 1,
-  },
-  imageWrap: {
-    position: 'relative',
-  },
-  image: {
-    width: '100%',
-    height: 148,
-    borderRadius: radius.md,
-    backgroundColor: palette.shell,
-  },
-  placeholder: {
-    height: 148,
-    borderRadius: radius.md,
-    backgroundColor: palette.paperStrong,
-    borderWidth: 1,
-    borderColor: palette.lineStrong,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  placeholderIcon: {
-    ...type.section,
-    color: palette.primaryDeep,
-    marginBottom: spacing.xs,
-  },
-  placeholderText: {
-    ...type.caption,
-  },
-  removeButton: {
-    position: 'absolute',
-    top: spacing.sm,
-    right: spacing.sm,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(17,24,39,0.68)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  helperText: {
-    ...type.body,
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: { flex: 1 },
+    content: {
+      paddingTop: theme.spacing.lg,
+      paddingHorizontal: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
+    },
+    hero: {
+      borderRadius: theme.radius.lg,
+      padding: theme.spacing.lg,
+      marginBottom: theme.spacing.lg,
+    },
+    heroEyebrow: {
+      ...theme.type.label,
+      color: theme.colors.onTintSubtle,
+      marginBottom: theme.spacing.sm,
+    },
+    heroTitle: {
+      ...theme.type.title,
+      color: theme.colors.onTint,
+      marginBottom: theme.spacing.sm,
+    },
+    heroBody: {
+      ...theme.type.body,
+      color: theme.colors.onTintMuted,
+    },
+    cardGap: {
+      marginBottom: theme.spacing.lg,
+    },
+    sectionEyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    sectionTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.md,
+    },
+    grid: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.md,
+    },
+    slot: {
+      flex: 1,
+    },
+    imageWrap: {
+      position: 'relative',
+    },
+    image: {
+      width: '100%',
+      height: 148,
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.shell,
+    },
+    placeholder: {
+      height: 148,
+      borderRadius: theme.radius.md,
+      backgroundColor: theme.colors.card,
+      borderWidth: 1,
+      borderColor: theme.colors.lineStrong,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    placeholderIcon: {
+      ...theme.type.section,
+      color: theme.colors.primaryDeep,
+      marginBottom: theme.spacing.xs,
+    },
+    placeholderText: {
+      ...theme.type.caption,
+      color: theme.colors.textMuted,
+    },
+    removeButton: {
+      position: 'absolute',
+      top: theme.spacing.sm,
+      right: theme.spacing.sm,
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: theme.colors.overlay,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    helperText: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+  });
 
 export default ReportFoundStartScreen;

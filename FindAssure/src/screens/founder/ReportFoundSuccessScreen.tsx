@@ -1,32 +1,28 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../../types/models';
 import { PrimaryButton } from '../../components/PrimaryButton';
-import { GlassCard } from '../../components/GlassCard';
-import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
+import { useAppTheme } from '../../context/ThemeContext';
 
 type ReportFoundSuccessNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundSuccess'>;
 
 const ReportFoundSuccessScreen = () => {
   const navigation = useNavigation<ReportFoundSuccessNavigationProp>();
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   return (
-    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+    <LinearGradient colors={theme.gradients.appBackground} style={styles.container}>
       <View style={styles.content}>
-        <LinearGradient colors={gradients.success} style={styles.hero}>
+        <LinearGradient colors={theme.gradients.success} style={styles.hero}>
           <Text style={styles.icon}>✓</Text>
+          <Text style={styles.heroTitle}>Thank You !</Text>
           <Text style={styles.heroTitle}>Report submitted.</Text>
           <Text style={styles.heroBody}>The item is now ready for owner search and verification.</Text>
         </LinearGradient>
-
-        <GlassCard style={styles.cardGap}>
-          <Text style={styles.sectionEyebrow}>What happens next</Text>
-          <Text style={styles.sectionTitle}>Owners must prove ownership first</Text>
-          <Text style={styles.sectionBody}>Your contact details stay private until the claimant answers your verification prompts successfully.</Text>
-        </GlassCard>
 
         <PrimaryButton title="Back to Home" onPress={() => navigation.navigate('Home')} size="lg" />
       </View>
@@ -34,51 +30,37 @@ const ReportFoundSuccessScreen = () => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xl,
-    paddingBottom: spacing.xl,
-  },
-  hero: {
-    borderRadius: radius.xl,
-    padding: spacing.xl,
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  icon: {
-    ...type.hero,
-    color: palette.paperStrong,
-    marginBottom: spacing.sm,
-  },
-  heroTitle: {
-    ...type.hero,
-    textAlign: 'center',
-    marginBottom: spacing.sm,
-  },
-  heroBody: {
-    ...type.body,
-    color: 'rgba(255,255,255,0.84)',
-    textAlign: 'center',
-  },
-  cardGap: {
-    marginBottom: spacing.lg,
-  },
-  sectionEyebrow: {
-    ...type.label,
-    marginBottom: spacing.xs,
-  },
-  sectionTitle: {
-    ...type.section,
-    marginBottom: spacing.sm,
-    textAlign: 'center',
-  },
-  sectionBody: {
-    ...type.body,
-    textAlign: 'center',
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: { flex: 1 },
+    content: {
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: theme.spacing.xl,
+      paddingBottom: theme.spacing.xl,
+    },
+    hero: {
+      borderRadius: theme.radius.xl,
+      padding: theme.spacing.xl,
+      alignItems: 'center',
+      marginBottom: theme.spacing.xl,
+    },
+    icon: {
+      ...theme.type.hero,
+      color: theme.colors.onTint,
+      marginBottom: theme.spacing.sm,
+    },
+    heroTitle: {
+      ...theme.type.hero,
+      color: theme.colors.onTint,
+      textAlign: 'center',
+      marginBottom: theme.spacing.sm,
+    },
+    heroBody: {
+      ...theme.type.body,
+      color: theme.colors.onTintMuted,
+      textAlign: 'center',
+    },
+  });
 
 export default ReportFoundSuccessScreen;

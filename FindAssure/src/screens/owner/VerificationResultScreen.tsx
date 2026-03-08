@@ -1,13 +1,18 @@
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { RootStackParamList } from '../../types/models';
-import { PrimaryButton } from '../../components/PrimaryButton';
-import { GlassCard } from '../../components/GlassCard';
+import { Ionicons } from '@expo/vector-icons';
 import axiosClient from '../../api/axiosClient';
-import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
+import { AnimatedHeroIllustration } from '../../components/AnimatedHeroIllustration';
+import { GlassCard } from '../../components/GlassCard';
+import { LoadingScreen } from '../../components/LoadingScreen';
+import { PrimaryButton } from '../../components/PrimaryButton';
+import { StaggeredEntrance } from '../../components/StaggeredEntrance';
+import { useAppTheme } from '../../context/ThemeContext';
+import { useToast } from '../../context/ToastContext';
+import { RootStackParamList } from '../../types/models';
 
 type VerificationResultRouteProp = RouteProp<RootStackParamList, 'VerificationResult'>;
 type VerificationResultNavigationProp = StackNavigationProp<RootStackParamList, 'VerificationResult'>;
@@ -57,40 +62,42 @@ const VerificationResultScreen = () => {
   const route = useRoute<VerificationResultRouteProp>();
   const navigation = useNavigation<VerificationResultNavigationProp>();
   const { verificationId } = route.params;
+  const { theme } = useAppTheme();
+  const { showToast } = useToast();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const [loading, setLoading] = useState(true);
   const [verification, setVerification] = useState<VerificationData | null>(null);
 
-  useEffect(() => {
-    fetchVerificationResult();
-  }, []);
-
-  const fetchVerificationResult = async () => {
+  const fetchVerificationResult = useCallback(async () => {
     try {
       const response = await axiosClient.get(`/items/verification/${verificationId}`);
       setVerification(response.data);
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.message || 'Failed to fetch verification result');
+      showToast({
+        title: 'Could not load result',
+        message: error?.response?.data?.message || 'Please try again in a moment.',
+        variant: 'error',
+      });
     } finally {
       setLoading(false);
     }
-  };
+  }, [showToast, verificationId]);
+
+  useEffect(() => {
+    fetchVerificationResult();
+  }, [fetchVerificationResult]);
 
   const handleGoHome = () => navigation.navigate('Home');
 
   if (loading) {
-    return (
-      <LinearGradient colors={gradients.appBackground} style={styles.centerContainer}>
-        <ActivityIndicator size="large" color={palette.primaryDeep} />
-        <Text style={styles.loadingText}>Loading verification result...</Text>
-      </LinearGradient>
-    );
+    return <LoadingScreen message="Loading verification result" subtitle="Reviewing the latest outcome." />;
   }
 
   if (!verification) {
     return (
-      <LinearGradient colors={gradients.appBackground} style={styles.centerContainer}>
-        <Text style={styles.errorText}>Failed to load verification result</Text>
+      <LinearGradient colors={theme.gradients.appBackground} style={styles.centerContainer}>
+        <Text style={styles.errorText}>Failed to load verification result.</Text>
         <PrimaryButton title="Go Home" onPress={handleGoHome} />
       </LinearGradient>
     );
@@ -102,144 +109,269 @@ const VerificationResultScreen = () => {
   const isVerified = verification.status === 'passed' || (verification.status !== 'failed' && !!isAbsoluteOwner);
 
   return (
-    <LinearGradient colors={gradients.appBackground} style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <LinearGradient colors={isVerified ? gradients.success : gradients.violet} style={styles.hero}>
-          <Text style={styles.heroEyebrow}>{isVerified ? 'Verified owner' : 'Verification failed'}</Text>
-          <Text style={styles.heroTitle}>{isVerified ? 'Ownership confirmed.' : 'Ownership not confirmed.'}</Text>
-          <Text style={styles.heroBody}>
-            {isVerified
-              ? 'You can now contact the finder and arrange item retrieval.'
-              : 'Your answers did not meet the confidence threshold for this item.'}
-          </Text>
-          {!isVerified && pythonResult?.rejection_reason ? <Text style={styles.failureReason}>{pythonResult.rejection_reason}</Text> : null}
-        </LinearGradient>
+    <LinearGradient colors={theme.gradients.appBackground} style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <StaggeredEntrance>
+          <GlassCard style={styles.heroCard} contentStyle={styles.heroContent}>
+            <View style={styles.heroVisualBlock}>
+              <View style={styles.heroIllustrationFrame}>
+                <AnimatedHeroIllustration size={132} variant={isVerified ? 'success' : 'pending'} />
+              </View>
+            </View>
+            <Text style={[styles.heroEyebrow, { color: isVerified ? theme.colors.success : theme.colors.warning }]}>
+              {isVerified ? 'Verified owner' : 'Verification failed'}
+            </Text>
+            <Text style={styles.heroTitle}>{isVerified ? 'Ownership confirmed.' : 'Ownership not confirmed.'}</Text>
+            <Text style={styles.heroBody}>
+              {isVerified
+                ? 'You can now contact the finder and arrange item retrieval.'
+                : 'Your answers did not meet the confidence threshold for this item.'}
+            </Text>
+            {!isVerified && pythonResult?.rejection_reason ? (
+              <Text style={styles.failureReason}>{pythonResult.rejection_reason}</Text>
+            ) : null}
+          </GlassCard>
+        </StaggeredEntrance>
 
         {isVerified && verification.foundItemId.founderContact ? (
-          <GlassCard style={styles.cardGap}>
-            <Text style={styles.sectionEyebrow}>Founder contact</Text>
-            <Text style={styles.sectionTitle}>Reach out to retrieve your item</Text>
-            <Text style={styles.sectionBody}>Name: {verification.foundItemId.founderContact.name}</Text>
-            <Text style={styles.sectionBody}>Email: {verification.foundItemId.founderContact.email}</Text>
-            <Text style={styles.sectionBody}>Phone: {verification.foundItemId.founderContact.phone}</Text>
-          </GlassCard>
+          <StaggeredEntrance delay={80}>
+            <GlassCard style={styles.cardGap}>
+              <Text style={styles.sectionEyebrow}>Founder contact</Text>
+              <Text style={styles.sectionTitle}>Reach out to retrieve your item</Text>
+              <View style={styles.contactList}>
+                {[
+                  {
+                    icon: 'person-outline' as const,
+                    label: 'Name',
+                    value: verification.foundItemId.founderContact.name,
+                  },
+                  {
+                    icon: 'mail-outline' as const,
+                    label: 'Email',
+                    value: verification.foundItemId.founderContact.email,
+                  },
+                  {
+                    icon: 'call-outline' as const,
+                    label: 'Phone',
+                    value: verification.foundItemId.founderContact.phone,
+                  },
+                ].map((item) => (
+                  <View key={item.label} style={styles.contactRow}>
+                    <View style={styles.contactIconWrap}>
+                      <Ionicons name={item.icon} size={16} color={theme.colors.accent} />
+                    </View>
+                    <View style={styles.contactCopy}>
+                      <Text style={styles.contactLabel}>{item.label}</Text>
+                      <Text style={styles.contactValue}>{item.value}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </GlassCard>
+          </StaggeredEntrance>
         ) : null}
 
         {pythonResult?.results && pythonResult.results.length > 0 ? (
-          <GlassCard style={styles.cardGap}>
-            <Text style={styles.sectionEyebrow}>Question analysis</Text>
-            <Text style={styles.sectionTitle}>How each answer scored</Text>
-            {pythonResult.results.map((result, index) => (
-              <View key={result.question_id || index} style={styles.resultItem}>
-                <View style={styles.resultHeader}>
-                  <Text style={styles.resultNumber}>Q{result.question_id}</Text>
-                  <Text style={styles.resultSimilarity}>{result.final_similarity}</Text>
-                  <Text style={styles.resultStatus}>{result.status.replace('_', ' ')}</Text>
+          <StaggeredEntrance delay={120}>
+            <GlassCard style={styles.cardGap}>
+              <Text style={styles.sectionEyebrow}>Question analysis</Text>
+              <Text style={styles.sectionTitle}>How each answer scored</Text>
+              {pythonResult.results.map((result, index) => (
+                <View key={result.question_id || index} style={styles.resultItem}>
+                  <View style={styles.resultHeader}>
+                    <Text style={styles.resultNumber}>Q{result.question_id}</Text>
+                    <Text style={styles.resultSimilarity}>{result.final_similarity}</Text>
+                    <View style={[styles.resultStatusBadge, getResultStatusStyle(theme, result.status)]}>
+                      <Text style={styles.resultStatusText}>{result.status.replace('_', ' ')}</Text>
+                    </View>
+                  </View>
+                  {result.gemini_analysis ? <Text style={styles.resultAnalysis}>{result.gemini_analysis}</Text> : null}
                 </View>
-                {result.gemini_analysis ? <Text style={styles.resultAnalysis}>{result.gemini_analysis}</Text> : null}
-              </View>
-            ))}
-          </GlassCard>
+              ))}
+            </GlassCard>
+          </StaggeredEntrance>
         ) : null}
 
         {!isVerified ? (
-          <GlassCard style={styles.cardGap}>
-            <Text style={styles.sectionEyebrow}>Retry</Text>
-            <Text style={styles.sectionBody}>If you still believe this is your item, try again with more accurate and specific answers.</Text>
-          </GlassCard>
+          <StaggeredEntrance delay={160}>
+            <GlassCard style={styles.cardGap}>
+              <Text style={styles.sectionEyebrow}>Retry</Text>
+              <Text style={styles.sectionBody}>
+                If you still believe this is your item, try again with more accurate and specific answers.
+              </Text>
+            </GlassCard>
+          </StaggeredEntrance>
         ) : null}
 
-        <PrimaryButton title="Back to Home" onPress={handleGoHome} size="lg" />
+        <StaggeredEntrance delay={200}>
+          <PrimaryButton title="Back to Home" onPress={handleGoHome} size="lg" />
+        </StaggeredEntrance>
       </ScrollView>
     </LinearGradient>
   );
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.xl,
-  },
-  content: {
-    paddingTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  loadingText: {
-    ...type.bodyStrong,
-    marginTop: spacing.lg,
-  },
-  errorText: {
-    ...type.body,
-    marginBottom: spacing.lg,
-  },
-  hero: {
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    marginBottom: spacing.lg,
-  },
-  heroEyebrow: {
-    ...type.label,
-    color: 'rgba(255,255,255,0.72)',
-    marginBottom: spacing.sm,
-  },
-  heroTitle: {
-    ...type.title,
-    color: palette.paperStrong,
-    marginBottom: spacing.sm,
-  },
-  heroBody: {
-    ...type.body,
-    color: 'rgba(255,255,255,0.82)',
-  },
-  failureReason: {
-    ...type.caption,
-    color: 'rgba(255,255,255,0.78)',
-    marginTop: spacing.md,
-  },
-  cardGap: {
-    marginBottom: spacing.lg,
-  },
-  sectionEyebrow: {
-    ...type.label,
-    marginBottom: spacing.xs,
-  },
-  sectionTitle: {
-    ...type.section,
-    marginBottom: spacing.md,
-  },
-  sectionBody: {
-    ...type.body,
-    marginBottom: spacing.sm,
-  },
-  resultItem: {
-    paddingVertical: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: palette.line,
-  },
-  resultHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: spacing.xs,
-  },
-  resultNumber: {
-    ...type.bodyStrong,
-  },
-  resultSimilarity: {
-    ...type.bodyStrong,
-    color: palette.primaryDeep,
-  },
-  resultStatus: {
-    ...type.caption,
-    textTransform: 'capitalize',
-  },
-  resultAnalysis: {
-    ...type.body,
-  },
-});
+const getResultStatusStyle = (
+  theme: ReturnType<typeof useAppTheme>['theme'],
+  status: VerificationResult['status']
+) => {
+  switch (status) {
+    case 'match':
+      return { backgroundColor: theme.colors.successSoft };
+    case 'partial_match':
+      return { backgroundColor: theme.colors.warningSoft };
+    default:
+      return { backgroundColor: theme.colors.dangerSoft };
+  }
+};
+
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: { flex: 1 },
+    centerContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: theme.spacing.xl,
+    },
+    content: {
+      paddingTop: theme.spacing.lg,
+      paddingHorizontal: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
+    },
+    heroCard: {
+      marginBottom: theme.spacing.lg,
+    },
+    heroContent: {
+      padding: theme.spacing.xl,
+      alignItems: 'center',
+    },
+    heroVisualBlock: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      alignSelf: 'center',
+      marginBottom: theme.spacing.md,
+    },
+    heroIllustrationFrame: {
+      width: 148,
+      height: 148,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    heroEyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+      textAlign: 'center',
+    },
+    heroTitle: {
+      ...theme.type.title,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.xs,
+      textAlign: 'center',
+      maxWidth: 320,
+    },
+    heroBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      textAlign: 'center',
+      maxWidth: 320,
+      lineHeight: 24,
+    },
+    failureReason: {
+      ...theme.type.caption,
+      color: theme.colors.textSubtle,
+      marginTop: theme.spacing.md,
+      textAlign: 'center',
+      maxWidth: 320,
+    },
+    errorText: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      marginBottom: theme.spacing.lg,
+      textAlign: 'center',
+    },
+    cardGap: {
+      marginBottom: theme.spacing.lg,
+    },
+    sectionEyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    sectionTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.md,
+    },
+    sectionBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      marginBottom: theme.spacing.sm,
+    },
+    contactList: {
+      gap: theme.spacing.sm,
+    },
+    contactRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: theme.spacing.sm,
+      paddingVertical: 2,
+    },
+    contactIconWrap: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.accentSoft,
+      marginTop: 1,
+    },
+    contactCopy: {
+      flex: 1,
+    },
+    contactLabel: {
+      ...theme.type.caption,
+      color: theme.colors.textSubtle,
+      marginBottom: 2,
+    },
+    contactValue: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+    },
+    resultItem: {
+      paddingVertical: theme.spacing.md,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.line,
+    },
+    resultHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.xs,
+      flexWrap: 'wrap',
+    },
+    resultNumber: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+    },
+    resultSimilarity: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.accent,
+    },
+    resultStatusBadge: {
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 4,
+    },
+    resultStatusText: {
+      ...theme.type.caption,
+      color: theme.colors.textStrong,
+      textTransform: 'capitalize',
+      fontWeight: '700',
+    },
+    resultAnalysis: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+  });
 
 export default VerificationResultScreen;

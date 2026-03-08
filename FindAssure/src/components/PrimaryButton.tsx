@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextStyle, View, ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
-import { motion, palette, radius, shadows, spacing, type } from '../theme/designSystem';
+import { useAppTheme } from '../context/ThemeContext';
 
 interface PrimaryButtonProps {
   title: string;
@@ -26,13 +26,15 @@ export const PrimaryButton: React.FC<PrimaryButtonProps> = ({
   size = 'md',
   icon,
 }) => {
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const scale = useSharedValue(1);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
   }));
 
-  const variantStyles = getVariantStyles(variant, disabled);
+  const variantStyles = getVariantStyles(theme, variant, disabled);
 
   return (
     <Animated.View style={animatedStyle}>
@@ -41,10 +43,10 @@ export const PrimaryButton: React.FC<PrimaryButtonProps> = ({
         onPress={onPress}
         disabled={disabled || loading}
         onPressIn={() => {
-          scale.value = withSpring(0.97, motion.springSoft);
+          scale.value = withSpring(0.97, theme.motion.springSoft);
         }}
         onPressOut={() => {
-          scale.value = withSpring(1, motion.spring);
+          scale.value = withSpring(1, theme.motion.spring);
         }}
       >
         <View style={styles.content}>
@@ -53,7 +55,9 @@ export const PrimaryButton: React.FC<PrimaryButtonProps> = ({
           ) : (
             <>
               {icon}
-              <Text numberOfLines={1} style={[styles.buttonText, variantStyles.text, textStyle]}>{title}</Text>
+              <Text numberOfLines={1} style={[styles.buttonText, variantStyles.text, textStyle]}>
+                {title}
+              </Text>
             </>
           )}
         </View>
@@ -62,16 +66,22 @@ export const PrimaryButton: React.FC<PrimaryButtonProps> = ({
   );
 };
 
-const getVariantStyles = (variant: NonNullable<PrimaryButtonProps['variant']>, disabled: boolean) => {
+const getVariantStyles = (
+  theme: ReturnType<typeof useAppTheme>['theme'],
+  variant: NonNullable<PrimaryButtonProps['variant']>,
+  disabled: boolean
+) => {
   if (disabled) {
     return {
       container: {
-        backgroundColor: palette.shellAlt,
+        backgroundColor: theme.colors.cardMuted,
         borderWidth: 1,
-        borderColor: palette.line,
+        borderColor: theme.colors.border,
+        shadowOpacity: 0,
+        elevation: 0,
       },
       text: {
-        color: palette.mist,
+        color: theme.colors.textSubtle,
       } as TextStyle,
     };
   }
@@ -81,69 +91,72 @@ const getVariantStyles = (variant: NonNullable<PrimaryButtonProps['variant']>, d
       return {
         container: {
           borderWidth: 1,
-          borderColor: palette.lineStrong,
-          backgroundColor: palette.paperStrong,
+          borderColor: theme.colors.borderStrong,
+          backgroundColor: theme.colors.card,
         },
         text: {
-          color: palette.ink,
+          color: theme.colors.textStrong,
         } as TextStyle,
       };
     case 'ghost':
       return {
         container: {
           backgroundColor: 'transparent',
+          shadowOpacity: 0,
+          elevation: 0,
         },
         text: {
-          color: palette.primaryDeep,
+          color: theme.colors.accent,
         } as TextStyle,
       };
     case 'danger':
       return {
         container: {
-          backgroundColor: palette.danger,
+          backgroundColor: theme.colors.danger,
         },
         text: {
-          color: palette.paperStrong,
+          color: theme.colors.onTint,
         } as TextStyle,
       };
     default:
       return {
         container: {
-          backgroundColor: palette.primary,
+          backgroundColor: theme.colors.accent,
         },
         text: {
-          color: palette.paperStrong,
+          color: theme.colors.onTint,
         } as TextStyle,
       };
   }
 };
 
-const styles = StyleSheet.create({
-  button: {
-    borderRadius: radius.pill,
-    justifyContent: 'center',
-    ...shadows.soft,
-  },
-  md: {
-    minHeight: 54,
-    paddingHorizontal: 16,
-  },
-  lg: {
-    minHeight: 56,
-    paddingHorizontal: 18,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  content: {
-    minHeight: 54,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    columnGap: spacing.sm,
-    paddingHorizontal: spacing.xl,
-  },
-  buttonText: {
-    ...type.button,
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    button: {
+      borderRadius: theme.radius.pill,
+      justifyContent: 'center',
+      ...theme.shadows.soft,
+    },
+    md: {
+      minHeight: 52,
+      paddingHorizontal: 16,
+    },
+    lg: {
+      minHeight: 56,
+      paddingHorizontal: 18,
+    },
+    buttonDisabled: {
+      opacity: 1,
+    },
+    content: {
+      minHeight: 52,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      columnGap: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.xl,
+    },
+    buttonText: {
+      ...theme.type.button,
+    },
+  });

@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Text, StyleSheet, View, Pressable } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { GlassCard } from './GlassCard';
-import { motion, palette, radius, spacing, type } from '../theme/designSystem';
+import { useAppTheme } from '../context/ThemeContext';
 
 interface QuestionChipProps {
   question: string;
@@ -10,12 +10,11 @@ interface QuestionChipProps {
   onPress: () => void;
 }
 
-export const QuestionChip: React.FC<QuestionChipProps> = ({
-  question,
-  selected,
-  onPress,
-}) => {
+export const QuestionChip: React.FC<QuestionChipProps> = ({ question, selected, onPress }) => {
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const scale = useSharedValue(1);
+
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
   }));
@@ -25,10 +24,10 @@ export const QuestionChip: React.FC<QuestionChipProps> = ({
       <Pressable
         onPress={onPress}
         onPressIn={() => {
-          scale.value = withSpring(0.985, motion.springSoft);
+          scale.value = withSpring(0.985, theme.motion.springSoft);
         }}
         onPressOut={() => {
-          scale.value = withSpring(1, motion.spring);
+          scale.value = withSpring(1, theme.motion.spring);
         }}
       >
         <GlassCard style={[styles.chip, selected && styles.chipSelected]}>
@@ -44,45 +43,47 @@ export const QuestionChip: React.FC<QuestionChipProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  chip: {
-    borderRadius: radius.md,
-    marginBottom: 10,
-  },
-  chipSelected: {
-    borderColor: 'rgba(79,124,255,0.22)',
-    backgroundColor: '#F6F9FF',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: palette.line,
-    backgroundColor: palette.paperStrong,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxSelected: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
-  },
-  checkmark: {
-    color: palette.paperStrong,
-    fontSize: 13,
-    fontWeight: '900',
-  },
-  chipText: {
-    flex: 1,
-    ...type.body,
-  },
-  chipTextSelected: {
-    color: palette.ink,
-    fontWeight: '700',
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    chip: {
+      borderRadius: theme.radius.md,
+      marginBottom: 10,
+    },
+    chipSelected: {
+      borderColor: theme.colors.borderStrong,
+      backgroundColor: theme.colors.accentSoft,
+    },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.md,
+    },
+    checkbox: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      borderWidth: 1.5,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    checkboxSelected: {
+      backgroundColor: theme.colors.accent,
+      borderColor: theme.colors.accent,
+    },
+    checkmark: {
+      color: theme.colors.onTint,
+      fontSize: 13,
+      fontWeight: '900',
+    },
+    chipText: {
+      flex: 1,
+      ...theme.type.body,
+      color: theme.colors.textStrong,
+    },
+    chipTextSelected: {
+      color: theme.colors.textStrong,
+      fontWeight: '700',
+    },
+  });

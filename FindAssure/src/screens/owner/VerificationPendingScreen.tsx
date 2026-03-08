@@ -1,87 +1,114 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { RootStackParamList } from '../../types/models';
-import { PrimaryButton } from '../../components/PrimaryButton';
+import { AnimatedHeroIllustration } from '../../components/AnimatedHeroIllustration';
 import { GlassCard } from '../../components/GlassCard';
-import { gradients, palette, radius, spacing, type } from '../../theme/designSystem';
+import { PrimaryButton } from '../../components/PrimaryButton';
+import { StaggeredEntrance } from '../../components/StaggeredEntrance';
+import { useAppTheme } from '../../context/ThemeContext';
+import { RootStackParamList } from '../../types/models';
 
 type VerificationPendingNavigationProp = StackNavigationProp<RootStackParamList, 'VerificationPending'>;
 
 const VerificationPendingScreen = () => {
   const navigation = useNavigation<VerificationPendingNavigationProp>();
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   return (
-    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+    <LinearGradient colors={theme.gradients.appBackground} style={styles.container}>
       <View style={styles.content}>
-        <LinearGradient colors={gradients.violet} style={styles.hero}>
-          <Text style={styles.icon}>◎</Text>
-          <Text style={styles.heroTitle}>Verification pending.</Text>
-          <Text style={styles.heroBody}>Your answers are in the review pipeline and will be processed before finder contact details are revealed.</Text>
-        </LinearGradient>
+        <StaggeredEntrance>
+          <GlassCard style={styles.hero} contentStyle={styles.heroContent}>
+            <View style={styles.illustrationWrap}>
+              <AnimatedHeroIllustration size={128} variant="pending" />
+            </View>
+            <Text style={styles.heroEyebrow}>Verification pipeline</Text>
+            <Text style={styles.heroTitle}>Verification pending.</Text>
+            <Text style={styles.heroBody}>
+              Your answers are being processed before finder contact details can be revealed.
+            </Text>
+          </GlassCard>
+        </StaggeredEntrance>
 
-        <GlassCard style={styles.cardGap}>
-          <Text style={styles.sectionEyebrow}>What happens next</Text>
-          <Text style={styles.sectionBody}>1. Your video answers are processed.</Text>
-          <Text style={styles.sectionBody}>2. AI scoring checks semantic and visual consistency.</Text>
-          <Text style={styles.sectionBody}>3. If you pass, the finder contact details become available.</Text>
-          <Text style={styles.sectionBody}>4. You will be notified about the result.</Text>
-        </GlassCard>
+        <StaggeredEntrance delay={90}>
+          <GlassCard style={styles.cardGap}>
+            <Text style={styles.sectionEyebrow}>What happens next</Text>
+            <Text style={styles.sectionBody}>1. Your video answers are processed.</Text>
+            <Text style={styles.sectionBody}>2. AI scoring checks semantic and visual consistency.</Text>
+            <Text style={styles.sectionBody}>3. If you pass, the finder contact details become available.</Text>
+            <Text style={styles.sectionBody}>4. You will be notified about the result.</Text>
+          </GlassCard>
+        </StaggeredEntrance>
 
-        <GlassCard style={styles.cardGap}>
-          <Text style={styles.sectionEyebrow}>Timing</Text>
-          <Text style={styles.sectionBody}>This can take a few minutes to a few hours depending on processing and review load.</Text>
-        </GlassCard>
+        <StaggeredEntrance delay={140}>
+          <GlassCard style={styles.cardGap}>
+            <Text style={styles.sectionEyebrow}>Timing</Text>
+            <Text style={styles.sectionBody}>
+              This can take a few minutes to a few hours depending on processing and review load.
+            </Text>
+          </GlassCard>
+        </StaggeredEntrance>
 
-        <PrimaryButton title="Back to Home" onPress={() => navigation.navigate('Home')} size="lg" />
+        <StaggeredEntrance delay={180}>
+          <PrimaryButton title="Back to Home" onPress={() => navigation.navigate('Home')} size="lg" />
+        </StaggeredEntrance>
       </View>
     </LinearGradient>
   );
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xl,
-    paddingBottom: spacing.xl,
-  },
-  hero: {
-    borderRadius: radius.xl,
-    padding: spacing.xl,
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  icon: {
-    ...type.hero,
-    color: palette.paperStrong,
-    marginBottom: spacing.sm,
-  },
-  heroTitle: {
-    ...type.hero,
-    textAlign: 'center',
-    marginBottom: spacing.sm,
-  },
-  heroBody: {
-    ...type.body,
-    color: 'rgba(255,255,255,0.82)',
-    textAlign: 'center',
-  },
-  cardGap: {
-    marginBottom: spacing.lg,
-  },
-  sectionEyebrow: {
-    ...type.label,
-    marginBottom: spacing.xs,
-  },
-  sectionBody: {
-    ...type.body,
-    marginBottom: spacing.sm,
-    textAlign: 'center',
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: { flex: 1 },
+    content: {
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: theme.spacing.xl,
+      paddingBottom: theme.spacing.xl,
+    },
+    hero: {
+      marginBottom: theme.spacing.lg,
+    },
+    heroContent: {
+      padding: theme.spacing.xl,
+      alignItems: 'center',
+    },
+    illustrationWrap: {
+      marginBottom: theme.spacing.md,
+      alignSelf: 'center',
+    },
+    heroEyebrow: {
+      ...theme.type.label,
+      color: theme.colors.accent,
+      marginBottom: theme.spacing.sm,
+    },
+    heroTitle: {
+      ...theme.type.hero,
+      color: theme.colors.textStrong,
+      textAlign: 'center',
+      marginBottom: theme.spacing.sm,
+    },
+    heroBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      textAlign: 'center',
+    },
+    cardGap: {
+      marginBottom: theme.spacing.lg,
+    },
+    sectionEyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    sectionBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      marginBottom: theme.spacing.sm,
+      textAlign: 'center',
+    },
+  });
 
 export default VerificationPendingScreen;

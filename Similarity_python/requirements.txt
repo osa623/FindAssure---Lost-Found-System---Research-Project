@@ -1,0 +1,32 @@
+# Web Framework
+flask==3.1.1
+flask-cors==6.0.0
+
+# Database
+pymongo==4.10.1
+
+# NLP / Embeddings
+spacy==3.8.11
+en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl#sha256=293e9547a655b25499198ab15a525b05b9407a75f10255e405e8c3854329ab63
+sentence-transformers==3.4.1
+scikit-learn==1.7.2
+numpy==2.2.6
+
+# Speech-to-Text
+openai-whisper==20250625
+
+# Computer Vision / Face Analysis
+opencv-python==4.11.0.86
+mediapipe==0.10.21
+deepface==0.0.93
+scipy==1.16.3
+
+# ML Framework
+torch==2.7.1
+torchvision==0.22.1
+
+# HTTP / API
+requests==2.32.3
+
+# Utilities
+python-dotenv==1.1.1

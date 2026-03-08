@@ -1,29 +1,26 @@
-import React, { useState } from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useAuth } from '../../context/AuthContext';
-import { RootStackParamList } from '../../types/models';
+import React, { useMemo, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { AnimatedHeroIllustration } from '../../components/AnimatedHeroIllustration';
 import { FormInput } from '../../components/FormInput';
 import { GlassCard } from '../../components/GlassCard';
+import { KeyboardAwareFormScreen } from '../../components/KeyboardAwareFormScreen';
 import { PrimaryButton } from '../../components/PrimaryButton';
-import { gradients, palette, spacing, type } from '../../theme/designSystem';
+import { StaggeredEntrance } from '../../components/StaggeredEntrance';
+import { useAuth } from '../../context/AuthContext';
+import { useAppTheme } from '../../context/ThemeContext';
+import { useToast } from '../../context/ToastContext';
+import { RootStackParamList } from '../../types/models';
 
 type ForgotPasswordNavigationProp = StackNavigationProp<RootStackParamList, 'ForgotPassword'>;
 
 const ForgotPasswordScreen = () => {
   const navigation = useNavigation<ForgotPasswordNavigationProp>();
   const { resetPassword } = useAuth();
+  const { theme } = useAppTheme();
+  const { showToast } = useToast();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
@@ -31,12 +28,20 @@ const ForgotPasswordScreen = () => {
 
   const handleResetPassword = async () => {
     if (!email) {
-      Alert.alert('Error', 'Please enter your email address');
+      showToast({
+        title: 'Email required',
+        message: 'Please enter your email address.',
+        variant: 'warning',
+      });
       return;
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      Alert.alert('Error', 'Please enter a valid email address');
+      showToast({
+        title: 'Invalid email',
+        message: 'Please enter a valid email address.',
+        variant: 'warning',
+      });
       return;
     }
 
@@ -44,31 +49,41 @@ const ForgotPasswordScreen = () => {
       setLoading(true);
       await resetPassword(email);
       setEmailSent(true);
-      Alert.alert(
-        'Email Sent!',
-        'Password reset instructions have been sent to your email address. Please check your inbox (and spam folder).',
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
-      );
+      showToast({
+        title: 'Reset email sent',
+        message: 'Check your inbox and spam folder for the reset link.',
+        variant: 'success',
+      });
+      navigation.goBack();
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to send password reset email');
+      showToast({
+        title: 'Reset failed',
+        message: error.message || 'Failed to send password reset email.',
+        variant: 'error',
+      });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <LinearGradient colors={gradients.appBackground} style={styles.container}>
-      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+    <View style={styles.container}>
+      <KeyboardAwareFormScreen contentContainerStyle={styles.scrollContent}>
+        <StaggeredEntrance delay={20}>
           <GlassCard style={styles.hero}>
-            <View style={styles.heroBadge}>
-              <Text style={styles.heroBadgeText}>Recovery</Text>
+            <View style={styles.heroTopRow}>
+              <View style={styles.heroBadge}>
+                <Text style={styles.heroBadgeText}>Recovery</Text>
+              </View>
+              <AnimatedHeroIllustration size={112} variant="pending" />
             </View>
-            <Text style={styles.wordmark}>FIND ASSURE</Text>
+            <Text style={styles.wordmark}>FindAssure</Text>
             <Text style={styles.heroTitle}>Reset your password.</Text>
             <Text style={styles.heroBody}>Enter the email tied to your account and we will send you a reset link.</Text>
           </GlassCard>
+        </StaggeredEntrance>
 
+        <StaggeredEntrance delay={90}>
           <GlassCard style={styles.formCard}>
             <Text style={styles.sectionEyebrow}>Recovery</Text>
             <Text style={styles.formTitle}>Send reset email</Text>
@@ -95,7 +110,9 @@ const ForgotPasswordScreen = () => {
               <Text style={styles.linkText}>Back to login</Text>
             </Pressable>
           </GlassCard>
+        </StaggeredEntrance>
 
+        <StaggeredEntrance delay={140}>
           <GlassCard>
             <Text style={styles.sectionEyebrow}>Next steps</Text>
             <Text style={styles.formTitle}>What happens after sending it</Text>
@@ -104,81 +121,87 @@ const ForgotPasswordScreen = () => {
             <Text style={styles.tipText}>3. Set a new password, then return to the app.</Text>
             <Text style={styles.tipText}>4. Sign back in with the updated password.</Text>
           </GlassCard>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </LinearGradient>
+        </StaggeredEntrance>
+      </KeyboardAwareFormScreen>
+    </View>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-    gap: spacing.lg,
-  },
-  hero: {
-    borderRadius: 24,
-    padding: spacing.lg,
-  },
-  heroBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: palette.primarySoft,
-    borderRadius: 999,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 5,
-    marginBottom: spacing.md,
-  },
-  heroBadgeText: {
-    ...type.caption,
-    color: palette.primaryDeep,
-    fontWeight: '700',
-  },
-  wordmark: {
-    ...type.brand,
-    fontSize: 15,
-    lineHeight: 17,
-    color: palette.primaryDeep,
-    marginBottom: spacing.sm,
-  },
-  heroTitle: {
-    ...type.title,
-    color: palette.ink,
-    marginBottom: spacing.sm,
-  },
-  heroBody: {
-    ...type.body,
-    color: palette.inkSoft,
-  },
-  formCard: {
-    marginTop: 0,
-  },
-  sectionEyebrow: {
-    ...type.label,
-    marginBottom: spacing.xs,
-  },
-  formTitle: {
-    ...type.section,
-    marginBottom: spacing.lg,
-  },
-  buttonGap: {
-    marginTop: spacing.lg,
-  },
-  backWrap: {
-    marginTop: spacing.lg,
-    alignSelf: 'center',
-  },
-  linkText: {
-    ...type.bodyStrong,
-    color: palette.primaryDeep,
-  },
-  tipText: {
-    ...type.body,
-    marginBottom: spacing.sm,
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    scrollContent: {
+      paddingTop: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
+      gap: theme.spacing.md,
+    },
+    hero: {
+      padding: theme.spacing.lg,
+    },
+    heroTopRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      marginBottom: theme.spacing.md,
+    },
+    heroBadge: {
+      alignSelf: 'flex-start',
+      backgroundColor: theme.colors.accentSoft,
+      borderRadius: 999,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 5,
+    },
+    heroBadgeText: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+      fontWeight: '700',
+    },
+    wordmark: {
+      ...theme.type.brand,
+      color: theme.colors.accent,
+      marginBottom: theme.spacing.sm,
+    },
+    heroTitle: {
+      ...theme.type.title,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.sm,
+    },
+    heroBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+    formCard: {
+      marginTop: 0,
+    },
+    sectionEyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    formTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.lg,
+    },
+    buttonGap: {
+      marginTop: theme.spacing.lg,
+    },
+    backWrap: {
+      marginTop: theme.spacing.lg,
+      alignSelf: 'center',
+    },
+    linkText: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.accent,
+    },
+    tipText: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      marginBottom: theme.spacing.sm,
+    },
+  });
 
 export default ForgotPasswordScreen;

@@ -1,27 +1,32 @@
-// AdminUsersScreen – User Management for Admin
-import React, { useState, useCallback } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
-  Alert, 
-  RefreshControl, 
-  TouchableOpacity,
-  ActivityIndicator 
-} from 'react-native';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import React, { useCallback, useMemo, useState } from 'react';
+import { Alert, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { RootStackParamList, User } from '../../types/models';
 import { adminApi } from '../../api/adminApi';
+import { GlassCard } from '../../components/GlassCard';
+import { LoadingScreen } from '../../components/LoadingScreen';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { StaggeredEntrance } from '../../components/StaggeredEntrance';
+import { useAppTheme } from '../../context/ThemeContext';
+import {
+  getAdminPalette,
+  getAdminRiskTone,
+  getAdminRoleTone,
+  getAdminUserCardTone,
+} from './adminTheme';
 
 type AdminUsersNavigationProp = StackNavigationProp<RootStackParamList, 'AdminUsers'>;
 const POLL_INTERVAL_MS = 10000;
 
 const AdminUsersScreen = () => {
   const navigation = useNavigation<AdminUsersNavigationProp>();
-  
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const adminPalette = useMemo(() => getAdminPalette(theme), [theme]);
+
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -29,7 +34,7 @@ const AdminUsersScreen = () => {
   const [suspendingUserId, setSuspendingUserId] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
 
-  const fetchUsers = useCallback(async (silent: boolean = false) => {
+  const fetchUsers = useCallback(async (silent = false) => {
     try {
       const usersData = await adminApi.getAllUsers();
       setUsers(usersData);
@@ -67,7 +72,7 @@ const AdminUsersScreen = () => {
 
   const handleRefresh = () => {
     setRefreshing(true);
-    fetchUsers(false);
+    void fetchUsers(false);
   };
 
   const handleDeleteUser = (user: User) => {
@@ -94,15 +99,8 @@ const AdminUsersScreen = () => {
     setDeletingUserId(user._id);
     try {
       await adminApi.deleteUser(user._id);
-      
-      Alert.alert(
-        'Success',
-        `User ${user.name || user.email} has been deleted successfully.`,
-        [{ text: 'OK' }]
-      );
-      
-      // Remove user from local state
-      setUsers(prevUsers => prevUsers.filter(u => u._id !== user._id));
+      Alert.alert('Success', `User ${user.name || user.email} has been deleted successfully.`, [{ text: 'OK' }]);
+      setUsers((prevUsers) => prevUsers.filter((u) => u._id !== user._id));
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Failed to delete user');
     } finally {
@@ -118,31 +116,23 @@ const AdminUsersScreen = () => {
 
     const willSuspend = !user.isSuspended;
     if (willSuspend) {
-      Alert.alert(
-        'Suspend Duration',
-        `Choose suspension period for ${user.name || user.email}`,
-        [
-          { text: '3 Days', onPress: () => confirmToggleSuspension(user, true, '3d') },
-          { text: '7 Days', onPress: () => confirmToggleSuspension(user, true, '7d') },
-          { text: 'Until Unsuspend', onPress: () => confirmToggleSuspension(user, true, 'manual') },
-          { text: 'Cancel', style: 'cancel' },
-        ]
-      );
+      Alert.alert('Suspend Duration', `Choose suspension period for ${user.name || user.email}`, [
+        { text: '3 Days', onPress: () => confirmToggleSuspension(user, true, '3d') },
+        { text: '7 Days', onPress: () => confirmToggleSuspension(user, true, '7d') },
+        { text: 'Until Unsuspend', onPress: () => confirmToggleSuspension(user, true, 'manual') },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
       return;
     }
 
-    Alert.alert(
-      'Unsuspend User',
-      `Unsuspend ${user.name || user.email}?\n\nThis user will be allowed to use the app again.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Unsuspend',
-          style: 'default',
-          onPress: () => confirmToggleSuspension(user, false),
-        },
-      ]
-    );
+    Alert.alert('Unsuspend User', `Unsuspend ${user.name || user.email}?\n\nThis user will be allowed to use the app again.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Unsuspend',
+        style: 'default',
+        onPress: () => confirmToggleSuspension(user, false),
+      },
+    ]);
   };
 
   const confirmToggleSuspension = async (
@@ -161,9 +151,7 @@ const AdminUsersScreen = () => {
         suspendFor
       );
 
-      setUsers(prevUsers =>
-        prevUsers.map(u => (u._id === user._id ? { ...u, ...updatedUser } : u))
-      );
+      setUsers((prevUsers) => prevUsers.map((u) => (u._id === user._id ? { ...u, ...updatedUser } : u)));
 
       Alert.alert(
         'Success',
@@ -184,391 +172,416 @@ const AdminUsersScreen = () => {
     const isAdmin = user.role === 'admin';
     const isSuspicious = Boolean(user.isSuspicious || user.suspiciousSeverity === 'critical');
     const isSuspended = Boolean(user.isSuspended);
+    const roleTone = getAdminRoleTone(theme, user.role);
+    const riskTone = isSuspended
+      ? getAdminRiskTone(theme, 'suspended')
+      : isSuspicious
+        ? getAdminRiskTone(theme, 'critical')
+        : getAdminRiskTone(theme, 'protected');
+    const cardTone = getAdminUserCardTone(theme, { isAdmin, isSuspended, isSuspicious });
 
     return (
-      <View key={user._id} style={[styles.userCard, isSuspicious && styles.suspiciousUserCard]}>
-        <View style={styles.userInfo}>
+      <GlassCard
+        key={user._id}
+        style={[styles.userCard, { borderColor: cardTone.borderColor, backgroundColor: cardTone.backgroundColor }]}
+      >
+        <View style={styles.cardHeader}>
           <View style={styles.userHeader}>
-            <Text style={styles.userName}>{user.name || 'No Name'}</Text>
-            <View style={[
-              styles.roleBadge,
-              isAdmin ? styles.adminBadge : styles.ownerBadge
-            ]}>
-              <Text style={styles.roleText}>{user.role.toUpperCase()}</Text>
+            <View style={styles.userNameBlock}>
+              <Text style={styles.userName}>{user.name || 'No Name'}</Text>
+              <Text style={styles.userEmail}>{user.email}</Text>
+            </View>
+            <View style={[styles.roleBadge, { backgroundColor: roleTone.backgroundColor }]}>
+              <Text style={[styles.roleText, { color: roleTone.textColor }]}>{user.role.toUpperCase()}</Text>
             </View>
           </View>
-          
-          <Text style={styles.userEmail}>{user.email}</Text>
-          {user.phone && <Text style={styles.userPhone}>📱 {user.phone}</Text>}
-
-          {isSuspended && (
-            <View style={[styles.suspiciousBadge, styles.suspendedBadge]}>
-              <Text style={styles.suspiciousText}>SUSPENDED</Text>
-            </View>
-          )}
-
-          {isSuspended && user.suspendedUntil && (
-            <Text style={styles.reasonText}>
-              Until: {new Date(user.suspendedUntil).toLocaleString()}
-            </Text>
-          )}
-
-          {!isSuspended && isSuspicious && (
-            <View style={[styles.suspiciousBadge, styles.criticalBadge]}>
-              <Text style={styles.suspiciousText}>SUSPICIOUS - CRITICAL</Text>
-            </View>
-          )}
-
-          {!!user.fraudRiskScore && (
-            <Text style={styles.riskText}>
-              Fraud Risk: {Math.round((user.fraudRiskScore || 0) * 100)}%
-            </Text>
-          )}
-
-          {isSuspicious && !!(user.suspiciousReason || user.fraudReasons?.length) && (
-            <Text style={styles.reasonText} numberOfLines={2}>
-              Reason: {user.suspiciousReason || user.fraudReasons?.[0]}
-            </Text>
-          )}
-          
-          <Text style={styles.userDate}>
-            Joined: {new Date(user.createdAt).toLocaleDateString()}
-          </Text>
         </View>
+
+        <View style={styles.infoGrid}>
+          {user.phone ? (
+            <View style={styles.infoRow}>
+              <Ionicons name="call-outline" size={16} color={theme.colors.textMuted} />
+              <Text style={styles.infoText}>{user.phone}</Text>
+            </View>
+          ) : null}
+          <View style={styles.infoRow}>
+            <Ionicons name="calendar-outline" size={16} color={theme.colors.textMuted} />
+            <Text style={styles.infoText}>Joined {new Date(user.createdAt).toLocaleDateString()}</Text>
+          </View>
+          {isSuspended && user.suspendedUntil ? (
+            <View style={styles.infoRow}>
+              <Ionicons name="time-outline" size={16} color={theme.colors.textMuted} />
+              <Text style={styles.infoText}>Suspended until {new Date(user.suspendedUntil).toLocaleString()}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.badgeRow}>
+          {(isSuspicious || isSuspended || isAdmin) && (
+            <View style={[styles.signalBadge, { backgroundColor: riskTone.backgroundColor }]}>
+              <Text style={[styles.signalBadgeText, { color: riskTone.textColor }]}>
+                {isSuspended ? 'Suspended' : isSuspicious ? 'Critical risk' : 'Protected account'}
+              </Text>
+            </View>
+          )}
+          {!!user.fraudRiskScore && (
+            <View style={[styles.signalBadge, { backgroundColor: theme.colors.warningSoft }]}>
+              <Text style={[styles.signalBadgeText, { color: theme.colors.warning }]}>
+                Fraud risk {Math.round((user.fraudRiskScore || 0) * 100)}%
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {isSuspicious && !!(user.suspiciousReason || user.fraudReasons?.length) ? (
+          <View style={styles.reasonBlock}>
+            <Text style={styles.reasonLabel}>Reason</Text>
+            <Text style={styles.reasonText} numberOfLines={3}>
+              {user.suspiciousReason || user.fraudReasons?.[0]}
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.actionButtons}>
-          {!isAdmin && (
-            <TouchableOpacity
-              style={[
-                styles.suspendButton,
-                isSuspending && styles.actionButtonDisabled,
-              ]}
-              onPress={() => handleToggleSuspension(user)}
-              disabled={isSuspending || isDeleting}
-            >
-              {isSuspending ? (
-                <ActivityIndicator size="small" color="#C62828" />
-              ) : (
-                <Text style={styles.suspendButtonText}>
-                  {isSuspended ? 'Unsuspend' : 'Suspend'}
-                </Text>
-              )}
-            </TouchableOpacity>
-          )}
-
-          {!isAdmin && (
-            <TouchableOpacity
-              style={[styles.deleteButton, (isDeleting || isSuspending) && styles.actionButtonDisabled]}
-              onPress={() => handleDeleteUser(user)}
-              disabled={isDeleting || isSuspending}
-            >
-              {isDeleting ? (
-                <ActivityIndicator size="small" color="#C62828" />
-              ) : (
-                <Text style={styles.deleteButtonText}>Delete</Text>
-              )}
-            </TouchableOpacity>
-          )}
-          {isAdmin && (
-            <View style={styles.protectedLabel}>
-              <Text style={styles.protectedText}>Protected</Text>
-            </View>
+          {!isAdmin ? (
+            <>
+              <PrimaryButton
+                title={isSuspended ? 'Unsuspend' : 'Suspend'}
+                onPress={() => handleToggleSuspension(user)}
+                disabled={isDeleting}
+                loading={isSuspending}
+                variant="secondary"
+                style={StyleSheet.flatten([styles.actionButton, styles.suspendButton, { borderColor: adminPalette.accent }])}
+                textStyle={{ color: adminPalette.accent }}
+              />
+              <PrimaryButton
+                title="Delete"
+                onPress={() => handleDeleteUser(user)}
+                disabled={isSuspending}
+                loading={isDeleting}
+                variant="danger"
+                style={styles.actionButton}
+              />
+            </>
+          ) : (
+            <GlassCard style={styles.protectedLabel} intensity={24}>
+              <Text style={styles.protectedText}>Protected administrator account</Text>
+            </GlassCard>
           )}
         </View>
-      </View>
+      </GlassCard>
     );
   };
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#4A90E2" />
-        <Text style={styles.loadingText}>Loading users...</Text>
-      </View>
+      <LoadingScreen
+        message="Loading user moderation"
+        subtitle="Syncing current account status, risk signals, and suspension controls."
+      />
     );
   }
 
   return (
-    <View style={styles.container}>
+    <LinearGradient colors={theme.gradients.appBackground} style={styles.container}>
       <ScrollView
-        style={styles.scrollView}
+        contentContainerStyle={styles.content}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
-        }
-      >
-        <View style={styles.content}>
-          <View style={styles.header}>
-            <Text style={styles.title}>User Management</Text>
-            <Text style={styles.subtitle}>Total Users: {users.length}</Text>
-            <Text style={styles.subtitle}>
-              Live updates every {Math.floor(POLL_INTERVAL_MS / 1000)}s
-              {lastUpdatedAt ? ` • Last: ${lastUpdatedAt.toLocaleTimeString()}` : ''}
-            </Text>
-          </View>
-
-          <View style={styles.statsContainer}>
-            <View style={styles.statCard}>
-              <Text style={styles.statNumber}>
-                {users.filter(u => u.role === 'admin').length}
-              </Text>
-              <Text style={styles.statLabel}>Admins</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statNumber}>
-                {users.filter(u => u.role === 'owner').length}
-              </Text>
-              <Text style={styles.statLabel}>Owners</Text>
-            </View>
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>All Users</Text>
-            {users.map(user => renderUserCard(user))}
-            
-            {users.length === 0 && (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>No users found</Text>
-              </View>
-            )}
-          </View>
-
-          <PrimaryButton
-            title="Back to Dashboard"
-            onPress={() => navigation.goBack()}
-            style={styles.backButton}
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={adminPalette.accent}
+            colors={[adminPalette.accent]}
+            progressBackgroundColor={theme.colors.card}
           />
-        </View>
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        <StaggeredEntrance delay={20}>
+          <GlassCard style={styles.heroCard}>
+            <View style={styles.heroTopRow}>
+              <View style={styles.heroCopy}>
+                <View style={[styles.heroBadge, { backgroundColor: adminPalette.accentSoft }]}>
+                  <Text style={[styles.heroBadgeText, { color: adminPalette.accentText }]}>User moderation</Text>
+                </View>
+                <Text style={styles.heroTitle}>Monitor account health and take action.</Text>
+                <Text style={styles.heroBody}>
+                  Review suspicious behavior, apply suspensions, and protect administrator access from one queue.
+                </Text>
+              </View>
+              <View style={[styles.heroIconWrap, { backgroundColor: adminPalette.accentSoft }]}>
+                <Ionicons name="shield-half-outline" size={30} color={adminPalette.accent} />
+              </View>
+            </View>
+            <Text style={styles.heroMeta}>
+              Live updates every {Math.floor(POLL_INTERVAL_MS / 1000)}s
+              {lastUpdatedAt ? ` • Last sync ${lastUpdatedAt.toLocaleTimeString()}` : ''}
+            </Text>
+          </GlassCard>
+        </StaggeredEntrance>
+
+        <StaggeredEntrance delay={90}>
+          <View style={styles.statsGrid}>
+            {[
+              { label: 'Admins', value: users.filter((u) => u.role === 'admin').length },
+              { label: 'Owners', value: users.filter((u) => u.role === 'owner').length },
+              { label: 'Flagged', value: users.filter((u) => u.isSuspicious || u.suspiciousSeverity === 'critical').length },
+            ].map((stat) => (
+              <GlassCard key={stat.label} style={styles.statCard} intensity={24}>
+                <Text style={styles.statLabel}>{stat.label}</Text>
+                <Text style={[styles.statNumber, { color: adminPalette.accent }]}>{stat.value}</Text>
+              </GlassCard>
+            ))}
+          </View>
+        </StaggeredEntrance>
+
+        <StaggeredEntrance delay={140}>
+          <GlassCard style={styles.sectionCard}>
+            <View style={styles.sectionHeader}>
+              <View>
+                <Text style={styles.sectionEyebrow}>Moderation queue</Text>
+                <Text style={styles.sectionTitle}>All users</Text>
+              </View>
+              <Text style={styles.sectionMeta}>{users.length} records</Text>
+            </View>
+
+            {users.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyTitle}>No users found</Text>
+                <Text style={styles.emptyText}>Account records will appear here after the next backend sync.</Text>
+              </View>
+            ) : (
+              users.map((user) => renderUserCard(user))
+            )}
+          </GlassCard>
+        </StaggeredEntrance>
+
+        <PrimaryButton
+          title="Back to Dashboard"
+          onPress={() => navigation.goBack()}
+          variant="secondary"
+          size="lg"
+          style={styles.backButton}
+        />
       </ScrollView>
-    </View>
+    </LinearGradient>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  content: {
-    padding: 20,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    fontSize: 16,
-    color: '#666666',
-    marginTop: 12,
-  },
-  header: {
-    marginBottom: 24,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666666',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    marginBottom: 24,
-    gap: 12,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    alignItems: 'center',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  statNumber: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#4A90E2',
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#666666',
-    textAlign: 'center',
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 16,
-  },
-  userCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  suspiciousUserCard: {
-    backgroundColor: '#FFEBEE',
-    borderWidth: 1,
-    borderColor: '#F5C2C7',
-  },
-  userInfo: {
-    marginBottom: 12,
-  },
-  userHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  userName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333333',
-    flex: 1,
-  },
-  roleBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  adminBadge: {
-    backgroundColor: '#FF6B6B',
-  },
-  ownerBadge: {
-    backgroundColor: '#4A90E2',
-  },
-  roleText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  userEmail: {
-    fontSize: 14,
-    color: '#666666',
-    marginBottom: 4,
-  },
-  userPhone: {
-    fontSize: 14,
-    color: '#666666',
-    marginBottom: 4,
-  },
-  userDate: {
-    fontSize: 12,
-    color: '#999999',
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 8,
-  },
-  suspiciousBadge: {
-    marginTop: 6,
-    marginBottom: 4,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-  criticalBadge: {
-    backgroundColor: '#B71C1C',
-  },
-  suspendedBadge: {
-    backgroundColor: '#424242',
-  },
-  suspiciousText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  riskText: {
-    fontSize: 12,
-    color: '#C62828',
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  reasonText: {
-    fontSize: 12,
-    color: '#666666',
-    marginTop: 2,
-  },
-  suspendButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    minWidth: 96,
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#C62828',
-  },
-  suspendButtonText: {
-    color: '#C62828',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  deleteButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#C62828',
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 8,
-    minWidth: 100,
-    alignItems: 'center',
-  },
-  actionButtonDisabled: {
-    backgroundColor: '#CCCCCC',
-  },
-  deleteButtonText: {
-    color: '#C62828',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  protectedLabel: {
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 8,
-    backgroundColor: '#F5F5F5',
-    borderWidth: 1,
-    borderColor: '#DDDDDD',
-  },
-  protectedText: {
-    color: '#999999',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  emptyState: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 40,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#999999',
-  },
-  backButton: {
-    marginTop: 10,
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+    },
+    content: {
+      paddingTop: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
+      gap: theme.spacing.md,
+    },
+    heroCard: {
+      padding: theme.spacing.lg,
+    },
+    heroTopRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: theme.spacing.md,
+      marginBottom: theme.spacing.md,
+    },
+    heroCopy: {
+      flex: 1,
+    },
+    heroBadge: {
+      alignSelf: 'flex-start',
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 5,
+      marginBottom: theme.spacing.sm,
+    },
+    heroBadgeText: {
+      ...theme.type.caption,
+      fontWeight: '700',
+    },
+    heroTitle: {
+      ...theme.type.title,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.sm,
+    },
+    heroBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+    heroMeta: {
+      ...theme.type.caption,
+      color: theme.colors.textSubtle,
+    },
+    heroIconWrap: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    statsGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: theme.spacing.md,
+    },
+    statCard: {
+      flexGrow: 1,
+      flexBasis: '30%',
+      minWidth: 100,
+      alignItems: 'center',
+    },
+    statLabel: {
+      ...theme.type.caption,
+      color: theme.colors.textMuted,
+      marginBottom: theme.spacing.sm,
+    },
+    statNumber: {
+      ...theme.type.hero,
+    },
+    sectionCard: {
+      marginBottom: 0,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.spacing.md,
+      gap: theme.spacing.md,
+    },
+    sectionEyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    sectionTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+    },
+    sectionMeta: {
+      ...theme.type.caption,
+      color: theme.colors.textSubtle,
+    },
+    userCard: {
+      marginBottom: theme.spacing.md,
+      borderWidth: 1,
+    },
+    cardHeader: {
+      marginBottom: theme.spacing.md,
+    },
+    userHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: theme.spacing.md,
+    },
+    userNameBlock: {
+      flex: 1,
+    },
+    userName: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+      marginBottom: 2,
+    },
+    userEmail: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+    roleBadge: {
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 6,
+    },
+    roleText: {
+      ...theme.type.caption,
+      fontWeight: '700',
+    },
+    infoGrid: {
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.md,
+    },
+    infoRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+    },
+    infoText: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      flex: 1,
+    },
+    badgeRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.md,
+    },
+    signalBadge: {
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 6,
+    },
+    signalBadgeText: {
+      ...theme.type.caption,
+      fontWeight: '700',
+    },
+    reasonBlock: {
+      backgroundColor: theme.colors.cardMuted,
+      borderRadius: theme.radius.md,
+      padding: theme.spacing.md,
+      marginBottom: theme.spacing.md,
+    },
+    reasonLabel: {
+      ...theme.type.caption,
+      color: theme.colors.textSubtle,
+      marginBottom: 4,
+      textTransform: 'uppercase',
+    },
+    reasonText: {
+      ...theme.type.body,
+      color: theme.colors.textStrong,
+    },
+    actionButtons: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+      alignItems: 'stretch',
+    },
+    actionButton: {
+      flex: 1,
+    },
+    suspendButton: {
+      borderWidth: 1,
+    },
+    protectedLabel: {
+      width: '100%',
+    },
+    protectedText: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textMuted,
+      textAlign: 'center',
+    },
+    emptyState: {
+      backgroundColor: theme.colors.cardMuted,
+      borderRadius: theme.radius.md,
+      paddingVertical: theme.spacing.xl,
+      paddingHorizontal: theme.spacing.lg,
+      alignItems: 'center',
+    },
+    emptyTitle: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.xs,
+    },
+    emptyText: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      textAlign: 'center',
+    },
+    backButton: {
+      marginTop: theme.spacing.xs,
+    },
+  });
 
 export default AdminUsersScreen;

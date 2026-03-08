@@ -1,16 +1,9 @@
-import React, { useRef, useState } from 'react';
-import {
-  Dimensions,
-  FlatList,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { Dimensions, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Animated, {
   interpolate,
   SharedValue,
@@ -18,10 +11,10 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
 } from 'react-native-reanimated';
-import { RootStackParamList } from '../types/models';
 import { GlassCard } from '../components/GlassCard';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { gradients, palette, radius, spacing, type } from '../theme/designSystem';
+import { useAppTheme } from '../context/ThemeContext';
+import { RootStackParamList } from '../types/models';
 
 const { width } = Dimensions.get('window');
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList<any>);
@@ -37,41 +30,6 @@ interface OnboardingSlide {
   gradient: readonly [string, string, string];
 }
 
-const slides: OnboardingSlide[] = [
-  {
-    id: '1',
-    eyebrow: 'FindAssure',
-    title: 'Lost and found, rebuilt for speed.',
-    description: 'A calmer reporting and recovery experience with AI-assisted matching, cleaner verification, and clearer next steps.',
-    badge: '01',
-    gradient: gradients.hero,
-  },
-  {
-    id: '2',
-    eyebrow: 'Founder flow',
-    title: 'Capture, describe, and protect the item.',
-    description: 'Add strong photos, let the app prepare details, and choose the five questions that only the real owner should know.',
-    badge: '02',
-    gradient: gradients.violet,
-  },
-  {
-    id: '3',
-    eyebrow: 'Owner flow',
-    title: 'Search with context, not guesswork.',
-    description: 'Combine category, description, location confidence, and optional photos to surface stronger matches immediately.',
-    badge: '03',
-    gradient: gradients.heroAlt,
-  },
-  {
-    id: '4',
-    eyebrow: 'Verification',
-    title: 'Ownership stays private until it is proven.',
-    description: 'Video and semantic checks keep sensitive finder contact details hidden until the claim is verified.',
-    badge: '04',
-    gradient: gradients.success,
-  },
-];
-
 const SlideCard = ({
   item,
   index,
@@ -81,6 +39,9 @@ const SlideCard = ({
   index: number;
   scrollX: SharedValue<number>;
 }) => {
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+
   const animatedStyle = useAnimatedStyle(() => {
     const position = scrollX.value / width;
     return {
@@ -120,9 +81,53 @@ const SlideCard = ({
 
 const OnboardingScreen = () => {
   const navigation = useNavigation<OnboardingNavigationProp>();
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const scrollX = useSharedValue(0);
+
+  const slides = useMemo<OnboardingSlide[]>(
+    () => [
+      {
+        id: '1',
+        eyebrow: 'FindAssure',
+        title: 'Lost and found, rebuilt for speed.',
+        description:
+          'A calmer reporting and recovery experience with AI-assisted matching, cleaner verification, and clearer next steps.',
+        badge: '01',
+        gradient: theme.gradients.hero,
+      },
+      {
+        id: '2',
+        eyebrow: 'Report item',
+        title: 'Capture, describe, and protect the item.',
+        description:
+          'Add strong photos, let the app prepare details, and choose the five questions that only the real owner should know.',
+        badge: '02',
+        gradient: theme.gradients.violet,
+      },
+      {
+        id: '3',
+        eyebrow: 'Item search',
+        title: 'Search with context, not guesswork.',
+        description:
+          'Combine category, description, location confidence, and optional photos to surface stronger matches immediately.',
+        badge: '03',
+        gradient: theme.gradients.heroAlt,
+      },
+      {
+        id: '4',
+        eyebrow: 'Verification',
+        title: 'Ownership stays private until it is proven.',
+        description:
+          'Video and semantic checks keep sensitive finder contact details hidden until the claim is verified.',
+        badge: '04',
+        gradient: theme.gradients.success,
+      },
+    ],
+    [theme.gradients.hero, theme.gradients.heroAlt, theme.gradients.success, theme.gradients.violet]
+  );
 
   const completeOnboarding = async () => {
     try {
@@ -150,7 +155,7 @@ const OnboardingScreen = () => {
   });
 
   return (
-    <LinearGradient colors={gradients.appBackground} style={styles.container}>
+    <LinearGradient colors={theme.gradients.appBackground} style={styles.container}>
       <View style={styles.topBar}>
         <Pressable onPress={completeOnboarding}>
           <Text style={styles.skipText}>Skip</Text>
@@ -176,8 +181,8 @@ const OnboardingScreen = () => {
 
       <View style={styles.footer}>
         <View style={styles.pagination}>
-          {slides.map((_, index) => (
-            <View key={index} style={[styles.dot, index === currentIndex && styles.dotActive]} />
+          {slides.map((slide, index) => (
+            <View key={slide.id} style={[styles.dot, index === currentIndex && styles.dotActive]} />
           ))}
         </View>
         <PrimaryButton
@@ -190,117 +195,118 @@ const OnboardingScreen = () => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: palette.paper,
-  },
-  topBar: {
-    paddingTop: 72,
-    paddingHorizontal: spacing.xl,
-    alignItems: 'flex-end',
-  },
-  skipText: {
-    ...type.bodyStrong,
-    color: palette.primaryDeep,
-  },
-  slide: {
-    width,
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.md,
-  },
-  slideInner: {
-    flex: 1,
-  },
-  heroPanel: {
-    flex: 1,
-    minHeight: 420,
-    borderRadius: radius.xl,
-    padding: spacing.xl,
-    overflow: 'hidden',
-    justifyContent: 'flex-end',
-  },
-  heroTopRow: {
-    position: 'absolute',
-    top: spacing.xl,
-    left: spacing.xl,
-    right: spacing.xl,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  badge: {
-    ...type.bodyStrong,
-    color: palette.paperStrong,
-    opacity: 0.9,
-  },
-  wordmark: {
-    ...type.brand,
-    fontSize: 14,
-    lineHeight: 16,
-    color: palette.paperStrong,
-  },
-  orb: {
-    position: 'absolute',
-    top: -36,
-    right: -12,
-    width: 188,
-    height: 188,
-    borderRadius: 94,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-  },
-  eyebrow: {
-    ...type.label,
-    color: 'rgba(255,255,255,0.72)',
-    marginBottom: spacing.sm,
-  },
-  heroTitle: {
-    ...type.hero,
-    maxWidth: '92%',
-  },
-  copyCard: {
-    marginTop: -56,
-    marginHorizontal: spacing.md,
-  },
-  copyText: {
-    ...type.body,
-    color: palette.ink,
-    marginBottom: spacing.lg,
-  },
-  copyMetaRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  copyMeta: {
-    ...type.caption,
-    color: palette.primaryDeep,
-    backgroundColor: palette.primarySoft,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    overflow: 'hidden',
-  },
-  footer: {
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.xl,
-  },
-  pagination: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    justifyContent: 'center',
-    marginBottom: spacing.lg,
-  },
-  dot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: 'rgba(79,124,255,0.18)',
-  },
-  dotActive: {
-    width: 28,
-    backgroundColor: palette.primary,
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    topBar: {
+      paddingTop: 72,
+      paddingHorizontal: theme.spacing.xl,
+      alignItems: 'flex-end',
+    },
+    skipText: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.accent,
+    },
+    slide: {
+      width,
+      paddingHorizontal: theme.spacing.xl,
+      paddingTop: theme.spacing.md,
+    },
+    slideInner: {
+      flex: 1,
+    },
+    heroPanel: {
+      flex: 1,
+      minHeight: 420,
+      borderRadius: theme.radius.xl,
+      padding: theme.spacing.xl,
+      overflow: 'hidden',
+      justifyContent: 'flex-end',
+    },
+    heroTopRow: {
+      position: 'absolute',
+      top: theme.spacing.xl,
+      left: theme.spacing.xl,
+      right: theme.spacing.xl,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+    badge: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.paperStrong,
+      opacity: 0.9,
+    },
+    wordmark: {
+      ...theme.type.brand,
+      fontSize: 14,
+      lineHeight: 16,
+      color: theme.colors.paperStrong,
+    },
+    orb: {
+      position: 'absolute',
+      top: -36,
+      right: -12,
+      width: 188,
+      height: 188,
+      borderRadius: 94,
+      backgroundColor: theme.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.18)',
+    },
+    eyebrow: {
+      ...theme.type.label,
+      color: 'rgba(255,255,255,0.72)',
+      marginBottom: theme.spacing.sm,
+    },
+    heroTitle: {
+      ...theme.type.hero,
+      maxWidth: '92%',
+    },
+    copyCard: {
+      marginTop: -56,
+      marginHorizontal: theme.spacing.md,
+    },
+    copyText: {
+      ...theme.type.body,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.lg,
+    },
+    copyMetaRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: theme.spacing.sm,
+    },
+    copyMeta: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+      backgroundColor: theme.colors.accentSoft,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 6,
+      borderRadius: theme.radius.pill,
+      overflow: 'hidden',
+    },
+    footer: {
+      paddingHorizontal: theme.spacing.xl,
+      paddingTop: theme.spacing.lg,
+      paddingBottom: theme.spacing.xl,
+    },
+    pagination: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+      justifyContent: 'center',
+      marginBottom: theme.spacing.lg,
+    },
+    dot: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor: theme.colors.accentSoft,
+    },
+    dotActive: {
+      width: 28,
+      backgroundColor: theme.colors.accent,
+    },
+  });
 
 export default OnboardingScreen;

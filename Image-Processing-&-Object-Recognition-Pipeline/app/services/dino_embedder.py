@@ -16,12 +16,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 import threading
 from typing import List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
 from app.services.gpu_semaphore import gpu_inference_guard
+from app.config import model_paths
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -36,7 +38,7 @@ class DINOEmbedder:
 
     def __init__(
         self,
-        model_name: str = "facebook/dinov2-base",
+        model_name: str = model_paths.DINOV2_REPO_PATH,
         device: str = "cuda",
         projection_dim: int = 128,
         projection_seed: int = 42,
@@ -62,9 +64,44 @@ class DINOEmbedder:
         self._proj = None  # np.ndarray (D x projection_dim)
         self._model_load_lock = threading.Lock()
 
+    def _required_model_files(self) -> Tuple[str, ...]:
+        return (
+            "config.json",
+            "preprocessor_config.json",
+        )
+
+    def _validate_local_model_path(self) -> str:
+        model_path = os.path.abspath(str(self.model_name))
+        if not os.path.isdir(model_path):
+            raise RuntimeError(
+                f"Local DINO model directory not found at {model_path}. "
+                "Expected a local Hugging Face model folder under app/models/DINOv2."
+            )
+
+        missing_required = [
+            filename for filename in self._required_model_files() if not os.path.exists(os.path.join(model_path, filename))
+        ]
+        if missing_required:
+            raise RuntimeError(
+                f"Local DINO model directory is incomplete at {model_path}. "
+                f"Missing required files: {', '.join(missing_required)}."
+            )
+
+        has_weights = any(
+            os.path.exists(os.path.join(model_path, filename))
+            for filename in ("model.safetensors", "pytorch_model.bin")
+        )
+        if not has_weights:
+            raise RuntimeError(
+                f"Local DINO model directory is incomplete at {model_path}. "
+                "Missing model weights (expected model.safetensors or pytorch_model.bin)."
+            )
+
+        return model_path
+
     def _cache_key(self) -> Tuple[str, str, bool]:
         return (
-            str(self.model_name),
+            os.path.abspath(str(self.model_name)),
             str(self.device),
             bool(self.device == "cuda" and self.use_fp16),
         )
@@ -107,8 +144,17 @@ class DINOEmbedder:
             from transformers import AutoImageProcessor, AutoModel  # type: ignore
             import torch  # type: ignore
 
-            self._processor = AutoImageProcessor.from_pretrained(self.model_name)
-            self._model = AutoModel.from_pretrained(self.model_name)
+            local_model_path = self._validate_local_model_path()
+            logger.info("DINO_MODEL_LOAD_LOCAL path=%s", local_model_path)
+            try:
+                self._processor = AutoImageProcessor.from_pretrained(local_model_path, local_files_only=True)
+                self._model = AutoModel.from_pretrained(local_model_path, local_files_only=True)
+            except Exception as exc:
+                logger.error("DINO_MODEL_LOAD_FAILED_LOCAL path=%s error=%s", local_model_path, exc)
+                raise RuntimeError(
+                    f"Failed to load local DINO model from {local_model_path}. "
+                    "Verify the local model files are present and readable."
+                ) from exc
             if self.device:
                 self._model.to(self.device)
             if self.device == "cuda" and self.use_fp16:

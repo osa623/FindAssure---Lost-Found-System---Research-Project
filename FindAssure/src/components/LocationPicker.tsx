@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -9,12 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from 'react-native-reanimated';
-import { Ionicons } from '@expo/vector-icons';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import axiosClient from '../api/axiosClient';
 import {
   getFloorOptions,
@@ -23,8 +19,8 @@ import {
   hasFloors,
   LocationDetail,
 } from '../constants/locationData';
+import { useAppTheme } from '../context/ThemeContext';
 import { GlassCard } from './GlassCard';
-import { motion, palette, radius, spacing, type } from '../theme/designSystem';
 
 interface LocationPickerProps {
   selectedValue: LocationDetail | null;
@@ -43,6 +39,8 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
   label = 'Location',
   error,
 }) => {
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [modalVisible, setModalVisible] = useState(false);
   const [currentStep, setCurrentStep] = useState<'location' | 'floor' | 'hall'>('location');
   const [selectedLocation, setSelectedLocation] = useState<string>(selectedValue?.location || '');
@@ -53,20 +51,22 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
   const [hallOptions, setHallOptions] = useState<{ label: string; value: string }[]>([]);
   const [locationsWithFloors, setLocationsWithFloors] = useState<Set<string>>(new Set());
   const [loadingOptions, setLoadingOptions] = useState(false);
-
   const translateY = useSharedValue(40);
 
   useEffect(() => {
-    translateY.value = modalVisible ? withSpring(0, motion.spring) : 40;
-  }, [modalVisible, translateY]);
+    translateY.value = modalVisible ? withSpring(0, theme.motion.spring) : 40;
+  }, [modalVisible, theme.motion.spring, translateY]);
 
   const animatedSheet = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
   }));
 
-  const locationHasFloors = (location: string): boolean => locationsWithFloors.has(location) || hasFloors(location);
+  const locationHasFloors = useCallback(
+    (location: string): boolean => locationsWithFloors.has(location) || hasFloors(location),
+    [locationsWithFloors]
+  );
 
-  const loadLocations = async () => {
+  const loadLocations = useCallback(async () => {
     setLoadingOptions(true);
     try {
       const response = await axiosClient.get('/locations/main');
@@ -82,9 +82,9 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
     } finally {
       setLoadingOptions(false);
     }
-  };
+  }, []);
 
-  const loadFloors = async (location: string) => {
+  const loadFloors = useCallback(async (location: string) => {
     if (!locationHasFloors(location)) {
       setFloorOptions([]);
       return;
@@ -96,9 +96,9 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
     } catch {
       setFloorOptions(getFloorOptions(location));
     }
-  };
+  }, [locationHasFloors]);
 
-  const loadHalls = async (location: string, floorId: string) => {
+  const loadHalls = useCallback(async (location: string, floorId: string) => {
     try {
       const response = await axiosClient.get(
         `/locations/${encodeURIComponent(location)}/floors/${encodeURIComponent(floorId)}/halls`
@@ -108,11 +108,11 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
     } catch {
       setHallOptions(getHallOptions(location, floorId));
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadLocations();
-  }, []);
+  }, [loadLocations]);
 
   useEffect(() => {
     if (selectedLocation) {
@@ -121,7 +121,7 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
       setFloorOptions([]);
     }
     setHallOptions([]);
-  }, [selectedLocation]);
+  }, [selectedLocation, loadFloors]);
 
   useEffect(() => {
     if (selectedLocation && selectedFloor) {
@@ -129,7 +129,7 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
     } else {
       setHallOptions([]);
     }
-  }, [selectedLocation, selectedFloor]);
+  }, [selectedLocation, selectedFloor, loadHalls]);
 
   const handleLocationSelect = (value: string) => {
     setSelectedLocation(value);
@@ -254,11 +254,13 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
 
       <Pressable style={[styles.trigger, error ? styles.triggerError : null]} onPress={() => setModalVisible(true)}>
         <View style={styles.triggerCopy}>
-          <Text numberOfLines={1} style={styles.triggerTitle}>{display.title}</Text>
+          <Text numberOfLines={1} style={styles.triggerTitle}>
+            {display.title}
+          </Text>
           {display.subtitle ? <Text numberOfLines={1} style={styles.triggerCaption}>{display.subtitle}</Text> : null}
         </View>
         <View style={styles.triggerIconWrap}>
-          <Ionicons name="chevron-down" size={18} color={palette.mist} />
+          <Ionicons name="chevron-down" size={18} color={theme.colors.textSubtle} />
         </View>
       </Pressable>
 
@@ -283,11 +285,11 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
                 <View style={styles.headerActions}>
                   {currentStep !== 'location' ? (
                     <Pressable style={styles.smallButton} onPress={handleBack}>
-                      <Ionicons name="chevron-back" size={16} color={palette.ink} />
+                      <Ionicons name="chevron-back" size={16} color={theme.colors.textStrong} />
                     </Pressable>
                   ) : null}
                   <Pressable style={styles.smallButton} onPress={handleModalClose}>
-                    <Ionicons name="close" size={18} color={palette.ink} />
+                    <Ionicons name="close" size={18} color={theme.colors.textStrong} />
                   </Pressable>
                 </View>
               </View>
@@ -301,8 +303,8 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
                   <View style={styles.emptyState}>
                     {loadingOptions ? (
                       <>
-                        <ActivityIndicator size="small" color={palette.primaryDeep} />
-                        <Text style={styles.emptyText}>Loading locations...</Text>
+                        <ActivityIndicator size="small" color={theme.colors.accent} />
+                        <Text style={styles.emptyText}>Loading locations…</Text>
                       </>
                     ) : (
                       <Text style={styles.emptyText}>No options available</Text>
@@ -321,15 +323,17 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
                       onPress={() => handleOptionSelect(item.value)}
                     >
                       <View style={styles.optionCopy}>
-                        <Text numberOfLines={1} style={[styles.optionText, selected && styles.optionTextSelected]}>{item.label}</Text>
+                        <Text numberOfLines={1} style={[styles.optionText, selected && styles.optionTextSelected]}>
+                          {item.label}
+                        </Text>
                       </View>
                       <View style={styles.optionIconWrap}>
                         {selected ? (
                           <View style={styles.checkBadge}>
-                            <Ionicons name="checkmark" size={14} color={palette.paperStrong} />
+                            <Ionicons name="checkmark" size={14} color={theme.colors.inverse} />
                           </View>
                         ) : (
-                          <Ionicons name="chevron-forward" size={16} color={palette.mist} />
+                          <Ionicons name="chevron-forward" size={16} color={theme.colors.textSubtle} />
                         )}
                       </View>
                     </Pressable>
@@ -344,146 +348,150 @@ export const LocationPicker: React.FC<LocationPickerProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    marginBottom: spacing.md,
-  },
-  label: {
-    ...type.label,
-    marginBottom: spacing.sm,
-  },
-  trigger: {
-    minHeight: 56,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: palette.lineStrong,
-    backgroundColor: palette.paperStrong,
-    paddingHorizontal: spacing.md,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  triggerError: {
-    borderColor: 'rgba(239,68,68,0.35)',
-  },
-  triggerCopy: {
-    flex: 1,
-    minWidth: 0,
-    marginRight: spacing.sm,
-  },
-  triggerTitle: {
-    ...type.bodyStrong,
-    color: palette.ink,
-  },
-  triggerCaption: {
-    ...type.caption,
-    marginTop: 2,
-    color: palette.inkSoft,
-  },
-  triggerIconWrap: {
-    width: 18,
-    alignItems: 'flex-end',
-  },
-  errorText: {
-    ...type.caption,
-    color: palette.danger,
-    marginTop: spacing.xs,
-  },
-  overlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(15,23,42,0.16)',
-  },
-  sheetWrap: {
-    paddingHorizontal: spacing.md,
-    paddingBottom: 16,
-  },
-  sheet: {
-    borderRadius: radius.xl,
-  },
-  sheetHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  headerCopy: {
-    flex: 1,
-    marginRight: spacing.md,
-  },
-  eyebrow: {
-    ...type.label,
-    marginBottom: spacing.xs,
-  },
-  sheetTitle: {
-    ...type.section,
-  },
-  contextText: {
-    ...type.caption,
-    marginTop: 4,
-    color: palette.inkSoft,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  smallButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: palette.paper,
-  },
-  options: {
-    gap: spacing.sm,
-  },
-  option: {
-    minHeight: 50,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    backgroundColor: palette.paperStrong,
-    borderWidth: 1,
-    borderColor: palette.lineStrong,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  optionSelected: {
-    backgroundColor: palette.primarySoft,
-    borderColor: 'rgba(79,124,255,0.2)',
-  },
-  optionCopy: {
-    flex: 1,
-    minWidth: 0,
-    marginRight: spacing.md,
-  },
-  optionText: {
-    ...type.bodyStrong,
-  },
-  optionTextSelected: {
-    color: palette.primaryDeep,
-  },
-  optionIconWrap: {
-    width: 24,
-    alignItems: 'flex-end',
-  },
-  checkBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: palette.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyState: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.xl,
-  },
-  emptyText: {
-    ...type.body,
-    marginTop: spacing.sm,
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: {
+      marginBottom: theme.spacing.md,
+    },
+    label: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.sm,
+    },
+    trigger: {
+      minHeight: 56,
+      borderRadius: theme.radius.md,
+      borderWidth: 1,
+      borderColor: theme.colors.borderStrong,
+      backgroundColor: theme.colors.input,
+      paddingHorizontal: theme.spacing.md,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    triggerError: {
+      borderColor: theme.colors.danger,
+    },
+    triggerCopy: {
+      flex: 1,
+      minWidth: 0,
+      marginRight: theme.spacing.sm,
+    },
+    triggerTitle: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+    },
+    triggerCaption: {
+      ...theme.type.caption,
+      marginTop: 2,
+      color: theme.colors.textMuted,
+    },
+    triggerIconWrap: {
+      width: 18,
+      alignItems: 'flex-end',
+    },
+    errorText: {
+      ...theme.type.caption,
+      color: theme.colors.danger,
+      marginTop: theme.spacing.xs,
+    },
+    overlay: {
+      flex: 1,
+      justifyContent: 'flex-end',
+      backgroundColor: theme.colors.overlay,
+    },
+    sheetWrap: {
+      paddingHorizontal: theme.spacing.md,
+      paddingBottom: 16,
+    },
+    sheet: {
+      borderRadius: theme.radius.xl,
+    },
+    sheetHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.spacing.lg,
+    },
+    headerCopy: {
+      flex: 1,
+      marginRight: theme.spacing.md,
+    },
+    eyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    sheetTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+    },
+    contextText: {
+      ...theme.type.caption,
+      marginTop: 4,
+      color: theme.colors.textMuted,
+    },
+    headerActions: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+    },
+    smallButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.cardMuted,
+    },
+    options: {
+      gap: theme.spacing.sm,
+    },
+    option: {
+      minHeight: 50,
+      borderRadius: theme.radius.md,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: 10,
+      backgroundColor: theme.colors.input,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    optionSelected: {
+      backgroundColor: theme.colors.accentSoft,
+      borderColor: theme.colors.accent,
+    },
+    optionCopy: {
+      flex: 1,
+      minWidth: 0,
+      marginRight: theme.spacing.md,
+    },
+    optionText: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+    },
+    optionTextSelected: {
+      color: theme.colors.accent,
+    },
+    optionIconWrap: {
+      width: 24,
+      alignItems: 'flex-end',
+    },
+    checkBadge: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      backgroundColor: theme.colors.accent,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    emptyState: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: theme.spacing.xl,
+    },
+    emptyText: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      marginTop: theme.spacing.sm,
+    },
+  });

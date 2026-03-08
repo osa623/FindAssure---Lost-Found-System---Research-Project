@@ -49,7 +49,24 @@ class MultiViewVerifier:
     }
     LEGACY_FALLBACK_MARGIN = 0.05
     ANGLE_HARD_BRAND_RESCUE_FLOOR = 0.38  # minimum cosine for brand-identity rescue; override via PP2_VERIFIER_ANGLE_HARD_BRAND_RESCUE_FLOOR
+    SMART_PHONE_FRONT_BACK_RESCUE_FLOOR = 0.18
     FALLBACK_THRESHOLD_ENTRY = "legacy_pp2_sim_threshold_fallback"
+    SMART_PHONE_FRONT_KEYWORDS: Set[str] = {
+        "screen",
+        "display",
+        "bezel",
+        "home button",
+        "unlock",
+        "screen protector attached",
+    }
+    SMART_PHONE_BACK_KEYWORDS: Set[str] = {
+        "camera",
+        "camera module",
+        "logo",
+        "brand name",
+        "back cover",
+        "phone case attached",
+    }
 
     CATEGORY_GROUPS: Dict[str, Set[str]] = {
         GROUP_ANGLE_HARD: {"Helmet", "Smart Phone", "Laptop", "Earbuds - Earbuds case", "Earbuds", "Power Bank", "Headphone"},
@@ -431,6 +448,158 @@ class MultiViewVerifier:
         bucket_j = self._bucket_color(self._normalize_color(str(color_j)))
         return bool(bucket_i and bucket_j and bucket_i == bucket_j)
 
+    @classmethod
+    def _smart_phone_front_back_floor(cls) -> float:
+        return float(
+            getattr(
+                settings,
+                "PP2_VERIFIER_SMART_PHONE_FRONT_BACK_RESCUE_FLOOR",
+                cls.SMART_PHONE_FRONT_BACK_RESCUE_FLOOR,
+            )
+        )
+
+    @staticmethod
+    def _iter_grounded_text(value: Any) -> List[str]:
+        out: List[str] = []
+        if isinstance(value, dict):
+            for nested in value.values():
+                out.extend(MultiViewVerifier._iter_grounded_text(nested))
+        elif isinstance(value, list):
+            for nested in value:
+                out.extend(MultiViewVerifier._iter_grounded_text(nested))
+        elif value is not None:
+            text = str(value).strip()
+            if text:
+                out.append(text)
+        return out
+
+    @classmethod
+    def _view_signal_text(cls, view: PP2PerViewResult) -> str:
+        fragments: List[str] = []
+        caption = str(view.extraction.caption or "").strip()
+        ocr = str(view.extraction.ocr_text or "").strip()
+        if caption:
+            fragments.append(caption)
+        if ocr:
+            fragments.append(ocr)
+        grounded = view.extraction.grounded_features if isinstance(view.extraction.grounded_features, dict) else {}
+        fragments.extend(cls._iter_grounded_text(grounded))
+        merged = " ".join(fragments).lower()
+        merged = re.sub(r"[^a-z0-9\s]+", " ", merged)
+        return re.sub(r"\s+", " ", merged).strip()
+
+    @classmethod
+    def _extract_color_bucket_for_view(cls, view: PP2PerViewResult) -> str:
+        grounded = view.extraction.grounded_features if isinstance(view.extraction.grounded_features, dict) else {}
+        raw_color = grounded.get("color")
+        if not raw_color:
+            return ""
+        normalized = cls._normalize_color(str(raw_color))
+        if not normalized:
+            return ""
+        return cls._bucket_color(normalized)
+
+    @classmethod
+    def _pair_has_brand_conflict(
+        cls,
+        per_view_results: List[PP2PerViewResult],
+        i: int,
+        j: int,
+    ) -> bool:
+        if i >= len(per_view_results) or j >= len(per_view_results):
+            return False
+        brand_i = cls._extract_brand(per_view_results[i])
+        brand_j = cls._extract_brand(per_view_results[j])
+        return bool(brand_i and brand_j and brand_i != brand_j)
+
+    @classmethod
+    def _pair_has_color_conflict(
+        cls,
+        per_view_results: List[PP2PerViewResult],
+        i: int,
+        j: int,
+    ) -> bool:
+        if i >= len(per_view_results) or j >= len(per_view_results):
+            return False
+        color_i = cls._extract_color_bucket_for_view(per_view_results[i])
+        color_j = cls._extract_color_bucket_for_view(per_view_results[j])
+        return bool(color_i and color_j and color_i != color_j)
+
+    @classmethod
+    def _classify_smart_phone_view_evidence(
+        cls,
+        view: PP2PerViewResult,
+    ) -> Dict[str, Any]:
+        signal_text = cls._view_signal_text(view)
+        ocr_text = str(view.extraction.ocr_text or "").strip()
+        front_cues = sorted(
+            cue for cue in cls.SMART_PHONE_FRONT_KEYWORDS if cue in signal_text
+        )
+        back_cues = sorted(
+            cue for cue in cls.SMART_PHONE_BACK_KEYWORDS if cue in signal_text
+        )
+        front_like = bool(ocr_text or front_cues)
+        back_like = bool(back_cues)
+        return {
+            "front_like": front_like,
+            "back_like": back_like,
+            "front_cues": front_cues,
+            "back_cues": back_cues,
+            "has_ocr": bool(ocr_text),
+        }
+
+    @classmethod
+    def _evaluate_smart_phone_front_back_rescue(
+        cls,
+        per_view_results: List[PP2PerViewResult],
+        i: int,
+        j: int,
+        pair_cos: float,
+        pair_faiss: float,
+        labels_match_consensus: bool,
+        canonical_category: Optional[str],
+    ) -> Dict[str, Any]:
+        floor = cls._smart_phone_front_back_floor()
+        category = canonicalize_label(canonical_category or "")
+        is_smart_phone = category == "Smart Phone"
+        score_gate = bool(pair_cos >= floor and pair_faiss >= floor)
+        candidate = bool(is_smart_phone and labels_match_consensus and score_gate)
+        brand_conflict = cls._pair_has_brand_conflict(per_view_results, i, j)
+        color_conflict = cls._pair_has_color_conflict(per_view_results, i, j)
+        evidence_i = cls._classify_smart_phone_view_evidence(per_view_results[i]) if i < len(per_view_results) else {
+            "front_like": False,
+            "back_like": False,
+            "front_cues": [],
+            "back_cues": [],
+            "has_ocr": False,
+        }
+        evidence_j = cls._classify_smart_phone_view_evidence(per_view_results[j]) if j < len(per_view_results) else {
+            "front_like": False,
+            "back_like": False,
+            "front_cues": [],
+            "back_cues": [],
+            "has_ocr": False,
+        }
+        complementary = bool(
+            (evidence_i["front_like"] and evidence_j["back_like"])
+            or (evidence_j["front_like"] and evidence_i["back_like"])
+        )
+        evidence_ready = bool(candidate and complementary and not brand_conflict and not color_conflict)
+        retryable = bool(candidate and not evidence_ready and not brand_conflict and not color_conflict)
+        return {
+            "candidate": candidate,
+            "evidence_ready": evidence_ready,
+            "retryable": retryable,
+            "complementary": complementary,
+            "brand_conflict": brand_conflict,
+            "color_conflict": color_conflict,
+            "floor": floor,
+            "view_evidence": {
+                i: evidence_i,
+                j: evidence_j,
+            },
+        }
+
     @staticmethod
     def _cosine_pair(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
         a = np.asarray(vec_a, dtype=np.float32).reshape(-1)
@@ -807,6 +976,14 @@ class MultiViewVerifier:
                     "strong_overlap": pair_metrics.get("strong_overlap", False),
                     "ocr_rescue_eligible": pair_metrics.get("ocr_rescue_eligible", False),
                     "ocr_rescue_applied": pair_metrics.get("ocr_rescue_applied", False),
+                    "smartphone_front_back_candidate": False,
+                    "smartphone_front_back_evidence_ready": False,
+                    "smartphone_front_back_retryable": False,
+                    "smartphone_front_back_complementary": False,
+                    "smartphone_front_back_brand_conflict": False,
+                    "smartphone_front_back_color_conflict": False,
+                    "smartphone_front_back_floor": 0.0,
+                    "smartphone_front_back_view_evidence": {},
                 }
             )
             geo_scores[key] = result
@@ -971,7 +1148,7 @@ class MultiViewVerifier:
                         f"labels_match_consensus={labels_match_consensus}, {mode_context})."
                     )
                 elif (
-                    pair_cos >= float(getattr(settings, "PP2_VERIFIER_ANGLE_HARD_BRAND_RESCUE_FLOOR", self.ANGLE_HARD_BRAND_RESCUE_FLOOR))
+                    pair_cos >= float(getattr(settings, "PP2_VERIFIER_ANGLE_HARD_BRAND_RESCUE_FLOOR", None) or self.ANGLE_HARD_BRAND_RESCUE_FLOOR)
                     and labels_match_consensus
                     and self._pair_has_any_brand(per_view_results, pair_key[0], pair_key[1])
                 ):
@@ -984,13 +1161,121 @@ class MultiViewVerifier:
                         f"labels_match_consensus={labels_match_consensus}, {mode_context})."
                     )
                 else:
-                    passed = False
-                    reasons.append(
-                        "Not salvaged: angle_hard near-miss failed OCR consistency gate "
-                        f"(ocr_rescue=false, pair={pair_name}, strong_overlap={strong_overlap}, "
-                        f"labels_match_consensus={labels_match_consensus}, ocr_overlap_tokens={ocr_overlap_tokens}, "
-                        f"{_pair_decision_context(pair_name, pair_info)})."
+                    smartphone_rescue = self._evaluate_smart_phone_front_back_rescue(
+                        per_view_results=per_view_results,
+                        i=pair_key[0],
+                        j=pair_key[1],
+                        pair_cos=pair_cos,
+                        pair_faiss=float(pair_info.get("selected_faiss", 0.0)),
+                        labels_match_consensus=labels_match_consensus,
+                        canonical_category=canonical_category,
                     )
+                    if pair_name in geo_scores:
+                        geo_scores[pair_name]["smartphone_front_back_candidate"] = bool(
+                            smartphone_rescue.get("candidate", False)
+                        )
+                        geo_scores[pair_name]["smartphone_front_back_evidence_ready"] = bool(
+                            smartphone_rescue.get("evidence_ready", False)
+                        )
+                        geo_scores[pair_name]["smartphone_front_back_retryable"] = bool(
+                            smartphone_rescue.get("retryable", False)
+                        )
+                        geo_scores[pair_name]["smartphone_front_back_complementary"] = bool(
+                            smartphone_rescue.get("complementary", False)
+                        )
+                        geo_scores[pair_name]["smartphone_front_back_brand_conflict"] = bool(
+                            smartphone_rescue.get("brand_conflict", False)
+                        )
+                        geo_scores[pair_name]["smartphone_front_back_color_conflict"] = bool(
+                            smartphone_rescue.get("color_conflict", False)
+                        )
+                        geo_scores[pair_name]["smartphone_front_back_floor"] = float(
+                            smartphone_rescue.get("floor", 0.0)
+                        )
+                        geo_scores[pair_name]["smartphone_front_back_view_evidence"] = smartphone_rescue.get(
+                            "view_evidence",
+                            {},
+                        )
+
+                    if smartphone_rescue.get("evidence_ready", False):
+                        passed = True
+                        logger.debug(
+                            "PP2_SMART_PHONE_FRONT_BACK_RESCUE_APPLIED request_id=%s pair=%s "
+                            "pair_cos=%.3f pair_faiss=%.3f floor=%.3f complementary=%s "
+                            "view_evidence=%s threshold_entry=%s",
+                            request_id,
+                            pair_name,
+                            pair_cos,
+                            float(pair_info.get("selected_faiss", 0.0)),
+                            float(smartphone_rescue.get("floor", 0.0)),
+                            bool(smartphone_rescue.get("complementary", False)),
+                            smartphone_rescue.get("view_evidence", {}),
+                            threshold_entry,
+                        )
+                        reasons.append(
+                            "Salvaged: smart phone front/back rescue accepted "
+                            f"(pair={pair_name}, selected_cos={pair_cos:.2f}, "
+                            f"selected_faiss={float(pair_info.get('selected_faiss', 0.0)):.2f}, "
+                            f"floor={float(smartphone_rescue.get('floor', 0.0)):.2f}, "
+                            f"complementary_evidence={bool(smartphone_rescue.get('complementary', False))}, "
+                            f"{mode_context})."
+                        )
+                    else:
+                        passed = False
+                        if smartphone_rescue.get("candidate", False):
+                            logger.warning(
+                                "PP2_SMART_PHONE_FRONT_BACK_RESCUE_FAILED request_id=%s pair=%s "
+                                "pair_cos=%.3f pair_faiss=%.3f floor=%.3f complementary=%s "
+                                "brand_conflict=%s color_conflict=%s view_evidence=%s threshold_entry=%s",
+                                request_id,
+                                pair_name,
+                                pair_cos,
+                                float(pair_info.get("selected_faiss", 0.0)),
+                                float(smartphone_rescue.get("floor", 0.0)),
+                                bool(smartphone_rescue.get("complementary", False)),
+                                bool(smartphone_rescue.get("brand_conflict", False)),
+                                bool(smartphone_rescue.get("color_conflict", False)),
+                                smartphone_rescue.get("view_evidence", {}),
+                                threshold_entry,
+                            )
+                            reasons.append(
+                                "Not salvaged: smart phone front/back rescue lacked complementary evidence "
+                                f"(pair={pair_name}, complementary_evidence={bool(smartphone_rescue.get('complementary', False))}, "
+                                f"brand_conflict={bool(smartphone_rescue.get('brand_conflict', False))}, "
+                                f"color_conflict={bool(smartphone_rescue.get('color_conflict', False))}, "
+                                f"retryable={bool(smartphone_rescue.get('retryable', False))}, "
+                                f"{_pair_decision_context(pair_name, pair_info)})."
+                            )
+                        _brand_i = self._extract_brand(per_view_results[pair_key[0]]) if pair_key[0] < len(per_view_results) else ""
+                        _brand_j = self._extract_brand(per_view_results[pair_key[1]]) if pair_key[1] < len(per_view_results) else ""
+                        _ocr_i = str(per_view_results[pair_key[0]].extraction.ocr_text or "").strip()[:80] if pair_key[0] < len(per_view_results) else ""
+                        _ocr_j = str(per_view_results[pair_key[1]].extraction.ocr_text or "").strip()[:80] if pair_key[1] < len(per_view_results) else ""
+                        _color_i = str(getattr(per_view_results[pair_key[0]].extraction, 'color_vqa', '') or "") if pair_key[0] < len(per_view_results) else ""
+                        _color_j = str(getattr(per_view_results[pair_key[1]].extraction, 'color_vqa', '') or "") if pair_key[1] < len(per_view_results) else ""
+                        logger.warning(
+                            "PP2_ANGLE_HARD_RESCUE_FAILED request_id=%s pair=%s "
+                            "pair_cos=%.3f cos_th=%.3f near_miss_margin=%.3f "
+                            "floor=%.3f brand_floor=%.3f "
+                            "labels_match_consensus=%s has_any_ocr=%s strong_overlap=%s "
+                            "ocr_rescue_eligible=%s brand_i=%r brand_j=%r "
+                            "ocr_i=%r ocr_j=%r color_i=%r color_j=%r "
+                            "color_consistent=%s group=%s threshold_entry=%s",
+                            request_id, pair_name,
+                            pair_cos, cos_th, near_miss_margin,
+                            cos_th - near_miss_margin,
+                            float(getattr(settings, "PP2_VERIFIER_ANGLE_HARD_BRAND_RESCUE_FLOOR", None) or self.ANGLE_HARD_BRAND_RESCUE_FLOOR),
+                            labels_match_consensus, has_any_ocr, strong_overlap,
+                            ocr_rescue_eligible, _brand_i, _brand_j,
+                            _ocr_i, _ocr_j, _color_i, _color_j,
+                            self._pair_color_consistent(per_view_results, pair_key[0], pair_key[1]),
+                            group_label, threshold_entry,
+                        )
+                        reasons.append(
+                            "Not salvaged: angle_hard near-miss failed OCR consistency gate "
+                            f"(ocr_rescue=false, pair={pair_name}, strong_overlap={strong_overlap}, "
+                            f"labels_match_consensus={labels_match_consensus}, ocr_overlap_tokens={ocr_overlap_tokens}, "
+                            f"{_pair_decision_context(pair_name, pair_info)})."
+                        )
             elif pair_strength == "strong":
                 passed = True
             elif pair_cos >= near_miss_floor and labels_match_consensus and has_any_ocr:
@@ -1120,6 +1405,24 @@ class MultiViewVerifier:
                         )
                     else:
                         passed = False
+                        _brand_ni = self._extract_brand(per_view_results[near_i]) if near_i < len(per_view_results) else ""
+                        _brand_nj = self._extract_brand(per_view_results[near_j]) if near_j < len(per_view_results) else ""
+                        _ocr_ni = str(per_view_results[near_i].extraction.ocr_text or "").strip()[:80] if near_i < len(per_view_results) else ""
+                        _ocr_nj = str(per_view_results[near_j].extraction.ocr_text or "").strip()[:80] if near_j < len(per_view_results) else ""
+                        logger.warning(
+                            "PP2_ANGLE_HARD_3VIEW_NEAR_RESCUE_FAILED request_id=%s pair=%s "
+                            "pair_cos=%.3f cos_th=%.3f floor=%.3f "
+                            "near_labels_match=%s has_any_ocr=%s brand_i=%r brand_j=%r "
+                            "ocr_i=%r ocr_j=%r color_consistent=%s group=%s",
+                            request_id, near_pair,
+                            float(near_info.get("selected_cosine", 0.0)), cos_th, cos_th - near_miss_margin,
+                            near_labels_match,
+                            self._pair_has_any_ocr(per_view_results, near_i, near_j),
+                            _brand_ni, _brand_nj,
+                            _ocr_ni, _ocr_nj,
+                            self._pair_color_consistent(per_view_results, near_i, near_j),
+                            group_label,
+                        )
                         reasons.append(
                             "Not salvaged: angle_hard near-miss failed OCR consistency gate "
                             f"(ocr_rescue=false, pair={near_pair}, "
@@ -1235,6 +1538,24 @@ class MultiViewVerifier:
                         )
                     else:
                         passed = False
+                        _brand_wi = self._extract_brand(per_view_results[weak_i]) if weak_i < len(per_view_results) else ""
+                        _brand_wj = self._extract_brand(per_view_results[weak_j]) if weak_j < len(per_view_results) else ""
+                        _ocr_wi = str(per_view_results[weak_i].extraction.ocr_text or "").strip()[:80] if weak_i < len(per_view_results) else ""
+                        _ocr_wj = str(per_view_results[weak_j].extraction.ocr_text or "").strip()[:80] if weak_j < len(per_view_results) else ""
+                        logger.warning(
+                            "PP2_ANGLE_HARD_3VIEW_WEAK_RESCUE_FAILED request_id=%s pair=%s "
+                            "pair_cos=%.3f cos_th=%.3f "
+                            "weak_labels_match=%s has_any_ocr=%s brand_i=%r brand_j=%r "
+                            "ocr_i=%r ocr_j=%r color_consistent=%s group=%s",
+                            request_id, weak_pair,
+                            float(weak_info.get("selected_cosine", 0.0)), cos_th,
+                            weak_labels_match,
+                            self._pair_has_any_ocr(per_view_results, weak_i, weak_j),
+                            _brand_wi, _brand_wj,
+                            _ocr_wi, _ocr_wj,
+                            self._pair_color_consistent(per_view_results, weak_i, weak_j),
+                            group_label,
+                        )
                         reasons.append(
                             "Not salvaged: angle_hard weak pair failed OCR consistency gate "
                             f"(ocr_rescue=false, weak_pair={weak_pair}, "
@@ -1274,8 +1595,9 @@ class MultiViewVerifier:
         if semantic_issues:
             reasons.extend(semantic_issues)
 
-        logger.debug(
-            "PP2_VERIFY_SUMMARY request_id=%s item_id=%s strong_pairs=%s near_miss_pairs=%s weak_pairs=%s used_views=%s dropped_count=%d passed=%s",
+        _log_fn = logger.warning if not passed else logger.debug
+        _log_fn(
+            "PP2_VERIFY_SUMMARY request_id=%s item_id=%s strong_pairs=%s near_miss_pairs=%s weak_pairs=%s used_views=%s dropped_count=%d passed=%s reasons=%s",
             request_id,
             item_id,
             strong_pairs,
@@ -1284,6 +1606,7 @@ class MultiViewVerifier:
             decision_indices if len(decision_indices) == 2 else [],
             len(dropped_views or []),
             passed,
+            reasons,
         )
 
         used_views = decision_indices if len(decision_indices) == 2 else []

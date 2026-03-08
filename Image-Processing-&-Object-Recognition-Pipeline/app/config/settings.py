@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     PP2_ENABLE_GEMINI: bool = False
     PP2_GEMINI_ON_NEAR_MISS: bool = True
     PP2_GEMINI_TIMEOUT_S: int = 12
+    DINO_MODEL_PATH: str | None = None
     DINO_INPUT_SIZE: int = 224
     DINO_ENABLE_AMP: bool = True
     DINO_USE_FP16: bool = True
@@ -63,6 +64,7 @@ class Settings(BaseSettings):
     PP2_VERIFIER_THREE_VIEW_TEXTURE_RICH: float | None = None
     PP2_VERIFIER_THREE_VIEW_SMALL_AMBIGUOUS: float | None = None
     PP2_VERIFIER_ANGLE_HARD_BRAND_RESCUE_FLOOR: float | None = None  # override MultiViewVerifier.ANGLE_HARD_BRAND_RESCUE_FLOOR (default 0.38)
+    PP2_VERIFIER_SMART_PHONE_FRONT_BACK_RESCUE_FLOOR: float = 0.18
 
     class Config:
         env_file = ".env"

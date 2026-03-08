@@ -322,3 +322,183 @@ class TestHintRescue3View(unittest.TestCase):
         )
         self.assertTrue(result.passed)
         self.assertTrue(any("hint" in r.lower() for r in result.failure_reasons))
+
+
+class TestSmartPhoneFrontBackRescue(unittest.TestCase):
+    def setUp(self):
+        self.mock_geo_service = MagicMock()
+        self.mock_geo_service.verify_pair.return_value = {"passed": False}
+        self.verifier = MultiViewVerifier(geometric_service=self.mock_geo_service)
+
+    def _make_view(self, cls_name, *, caption="", ocr_text="", grounded_features=None):
+        return PP2PerViewResult(
+            view_index=0,
+            filename="phone.jpg",
+            detection=PP2PerViewDetection(bbox=(0, 0, 10, 10), cls_name=cls_name, confidence=0.9),
+            extraction=PP2PerViewExtraction(
+                caption=caption,
+                ocr_text=ocr_text,
+                grounded_features=grounded_features or {},
+            ),
+            embedding=PP2PerViewEmbedding(dim=2, vector_preview=[1.0, 0.0], vector_id="phone-v"),
+            quality_score=0.9,
+        )
+
+    @staticmethod
+    def _cosine_pair_vectors(cosine_value: float):
+        sine_value = float(np.sqrt(max(0.0, 1.0 - cosine_value ** 2)))
+        return [
+            np.array([1.0, 0.0], dtype=np.float32),
+            np.array([cosine_value, sine_value], dtype=np.float32),
+        ]
+
+    def test_two_view_smart_phone_front_back_rescue_passes(self):
+        mock_faiss = MagicMock()
+        mock_faiss.pair_similarity.side_effect = lambda a, b: float(
+            np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12)
+        )
+        views = [
+            self._make_view(
+                "Smart Phone",
+                ocr_text="Home to unlock",
+                grounded_features={"attachments": ["screen protector attached"]},
+            ),
+            self._make_view(
+                "Smart Phone",
+                caption="phone back cover",
+                grounded_features={"features": ["camera module", "logo"], "attachments": ["phone case attached"]},
+            ),
+        ]
+        vectors = self._cosine_pair_vectors(0.20)
+
+        result = self.verifier.verify(
+            per_view_results=views,
+            vectors=vectors,
+            crops=["c1", "c2"],
+            faiss_service=mock_faiss,
+            decision_category="Smart Phone",
+        )
+
+        self.assertTrue(result.passed)
+        self.assertTrue(any("front/back rescue accepted" in r.lower() for r in result.failure_reasons))
+
+    def test_two_view_smart_phone_front_back_rescue_fails_below_floor(self):
+        mock_faiss = MagicMock()
+        mock_faiss.pair_similarity.side_effect = lambda a, b: float(
+            np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12)
+        )
+        views = [
+            self._make_view("Smart Phone", ocr_text="Home to unlock"),
+            self._make_view("Smart Phone", grounded_features={"features": ["camera module"]}),
+        ]
+        vectors = self._cosine_pair_vectors(0.10)
+
+        result = self.verifier.verify(
+            per_view_results=views,
+            vectors=vectors,
+            crops=["c1", "c2"],
+            faiss_service=mock_faiss,
+            decision_category="Smart Phone",
+        )
+
+        self.assertFalse(result.passed)
+        self.assertFalse(any("front/back rescue accepted" in r.lower() for r in result.failure_reasons))
+
+    def test_two_view_smart_phone_front_back_rescue_fails_for_front_only_pair(self):
+        mock_faiss = MagicMock()
+        mock_faiss.pair_similarity.return_value = 0.20
+        views = [
+            self._make_view("Smart Phone", ocr_text="Home to unlock"),
+            self._make_view("Smart Phone", ocr_text="Swipe to unlock"),
+        ]
+        vectors = self._cosine_pair_vectors(0.20)
+
+        result = self.verifier.verify(
+            per_view_results=views,
+            vectors=vectors,
+            crops=["c1", "c2"],
+            faiss_service=mock_faiss,
+            decision_category="Smart Phone",
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any("front/back rescue lacked complementary evidence" in r.lower() for r in result.failure_reasons))
+
+    def test_two_view_smart_phone_front_back_rescue_fails_for_back_only_pair(self):
+        mock_faiss = MagicMock()
+        mock_faiss.pair_similarity.return_value = 0.20
+        views = [
+            self._make_view("Smart Phone", grounded_features={"features": ["camera module"]}),
+            self._make_view("Smart Phone", grounded_features={"features": ["camera module", "logo"]}),
+        ]
+        vectors = self._cosine_pair_vectors(0.20)
+
+        result = self.verifier.verify(
+            per_view_results=views,
+            vectors=vectors,
+            crops=["c1", "c2"],
+            faiss_service=mock_faiss,
+            decision_category="Smart Phone",
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any("front/back rescue lacked complementary evidence" in r.lower() for r in result.failure_reasons))
+
+    def test_two_view_smart_phone_front_back_rescue_fails_on_brand_conflict(self):
+        mock_faiss = MagicMock()
+        mock_faiss.pair_similarity.return_value = 0.20
+        views = [
+            self._make_view("Smart Phone", ocr_text="Home to unlock", grounded_features={"brand": "Apple"}),
+            self._make_view("Smart Phone", grounded_features={"features": ["camera module"], "brand": "Samsung"}),
+        ]
+        vectors = self._cosine_pair_vectors(0.20)
+
+        result = self.verifier.verify(
+            per_view_results=views,
+            vectors=vectors,
+            crops=["c1", "c2"],
+            faiss_service=mock_faiss,
+            decision_category="Smart Phone",
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any("brand_conflict=true" in r.lower() for r in result.failure_reasons))
+
+    def test_two_view_smart_phone_front_back_rescue_fails_on_color_conflict(self):
+        mock_faiss = MagicMock()
+        mock_faiss.pair_similarity.return_value = 0.20
+        views = [
+            self._make_view("Smart Phone", ocr_text="Home to unlock", grounded_features={"color": "black"}),
+            self._make_view("Smart Phone", grounded_features={"features": ["camera module"], "color": "red"}),
+        ]
+        vectors = self._cosine_pair_vectors(0.20)
+
+        result = self.verifier.verify(
+            per_view_results=views,
+            vectors=vectors,
+            crops=["c1", "c2"],
+            faiss_service=mock_faiss,
+            decision_category="Smart Phone",
+        )
+
+        self.assertFalse(result.passed)
+        self.assertTrue(any("color_conflict=true" in r.lower() for r in result.failure_reasons))
+
+    def test_non_phone_angle_hard_behavior_is_unchanged(self):
+        mock_faiss = MagicMock()
+        mock_faiss.pair_similarity.return_value = 0.20
+        views = [
+            self._make_view("Helmet", ocr_text="Home to unlock"),
+            self._make_view("Helmet", grounded_features={"features": ["camera module"]}),
+        ]
+        vectors = self._cosine_pair_vectors(0.20)
+
+        result = self.verifier.verify(
+            per_view_results=views,
+            vectors=vectors,
+            crops=["c1", "c2"],
+            faiss_service=mock_faiss,
+            decision_category="Helmet",
+        )
+
+        self.assertFalse(result.passed)

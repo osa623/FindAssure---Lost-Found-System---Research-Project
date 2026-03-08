@@ -1,195 +1,268 @@
-// AdminLoginScreen – follow the spec
-import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  StyleSheet, 
-  ScrollView, 
-  KeyboardAvoidingView, 
-  Platform,
-  Alert
-} from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import { CommonActions, useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
+import { useAppTheme } from '../../context/ThemeContext';
+import { useToast } from '../../context/ToastContext';
 import { RootStackParamList } from '../../types/models';
+import { AnimatedHeroIllustration } from '../../components/AnimatedHeroIllustration';
+import { FormInput } from '../../components/FormInput';
+import { GlassCard } from '../../components/GlassCard';
+import { KeyboardAwareFormScreen } from '../../components/KeyboardAwareFormScreen';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { StaggeredEntrance } from '../../components/StaggeredEntrance';
+import { getAdminPalette } from './adminTheme';
 
 type AdminLoginNavigationProp = StackNavigationProp<RootStackParamList, 'AdminLogin'>;
 
 const AdminLoginScreen = () => {
   const navigation = useNavigation<AdminLoginNavigationProp>();
-  const { signIn } = useAuth();
-  
+  const { signIn, signOut, user } = useAuth();
+  const { theme } = useAppTheme();
+  const { showToast } = useToast();
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const adminPalette = useMemo(() => getAdminPalette(theme), [theme]);
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [awaitingAdminValidation, setAwaitingAdminValidation] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    if (user.role === 'admin') {
+      setAwaitingAdminValidation(false);
+      setLoading(false);
+      navigation.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [{ name: 'AdminDashboard' }],
+        })
+      );
+      return;
+    }
+
+    if (!awaitingAdminValidation) {
+      return;
+    }
+
+    setAwaitingAdminValidation(false);
+    setLoading(false);
+    void signOut();
+    showToast({
+      title: 'Access denied',
+      message: 'This account is active, but it does not have administrator access.',
+      variant: 'error',
+    });
+  }, [awaitingAdminValidation, navigation, showToast, signOut, user]);
 
   const handleAdminLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+      showToast({
+        title: 'Missing details',
+        message: 'Enter your admin email and password to continue.',
+        variant: 'warning',
+      });
       return;
     }
 
     try {
       setLoading(true);
+      setAwaitingAdminValidation(true);
       await signIn({ email, password });
-      
-      // TODO: Check if user role is 'admin'
-      // For now, just navigate to dashboard
-      navigation.navigate('AdminDashboard');
     } catch (error: any) {
-      Alert.alert('Login Failed', error.message || 'Invalid admin credentials');
-    } finally {
+      setAwaitingAdminValidation(false);
       setLoading(false);
+      showToast({
+        title: 'Login failed',
+        message: error.message || 'We could not verify your administrator credentials.',
+        variant: 'error',
+      });
     }
   };
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.content}>
-          <View style={styles.header}>
-            <View style={styles.iconContainer}>
-              <Text style={styles.icon}>🔐</Text>
+    <LinearGradient colors={theme.gradients.appBackground} style={styles.container}>
+      <KeyboardAwareFormScreen contentContainerStyle={styles.scrollContent}>
+        <StaggeredEntrance delay={20}>
+          <GlassCard style={styles.hero}>
+            <View style={styles.heroTopRow}>
+              <View style={[styles.heroBadge, { backgroundColor: adminPalette.accentSoft }]}>
+                <Text style={[styles.heroBadgeText, { color: adminPalette.accentText }]}>Restricted access</Text>
+              </View>
+              <AnimatedHeroIllustration size={112} variant="success" />
             </View>
-            <Text style={styles.title}>Admin Access</Text>
-            <Text style={styles.subtitle}>Authorized personnel only</Text>
-          </View>
+            <Text style={[styles.wordmark, { color: adminPalette.accent }]}>FindAssure Admin</Text>
+            <Text style={styles.heroTitle}>Control room access.</Text>
+            <Text style={styles.heroBody}>
+              Review system activity, moderate user risk, and manage found-item verification from one secure workspace.
+            </Text>
+          </GlassCard>
+        </StaggeredEntrance>
 
-          <View style={styles.form}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Admin Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter admin email"
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                autoComplete="email"
-              />
-            </View>
+        <StaggeredEntrance delay={90}>
+          <GlassCard style={styles.formCard}>
+            <Text style={styles.sectionEyebrow}>Administrator sign-in</Text>
+            <Text style={styles.formTitle}>Enter authorized credentials</Text>
 
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter admin password"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                autoCapitalize="none"
-                autoComplete="password"
-              />
-            </View>
+            <FormInput
+              label="Admin email"
+              placeholder="admin@findassure.com"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoComplete="email"
+              leadingIcon="shield-checkmark-outline"
+              containerStyle={styles.fieldGap}
+            />
+
+            <FormInput
+              label="Password"
+              placeholder="Enter your password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoComplete="password"
+              leadingIcon="lock-closed-outline"
+            />
+
+            <GlassCard style={styles.warningShell} intensity={28}>
+              <View style={styles.warningRow}>
+                <View style={[styles.warningIconWrap, { backgroundColor: adminPalette.accentSoft }]}>
+                  <Ionicons name="alert-circle-outline" size={18} color={adminPalette.accent} />
+                </View>
+                <View style={styles.warningCopy}>
+                  <Text style={styles.warningTitle}>Security notice</Text>
+                  <Text style={styles.warningText}>
+                    Unauthorized access attempts are blocked, logged, and reviewed by system administrators.
+                  </Text>
+                </View>
+              </View>
+            </GlassCard>
 
             <PrimaryButton
-              title="Login as Admin"
+              title="Enter Admin Workspace"
               onPress={handleAdminLogin}
               loading={loading}
-              style={styles.loginButton}
+              size="lg"
+              style={StyleSheet.flatten([styles.loginButton, { backgroundColor: adminPalette.accent }])}
             />
-          </View>
 
-          <View style={styles.warningBox}>
-            <Text style={styles.warningText}>
-              ⚠️ Unauthorized access is prohibited and will be logged
-            </Text>
-          </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            <PrimaryButton
+              title="Return to App"
+              onPress={() => navigation.goBack()}
+              variant="secondary"
+              size="lg"
+              style={styles.backButton}
+            />
+          </GlassCard>
+        </StaggeredEntrance>
+      </KeyboardAwareFormScreen>
+    </LinearGradient>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
-  content: {
-    flex: 1,
-    padding: 20,
-    justifyContent: 'center',
-  },
-  header: {
-    marginBottom: 40,
-    alignItems: 'center',
-  },
-  iconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#FFE0E0',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  icon: {
-    fontSize: 40,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#999999',
-  },
-  form: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333333',
-    marginBottom: 8,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#DDDDDD',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: '#FAFAFA',
-  },
-  loginButton: {
-    marginTop: 10,
-    backgroundColor: '#E53935',
-  },
-  warningBox: {
-    backgroundColor: '#FFEBEE',
-    borderRadius: 12,
-    padding: 16,
-    marginTop: 20,
-    borderLeftWidth: 4,
-    borderLeftColor: '#E53935',
-  },
-  warningText: {
-    fontSize: 12,
-    color: '#666666',
-    textAlign: 'center',
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+    },
+    scrollContent: {
+      paddingTop: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      paddingBottom: theme.spacing.xxl,
+      justifyContent: 'center',
+      minHeight: '100%',
+    },
+    hero: {
+      padding: theme.spacing.lg,
+      marginBottom: theme.spacing.md,
+    },
+    heroTopRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      marginBottom: theme.spacing.md,
+    },
+    heroBadge: {
+      alignSelf: 'flex-start',
+      borderRadius: theme.radius.pill,
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 5,
+    },
+    heroBadgeText: {
+      ...theme.type.caption,
+      fontWeight: '700',
+    },
+    wordmark: {
+      ...theme.type.brand,
+      marginBottom: theme.spacing.sm,
+    },
+    heroTitle: {
+      ...theme.type.title,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.sm,
+    },
+    heroBody: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+    },
+    formCard: {
+      marginBottom: theme.spacing.md,
+    },
+    sectionEyebrow: {
+      ...theme.type.label,
+      marginBottom: theme.spacing.xs,
+    },
+    formTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.lg,
+    },
+    fieldGap: {
+      marginBottom: theme.spacing.md,
+    },
+    warningShell: {
+      marginTop: theme.spacing.lg,
+    },
+    warningRow: {
+      flexDirection: 'row',
+      gap: theme.spacing.md,
+      alignItems: 'flex-start',
+    },
+    warningIconWrap: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    warningCopy: {
+      flex: 1,
+    },
+    warningTitle: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.textStrong,
+      marginBottom: 2,
+    },
+    warningText: {
+      ...theme.type.caption,
+      color: theme.colors.textMuted,
+    },
+    loginButton: {
+      marginTop: theme.spacing.lg,
+    },
+    backButton: {
+      marginTop: theme.spacing.sm,
+    },
+  });
 
 export default AdminLoginScreen;

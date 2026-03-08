@@ -3,6 +3,7 @@ import { Verification, IVerification, VerificationStatus, IVerificationAnswer } 
 import { FoundItem } from '../models/FoundItem';
 import { LostRequest } from '../models/LostRequest';
 import { verifyOwnershipWithPython, PythonVerificationRequest, PythonVerificationResponse, VideoFile } from './pythonVerificationService';
+import { sendFounderVerificationPassedEmail } from './emailService';
 
 export interface OwnerAnswerInput {
   questionId: number;
@@ -21,6 +22,67 @@ export interface EvaluateVerificationData {
   status: VerificationStatus;
   similarityScore?: number;
 }
+
+const notifyFounderAfterVerifiedOwnership = async (verificationId: Types.ObjectId | string): Promise<void> => {
+  const verification = await Verification.findById(verificationId)
+    .populate('foundItemId', 'category description founderContact')
+    .populate('ownerId', 'name email phone');
+
+  if (!verification || verification.status !== 'passed' || verification.founderNotificationSentAt) {
+    return;
+  }
+
+  const foundItem = verification.foundItemId as unknown as {
+    category?: string;
+    description?: string;
+    imageUrl?: string;
+    founderContact?: {
+      name?: string;
+      email?: string;
+      phone?: string;
+    };
+  } | null;
+
+  const owner = verification.ownerId as unknown as {
+    name?: string;
+    email?: string;
+    phone?: string;
+  } | null;
+
+  const founderEmail = foundItem?.founderContact?.email?.trim();
+  const ownerEmail = owner?.email?.trim();
+
+  if (!founderEmail || !ownerEmail) {
+    console.warn(
+      'Founder verification email skipped: founder or owner email missing.',
+      JSON.stringify({
+        verificationId: verification._id,
+        founderEmail: founderEmail || null,
+        ownerEmail: ownerEmail || null,
+      })
+    );
+    return;
+  }
+
+  const sent = await sendFounderVerificationPassedEmail({
+    founderName: foundItem?.founderContact?.name || 'Founder',
+    founderEmail,
+    ownerName: owner?.name || 'Verified owner',
+    ownerEmail,
+    ownerPhone: owner?.phone || null,
+    itemCategory: foundItem?.category || 'reported item',
+    itemDescription: foundItem?.description || 'No description provided',
+    itemImageUrl: foundItem?.imageUrl || null,
+  });
+
+  if (!sent) {
+    return;
+  }
+
+  await Verification.findByIdAndUpdate(verification._id, {
+    founderNotificationSentAt: new Date(),
+  });
+};
 
 /**
  * Create a verification record
@@ -132,6 +194,12 @@ export const createVerification = async (
       await FoundItem.findByIdAndUpdate(data.foundItemId, {
         status: 'claimed',
       });
+
+      try {
+        await notifyFounderAfterVerifiedOwnership(verification._id);
+      } catch (notificationError) {
+        console.error('Founder verification email failed (non-blocking):', notificationError);
+      }
     } else {
       await FoundItem.findByIdAndUpdate(data.foundItemId, {
         status: 'available',
@@ -232,6 +300,12 @@ export const evaluateVerification = async (
     await FoundItem.findByIdAndUpdate(verification.foundItemId, {
       status: 'claimed',
     });
+
+    try {
+      await notifyFounderAfterVerifiedOwnership(verification._id);
+    } catch (notificationError) {
+      console.error('Founder verification email failed during admin evaluation (non-blocking):', notificationError);
+    }
   }
 
   return verification;

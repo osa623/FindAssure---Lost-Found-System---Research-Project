@@ -29,6 +29,22 @@ type FoundItemAnalysisSnapshot = {
   searchable: boolean;
 };
 
+type PreAnalysisStatus = 'ok' | 'manual_fallback';
+
+type PreAnalysisResponseBody = {
+  status: PreAnalysisStatus;
+  preAnalysisToken: string | null;
+  analysisMode: 'pp1' | 'pp2' | null;
+  imageCount: number;
+  analysisPathLabel: string;
+  analysisSummary: string;
+  detectedCategory: string | null;
+  detectedDescription: string | null;
+  detectedColor: string | null;
+  searchable: boolean;
+  message: string;
+};
+
 const parseJsonField = <T>(value: unknown, fieldName: string): T => {
   if (typeof value === 'string') {
     return JSON.parse(value) as T;
@@ -105,6 +121,57 @@ const normalizePreAnalysisToken = (value: unknown): string | null => {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const getAnalysisPathLabel = (imageCount: number): string =>
+  imageCount > 1 ? 'Multi-view analysis' : 'Single photo analysis';
+
+const buildPreAnalysisSummary = (status: PreAnalysisStatus, imageCount: number): string => {
+  if (status === 'ok') {
+    return imageCount > 1
+      ? 'We prefilled what we could from your photo set. Review before continuing.'
+      : 'We prefilled what we could from your photo. Review before continuing.';
+  }
+
+  return imageCount > 1
+    ? 'We could not confidently prefill this item from these photos. Continue manually.'
+    : 'We could not confidently prefill this item from this photo. Continue manually.';
+};
+
+const buildPreAnalysisResponse = ({
+  status,
+  imageCount,
+  preAnalysisToken = null,
+  analysisMode = null,
+  detectedCategory = null,
+  detectedDescription = null,
+  detectedColor = null,
+  searchable = false,
+}: {
+  status: PreAnalysisStatus;
+  imageCount: number;
+  preAnalysisToken?: string | null;
+  analysisMode?: 'pp1' | 'pp2' | null;
+  detectedCategory?: string | null;
+  detectedDescription?: string | null;
+  detectedColor?: string | null;
+  searchable?: boolean;
+}): PreAnalysisResponseBody => {
+  const analysisSummary = buildPreAnalysisSummary(status, imageCount);
+
+  return {
+    status,
+    preAnalysisToken,
+    analysisMode,
+    imageCount,
+    analysisPathLabel: getAnalysisPathLabel(imageCount),
+    analysisSummary,
+    detectedCategory,
+    detectedDescription,
+    detectedColor,
+    searchable,
+    message: analysisSummary,
+  };
 };
 
 const storeFoundItemPreAnalysis = async (
@@ -238,46 +305,35 @@ export const preAnalyzeFoundImages = async (
             req.user?.id
           );
 
-          const pp1OkBody = {
+          const pp1OkBody = buildPreAnalysisResponse({
             status: 'ok',
+            imageCount: tempImagePaths.length,
             preAnalysisToken,
             analysisMode: analysis.analysisMode,
             detectedCategory: analysis.detectedCategory,
             detectedDescription: analysis.detectedDescription,
             detectedColor: analysis.detectedColor,
             searchable: analysis.searchable,
-            message: 'Image analyzed successfully.',
-          };
+          });
           console.log('[PRE-ANALYZE] Response (PP1 ok):', JSON.stringify(pp1OkBody, null, 2));
           res.status(200).json(pp1OkBody);
           return;
         }
 
-        const pp1FallbackBody = {
+        const pp1FallbackBody = buildPreAnalysisResponse({
           status: 'manual_fallback',
-          preAnalysisToken: null,
+          imageCount: tempImagePaths.length,
           analysisMode: 'pp1',
-          detectedCategory: null,
-          detectedDescription: null,
-          detectedColor: null,
-          searchable: false,
-          message: 'No reliable item detection found. Please enter details manually.',
-        };
+        });
         console.log('[PRE-ANALYZE] Response (PP1 no detection):', JSON.stringify(pp1FallbackBody, null, 2));
         res.status(200).json(pp1FallbackBody);
         return;
       } catch (pipelineError: any) {
-        const pp1ErrorBody = {
+        const pp1ErrorBody = buildPreAnalysisResponse({
           status: 'manual_fallback',
-          preAnalysisToken: null,
+          imageCount: tempImagePaths.length,
           analysisMode: 'pp1',
-          detectedCategory: null,
-          detectedDescription: null,
-          detectedColor: null,
-          searchable: false,
-          message:
-            pipelineError?.message || 'Image pipeline unavailable. Please enter details manually.',
-        };
+        });
         console.log('[PRE-ANALYZE] Response (PP1 pipeline error):', JSON.stringify(pp1ErrorBody, null, 2));
         res.status(200).json(pp1ErrorBody);
         return;
@@ -307,45 +363,34 @@ export const preAnalyzeFoundImages = async (
           req.user?.id
         );
 
-        const pp2OkBody = {
+        const pp2OkBody = buildPreAnalysisResponse({
           status: 'ok',
+          imageCount: tempImagePaths.length,
           preAnalysisToken,
           analysisMode: analysis.analysisMode,
           detectedCategory: analysis.detectedCategory,
           detectedDescription: analysis.detectedDescription,
           detectedColor: analysis.detectedColor,
           searchable: analysis.searchable,
-          message: 'Images analyzed successfully.',
-        };
+        });
         console.log('[PRE-ANALYZE] Response (PP2 ok):', JSON.stringify(pp2OkBody, null, 2));
         res.status(200).json(pp2OkBody);
         return;
       }
 
-      const pp2FallbackBody = {
+      const pp2FallbackBody = buildPreAnalysisResponse({
         status: 'manual_fallback',
-        preAnalysisToken: null,
+        imageCount: tempImagePaths.length,
         analysisMode: 'pp2',
-        detectedCategory: null,
-        detectedDescription: null,
-        detectedColor: null,
-        searchable: false,
-        message: 'Multi-view verification failed. Please enter details manually.',
-      };
+      });
       console.log('[PRE-ANALYZE] Response (PP2 verification failed):', JSON.stringify(pp2FallbackBody, null, 2));
       res.status(200).json(pp2FallbackBody);
     } catch (pipelineError: any) {
-      const pp2ErrorBody = {
+      const pp2ErrorBody = buildPreAnalysisResponse({
         status: 'manual_fallback',
-        preAnalysisToken: null,
+        imageCount: tempImagePaths.length,
         analysisMode: 'pp2',
-        detectedCategory: null,
-        detectedDescription: null,
-        detectedColor: null,
-        searchable: false,
-        message:
-          pipelineError?.message || 'Image pipeline unavailable. Please enter details manually.',
-      };
+      });
       console.log('[PRE-ANALYZE] Response (PP2 pipeline error):', JSON.stringify(pp2ErrorBody, null, 2));
       res.status(200).json(pp2ErrorBody);
     }
@@ -650,6 +695,26 @@ export const createLostRequest = async (
             0.5,
             category
           );
+          const rawImageMatches = Array.isArray(imageSearchResult?.matches)
+            ? imageSearchResult.matches.map((match: any) => ({
+                item_id: match?.item_id ?? null,
+                score: typeof match?.score === 'number' ? Number(match.score) : null,
+                vector_hits_count: match?.vector_hits_count ?? null,
+              }))
+            : [];
+
+          console.log(
+            '[IMAGE-MATCH] Raw pipeline matches:',
+            JSON.stringify(
+              {
+                ownerId: req.user.id,
+                category,
+                matches: rawImageMatches,
+              },
+              null,
+              2
+            )
+          );
 
           imageMatchMap = new Map();
           for (const match of imageSearchResult?.matches || []) {
@@ -657,6 +722,11 @@ export const createLostRequest = async (
               imageMatchMap.set(String(match.item_id), Number(match.score));
             }
           }
+
+          console.log(
+            '[IMAGE-MATCH] Derived image score map:',
+            JSON.stringify(Object.fromEntries(imageMatchMap.entries()), null, 2)
+          );
         } catch (imageSearchError: any) {
           console.error('Image search failed (non-fatal):', imageSearchError?.message || imageSearchError);
         }
@@ -689,6 +759,19 @@ export const createLostRequest = async (
             imageMatch: imageScore !== null ? { score: imageScore } : null,
           };
         });
+
+      console.log(
+        '[IMAGE-MATCH] Final matched items returned to app:',
+        JSON.stringify(
+          results.map((item: any) => ({
+            foundItemId: String(item._id),
+            category: item.category,
+            imageMatchScore: item.imageMatch?.score ?? null,
+          })),
+          null,
+          2
+        )
+      );
 
       const imageMatchResults = results
         .filter((item) => item.imageMatch)

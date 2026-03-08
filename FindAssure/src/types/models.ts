@@ -44,6 +44,9 @@ export interface FounderImagePreAnalysisResponse {
   status: 'ok' | 'manual_fallback';
   preAnalysisToken?: string | null;
   analysisMode?: 'pp1' | 'pp2';
+  imageCount?: number;
+  analysisPathLabel?: string;
+  analysisSummary?: string;
   detectedCategory?: string | null;
   detectedDescription?: string | null;
   detectedColor?: string | null;
@@ -143,6 +146,8 @@ export type RootStackParamList = {
   Register: undefined;
   ForgotPassword: undefined;
   Profile: undefined;
+  Settings: undefined;
+  FAQ: undefined;
   
   // Founder Flow
   ReportFoundStart: undefined;

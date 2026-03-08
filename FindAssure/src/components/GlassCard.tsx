@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
-import { palette, radius, shadows } from '../theme/designSystem';
+import { useAppTheme } from '../context/ThemeContext';
 
 interface GlassCardProps {
   children: React.ReactNode;
@@ -15,6 +15,8 @@ export const GlassCard: React.FC<GlassCardProps> = ({
   contentStyle,
   intensity,
 }) => {
+  const { theme } = useAppTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const softened = typeof intensity === 'number' && intensity < 40;
 
   return (
@@ -24,19 +26,20 @@ export const GlassCard: React.FC<GlassCardProps> = ({
   );
 };
 
-const styles = StyleSheet.create({
-  shell: {
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: palette.lineStrong,
-    backgroundColor: palette.paperStrong,
-    ...shadows.soft,
-  },
-  softShell: {
-    backgroundColor: palette.shell,
-  },
-  inner: {
-    padding: 14,
-    backgroundColor: 'transparent',
-  },
-});
+const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
+  StyleSheet.create({
+    shell: {
+      borderRadius: theme.radius.lg,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.card,
+      ...theme.shadows.soft,
+    },
+    softShell: {
+      backgroundColor: theme.colors.cardMuted,
+    },
+    inner: {
+      padding: 14,
+      backgroundColor: 'transparent',
+    },
+  });
