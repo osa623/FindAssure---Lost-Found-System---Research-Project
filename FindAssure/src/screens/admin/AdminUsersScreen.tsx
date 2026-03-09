@@ -170,6 +170,8 @@ const AdminUsersScreen = () => {
     const isDeleting = deletingUserId === user._id;
     const isSuspending = suspendingUserId === user._id;
     const isAdmin = user.role === 'admin';
+    const suspiciousBehaviorCount = Number(user.suspiciousBehaviorCount || 0);
+    const suspiciousBehaviorEvents = Array.isArray(user.suspiciousBehaviorEvents) ? user.suspiciousBehaviorEvents : [];
     const isSuspicious = Boolean(user.isSuspicious || user.suspiciousSeverity === 'critical');
     const isSuspended = Boolean(user.isSuspended);
     const roleTone = getAdminRoleTone(theme, user.role);
@@ -179,6 +181,28 @@ const AdminUsersScreen = () => {
         ? getAdminRiskTone(theme, 'critical')
         : getAdminRiskTone(theme, 'protected');
     const cardTone = getAdminUserCardTone(theme, { isAdmin, isSuspended, isSuspicious });
+    const handleSeeMoreSuspicious = () => {
+      if (!suspiciousBehaviorEvents.length) {
+        Alert.alert('Suspicious Behavior', 'No suspicious behavior event details are available yet.');
+        return;
+      }
+      const lines = suspiciousBehaviorEvents.slice(-5).reverse().map((evt, index) => {
+        const time = evt.created_at ? new Date(evt.created_at).toLocaleString() : 'Unknown time';
+        const score = typeof evt.suspicion_score === 'number'
+          ? `${Math.round(evt.suspicion_score * 100)}%`
+          : 'N/A';
+        const factors = Array.isArray(evt.top_negative_factors) && evt.top_negative_factors.length
+          ? evt.top_negative_factors.join(', ')
+          : 'No factors listed';
+        const summary = evt.ai_behavior_summary ? `\nSummary: ${evt.ai_behavior_summary}` : '';
+        return `${index + 1}. ${time} | Score ${score}\nFactors: ${factors}${summary}`;
+      });
+      Alert.alert(
+        `Suspicious behavior (${suspiciousBehaviorCount})`,
+        lines.join('\n\n'),
+        [{ text: 'Close' }]
+      );
+    };
 
     return (
       <GlassCard
@@ -231,6 +255,13 @@ const AdminUsersScreen = () => {
               </Text>
             </View>
           )}
+          {suspiciousBehaviorCount > 0 && (
+            <View style={[styles.signalBadge, { backgroundColor: theme.colors.dangerSoft }]}>
+              <Text style={[styles.signalBadgeText, { color: theme.colors.danger }]}>
+                Suspicious attempts {suspiciousBehaviorCount}
+              </Text>
+            </View>
+          )}
         </View>
 
         {isSuspicious && !!(user.suspiciousReason || user.fraudReasons?.length) ? (
@@ -239,6 +270,14 @@ const AdminUsersScreen = () => {
             <Text style={styles.reasonText} numberOfLines={3}>
               {user.suspiciousReason || user.fraudReasons?.[0]}
             </Text>
+            {suspiciousBehaviorCount > 5 ? (
+              <PrimaryButton
+                title="See more"
+                onPress={handleSeeMoreSuspicious}
+                variant="ghost"
+                style={styles.seeMoreButton}
+              />
+            ) : null}
           </View>
         ) : null}
 
@@ -542,6 +581,10 @@ const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
     reasonText: {
       ...theme.type.body,
       color: theme.colors.textStrong,
+    },
+    seeMoreButton: {
+      marginTop: theme.spacing.sm,
+      alignSelf: 'flex-start',
     },
     actionButtons: {
       flexDirection: 'row',
