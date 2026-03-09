@@ -2,6 +2,7 @@ import nodemailer, { Transporter } from 'nodemailer';
 import fs from 'fs';
 import path from 'path';
 import { renderFounderVerificationPassedEmail } from './emailTemplates/founderVerificationPassedEmail';
+import { renderAccountSuspendedEmail } from './emailTemplates/accountSuspendedEmail';
 
 let transporter: Transporter | null = null;
 const FOUNDER_EMAIL_LOGO_CID = 'findassure-logo';
@@ -59,6 +60,14 @@ interface FounderVerificationPassedEmailData {
   itemImageUrl?: string | null;
 }
 
+interface AccountSuspendedEmailData {
+  userName: string;
+  userEmail: string;
+  suspensionReason: string;
+  xaiReason?: string | null;
+  suspendedUntil?: Date | null;
+}
+
 export const sendFounderVerificationPassedEmail = async (
   data: FounderVerificationPassedEmailData
 ): Promise<boolean> => {
@@ -85,6 +94,51 @@ export const sendFounderVerificationPassedEmail = async (
   await getTransporter().sendMail({
     from: cfg.from,
     to: data.founderEmail,
+    subject: rendered.subject,
+    text: rendered.text,
+    html: rendered.html,
+    attachments: logoPath
+      ? [
+          {
+            filename: 'findassure-logo.png',
+            path: logoPath,
+            cid: FOUNDER_EMAIL_LOGO_CID,
+            contentType: 'image/png',
+          },
+        ]
+      : undefined,
+  });
+
+  return true;
+};
+
+export const sendAccountSuspendedEmail = async (
+  data: AccountSuspendedEmailData
+): Promise<boolean> => {
+  if (!isEmailConfigured()) {
+    console.warn('Account suspension email skipped: SMTP is not configured.');
+    return false;
+  }
+
+  const cfg = getMailConfig();
+  const logoPath = resolveFounderEmailLogoPath();
+  const supportEmail = (
+    process.env.SUPPORT_EMAIL ||
+    process.env.CONTACT_EMAIL ||
+    cfg.from
+  ).trim();
+  const rendered = renderAccountSuspendedEmail({
+    userName: data.userName?.trim() || 'User',
+    suspensionReason: data.suspensionReason,
+    xaiReason: data.xaiReason,
+    suspendedUntil: data.suspendedUntil || null,
+    supportEmail,
+    logoCid: logoPath ? FOUNDER_EMAIL_LOGO_CID : null,
+  });
+
+  await getTransporter().sendMail({
+    from: cfg.from,
+    to: data.userEmail,
     subject: rendered.subject,
     text: rendered.text,
     html: rendered.html,

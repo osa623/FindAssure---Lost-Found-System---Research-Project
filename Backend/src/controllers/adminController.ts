@@ -6,6 +6,7 @@ import { LostRequest } from '../models/LostRequest';
 import { Verification } from '../models/Verification';
 import * as itemService from '../services/itemService';
 import * as verificationService from '../services/verificationService';
+import { sendAccountSuspendedEmail } from '../services/emailService';
 
 const PYTHON_SUSPICION_BACKEND_URL =
   process.env.PYTHON_SUSPICION_BACKEND_URL || 'http://127.0.0.1:5005';
@@ -27,6 +28,109 @@ interface FraudSummaryResult {
     ai_behavior_summary?: string;
   }>;
 }
+
+const riskLevelWeight = (level?: string): number => {
+  switch (String(level || '').toLowerCase()) {
+    case 'high':
+      return 3;
+    case 'medium':
+      return 2;
+    default:
+      return 1;
+  }
+};
+
+const dedupeBehaviorEvents = (
+  events: NonNullable<FraudSummaryResult['suspicious_behavior_events']>
+): NonNullable<FraudSummaryResult['suspicious_behavior_events']> => {
+  const seen = new Set<string>();
+
+  return events
+    .filter(Boolean)
+    .filter((event) => {
+      const key = [
+        event.created_at || '',
+        typeof event.suspicion_score === 'number' ? event.suspicion_score.toFixed(4) : '',
+        event.ai_behavior_summary || '',
+        Array.isArray(event.top_negative_factors) ? event.top_negative_factors.join('|') : '',
+      ].join('::');
+
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => {
+      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return aTime - bTime;
+    });
+};
+
+const mergeFraudSummaries = (
+  summaries: Array<FraudSummaryResult | undefined>
+): FraudSummaryResult | undefined => {
+  const validSummaries = summaries.filter(Boolean) as FraudSummaryResult[];
+  if (!validSummaries.length) return undefined;
+
+  const mergedEvents = dedupeBehaviorEvents(
+    validSummaries.flatMap((summary) =>
+      Array.isArray(summary.suspicious_behavior_events)
+        ? summary.suspicious_behavior_events
+        : []
+    )
+  );
+
+  const mergedReasons = Array.from(
+    new Set(
+      validSummaries.flatMap((summary) =>
+        Array.isArray(summary.reasons)
+          ? summary.reasons.map((reason) => String(reason).trim()).filter(Boolean)
+          : []
+      )
+    )
+  );
+
+  const mergedFlags = Array.from(
+    new Set(
+      validSummaries.flatMap((summary) =>
+        Array.isArray(summary.flags)
+          ? summary.flags.map((flag) => String(flag).trim()).filter(Boolean)
+          : []
+      )
+    )
+  );
+
+  const strongest = validSummaries.reduce((best, current) => {
+    const currentWeight = riskLevelWeight(current.risk_level);
+    const bestWeight = riskLevelWeight(best.risk_level);
+    const currentScore = Number(current.risk_score ?? 0);
+    const bestScore = Number(best.risk_score ?? 0);
+
+    if (currentWeight > bestWeight) return current;
+    if (currentWeight === bestWeight && currentScore > bestScore) return current;
+    return best;
+  });
+
+  return {
+    ...strongest,
+    risk_score: Math.max(...validSummaries.map((summary) => Number(summary.risk_score ?? 0))),
+    risk_level: (['high', 'medium', 'low'] as const).find((level) =>
+      validSummaries.some((summary) => summary.risk_level === level)
+    ) || 'low',
+    reasons: mergedReasons,
+    flags: mergedFlags,
+    is_suspicious: validSummaries.some((summary) =>
+      Array.isArray(summary.is_suspicious)
+        ? summary.is_suspicious.some(Boolean)
+        : Boolean(summary.is_suspicious)
+    ),
+    suspicious_behavior_count: Math.max(
+      mergedEvents.length,
+      ...validSummaries.map((summary) => Number(summary.suspicious_behavior_count ?? 0))
+    ),
+    suspicious_behavior_events: mergedEvents,
+  };
+};
 
 const buildFraudSummaryMap = async (): Promise<Map<string, FraudSummaryResult>> => {
   const summaryMap = new Map<string, FraudSummaryResult>();
@@ -154,8 +258,10 @@ export const getAllUsers = async (
     const enrichedUsers = users.map((user: any) => {
       const mongoIdKey = String(user._id);
       const firebaseUidKey = String(user.firebaseUid || '').trim();
-      const fraudSummary =
-        fraudSummaryMap.get(mongoIdKey) || (firebaseUidKey ? fraudSummaryMap.get(firebaseUidKey) : undefined);
+      const fraudSummary = mergeFraudSummaries([
+        fraudSummaryMap.get(mongoIdKey),
+        firebaseUidKey ? fraudSummaryMap.get(firebaseUidKey) : undefined,
+      ]);
 
       const riskScore = Number(fraudSummary?.risk_score ?? 0);
       const summaryRiskLevel = fraudSummary?.risk_level || 'low';
@@ -163,6 +269,13 @@ export const getAllUsers = async (
       const suspiciousBehaviorEvents = Array.isArray(fraudSummary?.suspicious_behavior_events)
         ? fraudSummary!.suspicious_behavior_events!
         : [];
+      const latestBehaviorEvent =
+        suspiciousBehaviorEvents.length > 0
+          ? suspiciousBehaviorEvents[suspiciousBehaviorEvents.length - 1]
+          : undefined;
+      const latestBehaviorSummary = typeof latestBehaviorEvent?.ai_behavior_summary === 'string'
+        ? latestBehaviorEvent.ai_behavior_summary.trim()
+        : '';
       const userRiskLevel =
         typeof user.risk_level === 'string'
           ? String(user.risk_level).toLowerCase()
@@ -189,6 +302,9 @@ export const getAllUsers = async (
       const fraudReasons = Array.isArray(fraudSummary?.reasons) ? fraudSummary?.reasons : [];
       const suspiciousReason = isSuspicious
         ? (
+          latestBehaviorSummary
+          || fraudReasons.find((reason) => reason.startsWith('AI Behavior:'))
+          || (
           (repeatedSuspiciousBehavior
             ? `Suspicious behavior detected ${suspiciousBehaviorCount} times.`
             : null)
@@ -197,6 +313,7 @@ export const getAllUsers = async (
           || (isSuspiciousField ? 'Behavior sessions marked as suspicious.' : null)
           || (highRisk || mediumRisk ? `Risk level is ${riskLevel}.` : null)
           || (riskScore > 0 ? `Risk score is ${(riskScore * 100).toFixed(0)}%.` : null)
+          )
         )
         : null;
 
@@ -287,6 +404,21 @@ export const updateUserSuspension = async (
 
     user.isSuspended = isSuspended;
     if (isSuspended) {
+      const fraudSummaryMap = await buildFraudSummaryMap();
+      const fraudSummary = mergeFraudSummaries([
+        fraudSummaryMap.get(String(user._id)),
+        user.firebaseUid ? fraudSummaryMap.get(String(user.firebaseUid).trim()) : undefined,
+      ]);
+      const suspiciousBehaviorEvents = Array.isArray(fraudSummary?.suspicious_behavior_events)
+        ? fraudSummary.suspicious_behavior_events
+        : [];
+      const latestBehaviorEvent =
+        suspiciousBehaviorEvents.length > 0
+          ? suspiciousBehaviorEvents[suspiciousBehaviorEvents.length - 1]
+          : undefined;
+      const xaiReason = typeof latestBehaviorEvent?.ai_behavior_summary === 'string'
+        ? latestBehaviorEvent.ai_behavior_summary.trim()
+        : '';
       const mode = suspendFor === '3d' || suspendFor === '7d' || suspendFor === 'manual'
         ? suspendFor
         : 'manual';
@@ -303,7 +435,7 @@ export const updateUserSuspension = async (
       user.suspensionMode = mode;
       user.suspensionReason = typeof reason === 'string' && reason.trim()
         ? reason.trim()
-        : 'Suspended by admin';
+        : (xaiReason || 'Suspended by admin');
     } else {
       user.suspendedAt = null;
       user.suspendedUntil = null;
@@ -312,6 +444,39 @@ export const updateUserSuspension = async (
     }
 
     await user.save();
+
+    if (isSuspended && user.email) {
+      const fraudSummaryMap = await buildFraudSummaryMap();
+      const fraudSummary = mergeFraudSummaries([
+        fraudSummaryMap.get(String(user._id)),
+        user.firebaseUid ? fraudSummaryMap.get(String(user.firebaseUid).trim()) : undefined,
+      ]);
+      const suspiciousBehaviorEvents = Array.isArray(fraudSummary?.suspicious_behavior_events)
+        ? fraudSummary.suspicious_behavior_events
+        : [];
+      const latestBehaviorEvent =
+        suspiciousBehaviorEvents.length > 0
+          ? suspiciousBehaviorEvents[suspiciousBehaviorEvents.length - 1]
+          : undefined;
+      const xaiReason = typeof latestBehaviorEvent?.ai_behavior_summary === 'string'
+        ? latestBehaviorEvent.ai_behavior_summary.trim()
+        : '';
+
+      try {
+        await sendAccountSuspendedEmail({
+          userName: user.name || 'User',
+          userEmail: user.email,
+          suspensionReason: user.suspensionReason || 'Suspended by admin',
+          xaiReason: xaiReason || null,
+          suspendedUntil: user.suspendedUntil || null,
+        });
+      } catch (emailError: any) {
+        console.error(
+          'Account suspension email failed (non-blocking):',
+          emailError?.message || emailError
+        );
+      }
+    }
 
     res.status(200).json(user);
   } catch (error) {

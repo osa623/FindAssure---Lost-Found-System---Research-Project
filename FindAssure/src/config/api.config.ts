@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
-const DEFAULT_DEVICE_BACKEND_HOST = '172.20.10.2';
+const DEFAULT_DEVICE_BACKEND_HOST = '172.28.7.70';
 const DEFAULT_SIMULATOR_BACKEND_HOST = Platform.OS === 'android' ? '10.0.2.2' : '127.0.0.1';
 
 const trimEnvValue = (value: string | undefined): string | null => {
