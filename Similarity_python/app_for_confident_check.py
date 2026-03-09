@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 import os
 import json
@@ -6,6 +6,7 @@ import uuid
 import tempfile
 import time
 import threading
+import cv2
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pymongo import MongoClient
@@ -37,6 +38,14 @@ TMP_DIR = tempfile.gettempdir()
 MAX_WORKERS = 5
 LOW_AUDIO_OWNER_THRESHOLD = 0.50
 HIGH_GUESSING_RISK_THRESHOLD = 0.70
+AVG_GUESSING_RISK_REJECT_THRESHOLD = 0.40
+FACE_HARD_MIN_THRESHOLD = 0.50
+FACE_SOFT_MIN_THRESHOLD = 0.55
+FACE_BORDERLINE_SEMANTIC_MIN_FIRST = 0.80
+FACE_BORDERLINE_AUDIO_MIN_FIRST = 0.75
+FACE_BORDERLINE_SEMANTIC_MIN_RETRY = 0.70
+FACE_BORDERLINE_AUDIO_MIN_RETRY = 0.60
+FACE_RETRY_IMPROVEMENT_DELTA = 0.03
 
 
 # -----------------------------
@@ -147,6 +156,7 @@ def trigger_suspicion_async(data, saved_paths):
 def verify_owner():
     start_time = time.time()
     saved_paths = {}
+    face_keys = []
     try:
         if "data" not in request.form:
             return jsonify({"error": "Missing data field"}), 400
@@ -159,6 +169,14 @@ def verify_owner():
         owner_id = data.get("owner_id")
         category = data.get("category")
         answers = data.get("answers", [])
+        video_key_to_question_id = {}
+        for a in answers:
+            if not isinstance(a, dict):
+                continue
+            key = a.get("video_key")
+            qid = a.get("question_id")
+            if key:
+                video_key_to_question_id[str(key)] = qid
 
         if not owner_id:
             return jsonify({"error": "owner_id required"}), 400
@@ -189,11 +207,21 @@ def verify_owner():
         face_confidence_result = None
         face_check_status = "not_provided"
         face_check_error = None
-        face_keys = [key for key in request.files if key.startswith("owner_answer_")]
+        # Use the exact answer video keys from payload instead of relying on a key prefix.
+        face_keys = [
+            a.get("video_key")
+            for a in answers
+            if isinstance(a, dict) and a.get("video_key") in saved_paths
+        ]
         if face_keys:
             try:
+                face_video_inputs = [
+                    (k, saved_paths[k])
+                    for k in face_keys
+                    if k in saved_paths
+                ]
                 face_confidence_result = analyze_face_confidence_from_paths(
-                    [saved_paths[k] for k in face_keys if k in saved_paths]
+                    face_video_inputs
                 )
                 face_check_status = "completed"
             except Exception as e:
@@ -266,6 +294,23 @@ def verify_owner():
             qid = item.get("question_id")
             transcript = item.get("owner_answer", "")
             print(f"  Q{qid}: {transcript}")
+
+        # Debug visibility: print per-question audio confidence + guessing risk.
+        print("Audio risk by question:")
+        for item in enriched:
+            qid = item.get("question_id")
+            audio_data = item.get("audio_analysis") or {}
+            audio_conf = float(audio_data.get("audio_confidence_score", 0.0) or 0.0)
+            guess_risk = float(audio_data.get("guessing_risk_score", 0.0) or 0.0)
+            audio_label = audio_data.get("label") or "unknown"
+            guess_label = audio_data.get("guessing_label") or "unknown"
+            audio_error = audio_data.get("error")
+            print(
+                f"  Q{qid}: audio_conf={to_percent(audio_conf)} ({audio_label}), "
+                f"guessing_risk={to_percent(guess_risk)} ({guess_label})"
+            )
+            if audio_error:
+                print(f"    Q{qid} audio_error: {audio_error}")
 
         failed_count = sum(1 for item in enriched if not item.get("success", True))
         if failed_count:
@@ -389,14 +434,42 @@ def verify_owner():
             if isinstance(face_confidence_result, dict) else None
         )
         has_missing_face_video = False
+        detected_face_video_count = 0
+        missing_face_video_keys = []
+        missing_face_questions = []
         if isinstance(face_confidence_result, dict):
-            has_missing_face_video = any(
+            missing_face_video_keys = [
+                (v.get("video_key") or v.get("video_id"))
+                for v in face_confidence_result.get("videos", [])
+                if isinstance(v, dict) and v.get("label") == "face_not_detected"
+            ]
+            missing_face_video_keys = [k for k in missing_face_video_keys if k]
+            for key in missing_face_video_keys:
+                qid = video_key_to_question_id.get(str(key))
+                if isinstance(qid, int):
+                    missing_face_questions.append(f"Q{qid}")
+                elif isinstance(qid, str) and qid.isdigit():
+                    missing_face_questions.append(f"Q{int(qid)}")
+                else:
+                    missing_face_questions.append(str(key))
+            missing_face_questions = sorted(set(missing_face_questions))
+            detected_face_video_count = sum(
+                1
+                for v in face_confidence_result.get("videos", [])
+                if isinstance(v, dict) and v.get("label") != "face_not_detected"
+            )
+            # Strict policy: if any answer video has no detectable face, fail verification.
+            has_missing_face_video = len(missing_face_video_keys) > 0
+        # Also fail when face stage itself failed/not completed.
+        if face_check_status != "completed":
+            has_missing_face_video = True
+
+        has_partial_face_missing = False
+        if isinstance(face_confidence_result, dict):
+            has_partial_face_missing = any(
                 isinstance(v, dict) and v.get("label") == "face_not_detected"
                 for v in face_confidence_result.get("videos", [])
             )
-        # Strict policy: if face stage did not complete, treat as missing/invalid face evidence.
-        if face_check_status != "completed":
-            has_missing_face_video = True
 
         # Final confidence combines semantic + face + audio confidence.
         # If face score is unavailable, distribute weight to semantic/audio.
@@ -426,6 +499,47 @@ def verify_owner():
         min_score = min(final_scores)
         has_zero_match = min_score <= 0.25
 
+        # Retry context (last 24h) for this owner/category.
+        # Used both for decision softening/hardening and for response logging.
+        now_utc = datetime.utcnow()
+        retry_window_start = now_utc - timedelta(hours=24)
+        retry_query = {
+            "owner_id": owner_id,
+            "created_at": {"$gte": retry_window_start},
+        }
+        if category:
+            retry_query["category"] = category
+
+        recent_attempts_24h = verification_col.count_documents(retry_query)
+        recent_failed_attempts_24h = verification_col.count_documents({
+            **retry_query,
+            "is_absolute_owner": False,
+        })
+        recent_face_related_failures_24h = verification_col.count_documents({
+            **retry_query,
+            "is_absolute_owner": False,
+            "$or": [
+                {"face_check_status": {"$ne": "completed"}},
+                {"face_decision": "possible_thief"},
+                {"flags.missing_face_video": True},
+                {"flags.suspicious_face_pattern": True},
+            ],
+        })
+        attempt_number = int(recent_attempts_24h) + 1
+        previous_best_face_score = None
+        for doc in verification_col.find(retry_query, {"face_confidence_score": 1}).sort("created_at", -1).limit(20):
+            try:
+                s = float(doc.get("face_confidence_score"))
+                if previous_best_face_score is None or s > previous_best_face_score:
+                    previous_best_face_score = s
+            except Exception:
+                continue
+        current_face_improved = (
+            face_score is not None
+            and previous_best_face_score is not None
+            and face_score >= (previous_best_face_score + FACE_RETRY_IMPROVEMENT_DELTA)
+        )
+
         if missing_answer_count > 0:
             is_owner = False
             rejection_reason = (
@@ -439,22 +553,81 @@ def verify_owner():
                 f"{to_percent(min_score)} similarity (<=25%). Owner failed at least one "
                 "critical question."
             )
+        elif has_missing_face_video or face_score is None:
+            is_owner = False
+            if missing_face_video_keys:
+                if missing_face_questions:
+                    rejection_reason = (
+                        "Face not detected. Please do again for "
+                        f"{', '.join(missing_face_questions)}."
+                    )
+                else:
+                    rejection_reason = (
+                        "Face not detected. Please do the video again."
+                    )
+            elif face_check_status != "completed":
+                error_detail = f" ({face_check_error})" if face_check_error else ""
+                rejection_reason = (
+                    "Critical failure: Face analysis did not complete "
+                    f"[status={face_check_status}]{error_detail}."
+                )
+            else:
+                rejection_reason = (
+                    "Critical failure: Face not detected in owner verification video."
+                )
         else:
-            if face_decision == "possible_thief":
+            if face_score is not None and face_score < FACE_HARD_MIN_THRESHOLD:
                 is_owner = False
                 rejection_reason = (
-                    "Critical failure: Face analysis marked this session as possible_thief."
+                    f"Face confidence too low ({to_percent(face_score)} < {int(FACE_HARD_MIN_THRESHOLD * 100)}%)."
                 )
-            elif face_score is not None and face_score < 0.55:
-                is_owner = False
-                rejection_reason = (
-                    f"Face confidence too low ({to_percent(face_score)} < 55%)."
-                )
+            elif face_score is not None and face_score < FACE_SOFT_MIN_THRESHOLD:
+                if attempt_number <= 1:
+                    strong_semantic = semantic_avg_final >= FACE_BORDERLINE_SEMANTIC_MIN_FIRST
+                    strong_audio = (
+                        avg_audio_confidence is None
+                        or avg_audio_confidence >= FACE_BORDERLINE_AUDIO_MIN_FIRST
+                    )
+                    if not (strong_semantic and strong_audio):
+                        is_owner = False
+                        rejection_reason = (
+                            "Borderline face confidence. Please retry in good lighting and keep face centered."
+                        )
+                    else:
+                        is_owner = avg_final >= 0.70
+                        rejection_reason = None if is_owner else (
+                            "Borderline face confidence lowered trust for this attempt."
+                        )
+                else:
+                    retry_semantic_ok = semantic_avg_final >= FACE_BORDERLINE_SEMANTIC_MIN_RETRY
+                    retry_audio_ok = (
+                        avg_audio_confidence is None
+                        or avg_audio_confidence >= FACE_BORDERLINE_AUDIO_MIN_RETRY
+                    )
+                    improvement_ok = (
+                        previous_best_face_score is None or current_face_improved
+                    )
+                    if not (retry_semantic_ok and retry_audio_ok and improvement_ok):
+                        is_owner = False
+                        rejection_reason = (
+                            "Borderline face confidence on retry. Keep full face visible and improve video stability."
+                        )
+                    else:
+                        is_owner = avg_final >= 0.70
+                        rejection_reason = None if is_owner else (
+                            "Borderline face confidence still lowered final trust."
+                        )
             elif avg_audio_confidence is not None and avg_audio_confidence < LOW_AUDIO_OWNER_THRESHOLD:
                 is_owner = False
                 rejection_reason = (
                     f"Audio confidence too low ({to_percent(avg_audio_confidence)} < "
                     f"{int(LOW_AUDIO_OWNER_THRESHOLD * 100)}%)."
+                )
+            elif avg_guessing_risk >= AVG_GUESSING_RISK_REJECT_THRESHOLD:
+                is_owner = False
+                rejection_reason = (
+                    f"Average guessing risk too high ({to_percent(avg_guessing_risk)} > "
+                    f"{int(AVG_GUESSING_RISK_REJECT_THRESHOLD * 100)}%)."
                 )
             elif avg_guessing_risk >= HIGH_GUESSING_RISK_THRESHOLD and high_guessing_count >= 3:
                 is_owner = False
@@ -462,19 +635,45 @@ def verify_owner():
                     "High guessing pattern detected across answers "
                     f"({high_guessing_count}/{len(guessing_risk_scores)} high-risk responses)."
                 )
+            elif face_decision == "possible_thief" and recent_face_related_failures_24h >= 2:
+                is_owner = False
+                rejection_reason = (
+                    "Critical failure: Repeated suspicious face pattern detected across attempts."
+                )
             else:
+                # First-time possible_thief signal is treated as a soft penalty to
+                # reduce false positives while preserving strict repeated-attempt handling.
+                if face_decision == "possible_thief":
+                    avg_final = max(0.0, avg_final - 0.12)
                 is_owner = avg_final >= 0.70
-                rejection_reason = None
+                if face_decision == "possible_thief" and not is_owner:
+                    rejection_reason = (
+                        "Face behavior looked suspicious in this attempt. "
+                        "Please retry with stable lighting and keep your full face visible."
+                    )
+                else:
+                    rejection_reason = None
 
         total_time = time.time() - start_time
         print(f"Total verification time: {total_time:.2f}s")
 
         touch_owner(owner_id)
 
+        # Track retry behavior so repeated failed attempts are visible for fraud review
+        # while still allowing genuine users to try again.
+        repeat_attempt_pattern = (
+            attempt_number >= 3 and recent_face_related_failures_24h >= 2
+        )
+        retry_warning = (
+            "Multiple recent failed face-verification attempts detected. "
+            "This session has been flagged for review."
+            if repeat_attempt_pattern else None
+        )
+
         verification_col.insert_one({
             "owner_id": owner_id,
             "category": category,
-            "created_at": datetime.utcnow(),
+            "created_at": now_utc,
 
             "final_confidence": avg_final,
             "semantic_confidence": semantic_avg_final,
@@ -494,6 +693,19 @@ def verify_owner():
             "avg_audio_confidence": avg_audio_confidence,
             "face_check_status": face_check_status,
             "face_check_error": face_check_error,
+            "detected_face_video_count": detected_face_video_count,
+            "missing_face_video_keys": missing_face_video_keys,
+            "missing_face_questions": missing_face_questions,
+            "retry_tracking": {
+                "attempt_number_24h": attempt_number,
+                "recent_attempts_24h": int(recent_attempts_24h),
+                "recent_failed_attempts_24h": int(recent_failed_attempts_24h),
+                "recent_face_related_failures_24h": int(recent_face_related_failures_24h),
+                "previous_best_face_score": previous_best_face_score,
+                "current_face_improved": current_face_improved,
+                "repeat_attempt_pattern": repeat_attempt_pattern,
+                "retry_warning": retry_warning,
+            },
 
             "answers": [
                 {
@@ -520,15 +732,22 @@ def verify_owner():
                 "critical_zero_match": has_zero_match,
                 "missing_answer_transcript": missing_answer_count > 0,
                 "missing_face_video": has_missing_face_video,
+                "missing_face_video_keys": missing_face_video_keys,
+                "missing_face_questions": missing_face_questions,
+                "partial_face_missing": has_partial_face_missing,
                 "suspicious_face_pattern": face_decision == "possible_thief",
-                "low_face_confidence": (face_score is not None and face_score < 0.55),
+                "low_face_confidence": (face_score is not None and face_score < FACE_SOFT_MIN_THRESHOLD),
+                "borderline_face_confidence": (
+                    face_score is not None and FACE_HARD_MIN_THRESHOLD <= face_score < FACE_SOFT_MIN_THRESHOLD
+                ),
                 "low_audio_confidence": (
                     avg_audio_confidence is not None and
                     avg_audio_confidence < LOW_AUDIO_OWNER_THRESHOLD
                 ),
                 "audio_not_evaluated": valid_audio_count == 0,
                 "high_guessing_risk": avg_guessing_risk >= HIGH_GUESSING_RISK_THRESHOLD,
-                "face_not_evaluated": face_check_status != "completed"
+                "face_not_evaluated": face_check_status != "completed",
+                "repeat_attempt_pattern": repeat_attempt_pattern,
             }
         })
 
@@ -555,6 +774,19 @@ def verify_owner():
             "face_confidence": face_confidence_result,
             "face_check_status": face_check_status,
             "face_check_error": face_check_error,
+            "detected_face_video_count": detected_face_video_count,
+            "missing_face_video_keys": missing_face_video_keys,
+            "missing_face_questions": missing_face_questions,
+            "retry_tracking": {
+                "attempt_number_24h": attempt_number,
+                "recent_attempts_24h": int(recent_attempts_24h),
+                "recent_failed_attempts_24h": int(recent_failed_attempts_24h),
+                "recent_face_related_failures_24h": int(recent_face_related_failures_24h),
+                "previous_best_face_score": previous_best_face_score,
+                "current_face_improved": current_face_improved,
+                "repeat_attempt_pattern": repeat_attempt_pattern,
+                "retry_warning": retry_warning,
+            },
         })
     except Exception as e:
         print(f"Unhandled /verify-owner error: {str(e)}")
@@ -565,7 +797,7 @@ def verify_owner():
                 os.remove(p)
 
 
-def analyze_face_confidence_from_paths(video_paths):
+def analyze_face_confidence_from_paths(video_inputs):
     """
     Wrapper that calls the face confidence analyzer using already-saved
     file paths, avoiding the double-consumption bug of file streams.
@@ -576,14 +808,21 @@ def analyze_face_confidence_from_paths(video_paths):
 
     extractor = FeatureExtractor()
     scorer = TruthfulnessScorer()
+    face_cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    )
 
     results = []
     suspicious_count = 0
     scored_count = 0
 
-    for idx, path in enumerate(video_paths, start=1):
+    for idx, item in enumerate(video_inputs, start=1):
+        if isinstance(item, (tuple, list)) and len(item) >= 2:
+            video_key, path = item[0], item[1]
+        else:
+            video_key, path = f"video{idx}", item
         try:
-            frames = extract_frames(path, max_frames=8)
+            frames = extract_frames(path, max_frames=16)
             if not frames:
                 raise ValueError("Could not extract frames")
 
@@ -599,29 +838,66 @@ def analyze_face_confidence_from_paths(video_paths):
                 if mesh is not None:
                     mesh_vecs.append(mesh)
 
+            fallback_face_detected = False
             if not mesh_vecs:
+                # Fallback face presence check for cases where FaceMesh misses
+                # but a face is still visible in the frame.
+                for f in frames:
+                    try:
+                        gray = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+                        boxes = face_cascade.detectMultiScale(
+                            gray,
+                            scaleFactor=1.1,
+                            minNeighbors=4,
+                            minSize=(48, 48),
+                        )
+                        if len(boxes) > 0:
+                            fallback_face_detected = True
+                            break
+                    except Exception:
+                        continue
+
+            if not mesh_vecs and not fallback_face_detected:
                 raise ValueError("Face not detected")
 
-            if len(mesh_vecs) == 1:
+            if mesh_vecs and len(mesh_vecs) == 1:
                 mesh_vecs *= 2
 
             if not emotions:
                 emotions = ["neutral"] * len(mesh_vecs)
 
-            score = scorer.score_video(emotions, mesh_vecs)
-            scored_count += 1
+            if mesh_vecs:
+                score = scorer.score_video(emotions, mesh_vecs)
+                scored_count += 1
+            else:
+                # Face is present by fallback detector but mesh features are unavailable.
+                # Return conservative uncertain score instead of hard face-missing fail.
+                score = {
+                    "emotion_score": 0.70,
+                    "behavior_score": 0.55,
+                    "overall": 0.62,
+                    "label": "uncertain",
+                    "diagnostics": {
+                        "fallback_face_detector": "haar_cascade",
+                        "mesh_available": False,
+                        "dominant_emotions": emotions or ["neutral"],
+                    },
+                }
+                scored_count += 1
 
             if score["label"] == "suspicious":
                 suspicious_count += 1
 
             results.append({
                 "video_id": f"video{idx}",
+                "video_key": video_key,
                 **score
             })
         except Exception as e:
             # Keep per-video failure without aborting full face stage.
             results.append({
                 "video_id": f"video{idx}",
+                "video_key": video_key,
                 "label": "face_not_detected",
                 "error": str(e)
             })

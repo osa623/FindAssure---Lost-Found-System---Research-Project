@@ -54,6 +54,11 @@ const axiosClient = axios.create({
   timeout: API_CONFIG.REQUEST_TIMEOUT,
 });
 
+type RetryableRequestConfig = {
+  _retry?: boolean;
+  headers?: any;
+};
+
 // Request interceptor to attach auth token
 axiosClient.interceptors.request.use(
   (config) => {
@@ -86,7 +91,7 @@ axiosClient.interceptors.request.use(
 // Response interceptor for error handling
 axiosClient.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const requestUrl = buildRequestUrl(error.config);
 
     if (error.response) {
@@ -109,7 +114,27 @@ axiosClient.interceptors.response.use(
     }
 
     if (error.response?.status === 401) {
-      // Handle unauthorized - redirect to login
+      const originalConfig = (error.config || {}) as RetryableRequestConfig;
+      const firebaseUser = (global as any).firebaseUser;
+
+      if (!originalConfig._retry && firebaseUser?.getIdToken) {
+        originalConfig._retry = true;
+        try {
+          const refreshedToken = await firebaseUser.getIdToken(true);
+          (global as any).authToken = refreshedToken;
+          axiosClient.defaults.headers.common['Authorization'] = `Bearer ${refreshedToken}`;
+          if (!originalConfig.headers) {
+            originalConfig.headers = {};
+          }
+          originalConfig.headers.Authorization = `Bearer ${refreshedToken}`;
+          console.log('401 recovered by refreshing Firebase token and retrying request');
+          return axiosClient(originalConfig as any);
+        } catch (refreshError) {
+          console.log('Token refresh on 401 failed; user may need to sign in again');
+        }
+      }
+
+      // Handle unauthorized when retry path is not available or failed
       console.log('Unauthorized - token expired or invalid');
     }
     return Promise.reject(error);

@@ -17,6 +17,15 @@ interface FraudSummaryResult {
   reasons?: string[];
   flags?: string[];
   is_suspicious?: boolean | boolean[];
+  suspicious_behavior_count?: number;
+  suspicious_behavior_events?: Array<{
+    created_at?: string;
+    suspicion_score?: number;
+    face_missing_ratio?: number;
+    look_away_ratio?: number;
+    top_negative_factors?: string[];
+    ai_behavior_summary?: string;
+  }>;
 }
 
 const buildFraudSummaryMap = async (): Promise<Map<string, FraudSummaryResult>> => {
@@ -150,6 +159,10 @@ export const getAllUsers = async (
 
       const riskScore = Number(fraudSummary?.risk_score ?? 0);
       const summaryRiskLevel = fraudSummary?.risk_level || 'low';
+      const suspiciousBehaviorCount = Number(fraudSummary?.suspicious_behavior_count ?? 0);
+      const suspiciousBehaviorEvents = Array.isArray(fraudSummary?.suspicious_behavior_events)
+        ? fraudSummary!.suspicious_behavior_events!
+        : [];
       const userRiskLevel =
         typeof user.risk_level === 'string'
           ? String(user.risk_level).toLowerCase()
@@ -168,15 +181,18 @@ export const getAllUsers = async (
         : Boolean(fraudSummary?.is_suspicious);
       const highRisk = riskLevel === 'high' || riskScore >= 0.7;
       const mediumRisk = riskLevel === 'medium' || riskScore >= 0.55;
-
-      const isSuspicious = highRisk || mediumRisk || isSuspiciousField || flags.length > 0;
+      const repeatedSuspiciousBehavior = suspiciousBehaviorCount > 5;
+      const isSuspicious = highRisk || mediumRisk || isSuspiciousField || flags.length > 0 || repeatedSuspiciousBehavior;
       const suspiciousSeverity = (highRisk || isSuspiciousField || flags.length > 0)
         ? 'critical'
         : (mediumRisk ? 'warning' : 'none');
       const fraudReasons = Array.isArray(fraudSummary?.reasons) ? fraudSummary?.reasons : [];
       const suspiciousReason = isSuspicious
         ? (
-          fraudReasons[0]
+          (repeatedSuspiciousBehavior
+            ? `Suspicious behavior detected ${suspiciousBehaviorCount} times.`
+            : null)
+          || fraudReasons[0]
           || (flags.length ? `Flags: ${flags.join(', ')}` : null)
           || (isSuspiciousField ? 'Behavior sessions marked as suspicious.' : null)
           || (highRisk || mediumRisk ? `Risk level is ${riskLevel}.` : null)
@@ -190,6 +206,8 @@ export const getAllUsers = async (
         fraudRiskLevel: riskLevel,
         fraudReasons,
         fraudFlags: flags,
+        suspiciousBehaviorCount,
+        suspiciousBehaviorEvents,
         isSuspicious,
         suspiciousSeverity,
         suspiciousReason,

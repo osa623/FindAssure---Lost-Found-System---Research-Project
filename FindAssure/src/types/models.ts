@@ -18,6 +18,15 @@ export interface User {
   fraudReasons?: string[];
   fraudFlags?: string[];
   suspiciousReason?: string | null;
+  suspiciousBehaviorCount?: number;
+  suspiciousBehaviorEvents?: Array<{
+    created_at?: string;
+    suspicion_score?: number;
+    face_missing_ratio?: number;
+    look_away_ratio?: number;
+    top_negative_factors?: string[];
+    ai_behavior_summary?: string;
+  }>;
   createdAt: string;
   updatedAt?: string;
 }

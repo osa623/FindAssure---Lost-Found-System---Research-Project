@@ -191,6 +191,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setFirebaseUser(firebaseUser);
+      (global as any).firebaseUser = firebaseUser || null;
       setLoading(false);
 
       if (firebaseUser) {
@@ -208,6 +209,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(null);
         setToken(null);
         (global as any).authToken = null;
+        (global as any).firebaseUser = null;
         delete axiosClient.defaults.headers.common['Authorization'];
         clearTokenRefresh();
       }
@@ -313,6 +315,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setToken(null);
       (global as any).authToken = null;
+      (global as any).firebaseUser = null;
       delete axiosClient.defaults.headers.common['Authorization'];
     } catch (error: any) {
       console.error('Sign out error:', error);

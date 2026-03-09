@@ -39,6 +39,30 @@ def analyze_fraud_for_owner(owner_id, users_col, verification_col, behavior_col,
     behavior_sessions = list(
         behavior_col.find({"owner_id": owner_id}).sort("created_at", 1)
     )
+    suspicious_behavior_sessions = [b for b in behavior_sessions if bool(b.get("is_suspicious"))]
+    suspicious_behavior_count = len(suspicious_behavior_sessions)
+    suspicious_behavior_events = []
+    for b in suspicious_behavior_sessions[-10:]:
+        created_at = b.get("created_at")
+        ai_explanation = (b.get("AI_explanation") or {}).get("behavior_summary")
+        xai = b.get("xai") or {}
+        top_negative = xai.get("negative") or []
+        negative_labels = []
+        for item in top_negative[:3]:
+            if isinstance(item, (list, tuple)) and item:
+                negative_labels.append(str(item[0]))
+            elif isinstance(item, dict) and item.get("feature"):
+                negative_labels.append(str(item.get("feature")))
+            elif item is not None:
+                negative_labels.append(str(item))
+        suspicious_behavior_events.append({
+            "created_at": created_at,
+            "suspicion_score": b.get("suspicion_score"),
+            "face_missing_ratio": ((b.get("features") or {}).get("face_missing_ratio")),
+            "look_away_ratio": ((b.get("features") or {}).get("look_away_ratio")),
+            "top_negative_factors": negative_labels,
+            "ai_behavior_summary": ai_explanation,
+        })
 
     reasons = []
     risk_score = 0.0
@@ -70,6 +94,11 @@ def analyze_fraud_for_owner(owner_id, users_col, verification_col, behavior_col,
         if identity_scores[0] - identity_scores[-1] > 0.25:
             risk_score += 0.3
             reasons.append("Identity confidence dropped")
+    if suspicious_behavior_count > 5:
+        risk_score += 0.35
+        reasons.append(
+            f"Suspicious behavior repeated {suspicious_behavior_count} times."
+        )
 
     # -------------------
     # Gemini enrichment
@@ -108,8 +137,11 @@ def analyze_fraud_for_owner(owner_id, users_col, verification_col, behavior_col,
             "verification_sessions": len(verification_sessions),
             "behavior_sessions": len(behavior_sessions),
             "avg_identity_confidence": avg_identity,
-            "avg_behavior_suspicion": avg_behavior
+            "avg_behavior_suspicion": avg_behavior,
+            "suspicious_behavior_count": suspicious_behavior_count,
         },
+        "suspicious_behavior_count": suspicious_behavior_count,
+        "suspicious_behavior_events": suspicious_behavior_events,
         "last_seen_at": owner.get("last_seen_at") or owner.get("updatedAt"),
         "flags": owner.get("flags", []),
         "is_active": owner.get("is_active", True),
