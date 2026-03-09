@@ -48,13 +48,6 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # MEDIAPIPE
 # =====================================================
 mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(
-    static_image_mode=False,
-    max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
-)
 
 LEFT_EYE_INDICES = [362, 385, 387, 263, 373, 380]
 RIGHT_EYE_INDICES = [33, 160, 158, 133, 153, 144]
@@ -117,41 +110,64 @@ def analyze_video(video_path):
 
     frame_number = 0
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+    with mp_face_mesh.FaceMesh(
+        static_image_mode=False,
+        max_num_faces=1,
+        refine_landmarks=True,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    ) as face_mesh:
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-        frame_number += 1
-        if frame_number % FRAME_SKIP != 0:
-            continue
+            frame_number += 1
+            if frame_number % FRAME_SKIP != 0:
+                continue
 
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        output = face_mesh.process(rgb)
+            if frame is None or frame.size == 0:
+                results["face_not_detected_frames"] += 1
+                results["total_frames"] += 1
+                continue
 
-        if not output.multi_face_landmarks:
-            results["face_not_detected_frames"] += 1
+            if len(frame.shape) != 3 or frame.shape[2] != 3:
+                results["face_not_detected_frames"] += 1
+                results["total_frames"] += 1
+                continue
+
+            try:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                rgb = np.ascontiguousarray(rgb)
+                output = face_mesh.process(rgb)
+            except Exception:
+                results["face_not_detected_frames"] += 1
+                results["total_frames"] += 1
+                continue
+
+            if not output.multi_face_landmarks:
+                results["face_not_detected_frames"] += 1
+                results["total_frames"] += 1
+                continue
+
+            lm = output.multi_face_landmarks[0].landmark
+            h, w, _ = frame.shape
+            pts = [(int(p.x * w), int(p.y * h)) for p in lm]
+
+            left_eye = np.array([pts[i] for i in LEFT_EYE_INDICES])
+            right_eye = np.array([pts[i] for i in RIGHT_EYE_INDICES])
+
+            left_ear = calculate_ear(left_eye)
+            right_ear = calculate_ear(right_eye)
+
+            eyes_open = left_ear > MIN_EYE_OPENNESS and right_ear > MIN_EYE_OPENNESS
+
+            if eyes_open:
+                results["eye_contact_frames"] += 1
+            else:
+                results["look_away_frames"] += 1
+
             results["total_frames"] += 1
-            continue
-
-        lm = output.multi_face_landmarks[0].landmark
-        h, w, _ = frame.shape
-        pts = [(int(p.x * w), int(p.y * h)) for p in lm]
-
-        left_eye = np.array([pts[i] for i in LEFT_EYE_INDICES])
-        right_eye = np.array([pts[i] for i in RIGHT_EYE_INDICES])
-
-        left_ear = calculate_ear(left_eye)
-        right_ear = calculate_ear(right_eye)
-
-        eyes_open = left_ear > MIN_EYE_OPENNESS and right_ear > MIN_EYE_OPENNESS
-
-        if eyes_open:
-            results["eye_contact_frames"] += 1
-        else:
-            results["look_away_frames"] += 1
-
-        results["total_frames"] += 1
 
     cap.release()
     return results
@@ -264,12 +280,19 @@ def analyze_suspicion():
 
     xai = explain_with_shap(features, suspicion_score)
 
-    gemini_explanation = gemini_reason(
-        owner_id=owner_id,
-        features=features,
-        decision=suspicious,
-        xai=xai,
-    )
+    try:
+        gemini_explanation = gemini_reason(
+            owner_id=owner_id,
+            features=features,
+            decision=suspicious,
+            xai=xai,
+        )
+    except Exception as gemini_err:
+        gemini_explanation = (
+            "AI explanation unavailable (Gemini request failed). "
+            "Using rule-based suspicion decision."
+        )
+        print(f"Gemini explanation failed: {gemini_err}")
     
     touch_owner(owner_id)
 
