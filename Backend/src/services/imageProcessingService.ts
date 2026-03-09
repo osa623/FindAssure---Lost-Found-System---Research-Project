@@ -75,6 +75,19 @@ export async function analyzePP1(imagePath: string) {
   return data;
 }
 
+export async function startPP1Analyze(imagePath: string) {
+  const form = new FormData();
+  form.append('files', fs.createReadStream(imagePath));
+
+  const { data } = await withPipelineLogging('PP1 async analyze start', () =>
+    client.post('/pp1/analyze_async', form, {
+      headers: form.getHeaders(),
+    })
+  );
+
+  return data;
+}
+
 export async function analyzePP2(imagePaths: string[]) {
   const form = new FormData();
 
@@ -85,6 +98,30 @@ export async function analyzePP2(imagePaths: string[]) {
   const { data } = await withPipelineLogging('PP2 multi-view analyze', () => client.post('/pp2/analyze_multiview', form, {
     headers: form.getHeaders(),
   }));
+
+  return data;
+}
+
+export async function startPP2Analyze(imagePaths: string[]) {
+  const form = new FormData();
+
+  for (const imagePath of imagePaths) {
+    form.append('files', fs.createReadStream(imagePath));
+  }
+
+  const { data } = await withPipelineLogging('PP2 async multi-view analyze start', () =>
+    client.post('/pp2/analyze_multiview_async', form, {
+      headers: form.getHeaders(),
+    })
+  );
+
+  return data;
+}
+
+export async function getPreAnalysisJobStatus(taskId: string) {
+  const { data } = await withPipelineLogging('pre-analysis job status', () =>
+    client.get(`/jobs/pre-analysis/${encodeURIComponent(taskId)}`)
+  );
 
   return data;
 }

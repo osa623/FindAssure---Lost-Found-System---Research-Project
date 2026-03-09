@@ -9,7 +9,11 @@ import * as ImagePicker from 'expo-image-picker';
 import { LoadingScreen } from '../../components/LoadingScreen';
 import { GlassCard } from '../../components/GlassCard';
 import { PrimaryButton } from '../../components/PrimaryButton';
-import { RootStackParamList, SelectedImageAsset } from '../../types/models';
+import {
+  FounderImagePreAnalysisResponse,
+  RootStackParamList,
+  SelectedImageAsset,
+} from '../../types/models';
 import { itemsApi } from '../../api/itemsApi';
 import { useAppTheme } from '../../context/ThemeContext';
 import { resolveItemCategory } from '../../utils/itemCategory';
@@ -18,35 +22,45 @@ import { showImageSourceOptions } from '../../utils/imageSourceOptions';
 type ReportFoundStartNavigationProp = StackNavigationProp<RootStackParamList, 'ReportFoundStart'>;
 
 const MAX_IMAGES = 3;
-const SINGLE_IMAGE_LOADING_STEPS = [
-  {
-    title: 'Preparing your photo',
-    subtitle: 'Optimizing the image so we can inspect the item clearly.',
-  },
-  {
-    title: 'Analyzing item details',
-    subtitle: 'Looking for the category and a useful public description from the photo.',
-  },
-  {
-    title: 'Preparing the next step',
-    subtitle: 'Packing the suggested details so you can review before continuing.',
-  },
-] as const;
+const DEFAULT_RETRY_AFTER_MS = 1000;
+const TOTAL_ANALYSIS_STEPS = 4;
 
-const MULTI_IMAGE_LOADING_STEPS = [
+const ANALYSIS_STAGE_INDEX: Record<string, number> = {
+  queued: 1,
+  detecting: 2,
+  reasoning: 3,
+  finalizing: 4,
+};
+
+const ANALYSIS_STAGE_COPY: Record<
+  string,
   {
-    title: 'Preparing your photo set',
-    subtitle: 'Organizing the angles so we can compare the item more reliably.',
+    title: string;
+    singlePhotoMessage: string;
+    multiPhotoMessage: string;
+  }
+> = {
+  queued: {
+    title: 'Preparing your photos',
+    singlePhotoMessage: 'Getting your single photo ready for inspection.',
+    multiPhotoMessage: 'Preparing your multi-view photo set for analysis.',
   },
-  {
-    title: 'Analyzing item details',
-    subtitle: 'Combining multiple views to infer a stronger category and description.',
+  detecting: {
+    title: 'Scanning the item',
+    singlePhotoMessage: 'Inspecting the visible details in your photo.',
+    multiPhotoMessage: 'Comparing the uploaded angles to understand the item more reliably.',
   },
-  {
+  reasoning: {
+    title: 'Refining category and description',
+    singlePhotoMessage: 'Turning what we see into a useful report suggestion.',
+    multiPhotoMessage: 'Combining the views into a stronger category and description suggestion.',
+  },
+  finalizing: {
     title: 'Preparing the next step',
-    subtitle: 'Saving the analysis outcome so you can confirm the report details.',
+    singlePhotoMessage: 'Packaging the result so you can review it before continuing.',
+    multiPhotoMessage: 'Preparing the final multi-view suggestion for review.',
   },
-] as const;
+};
 
 const mapPickerAsset = (asset: ImagePicker.ImagePickerAsset): SelectedImageAsset => ({
   uri: asset.uri,
@@ -69,9 +83,12 @@ const ReportFoundStartScreen = () => {
   const { theme } = useAppTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [images, setImages] = useState<SelectedImageAsset[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadingStageIndex, setLoadingStageIndex] = useState(0);
+  const [loadingState, setLoadingState] = useState<FounderImagePreAnalysisResponse | null>(null);
   const isSubmitting = useRef(false);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
+
+  const loading = Boolean(loadingState);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -81,17 +98,15 @@ const ReportFoundStartScreen = () => {
   }, [loading, navigation]);
 
   useEffect(() => {
-    if (!loading) {
-      setLoadingStageIndex(0);
-      return;
-    }
-
-    const interval = setInterval(() => {
-      setLoadingStageIndex((current) => Math.min(current + 1, 2));
-    }, 1800);
-
-    return () => clearInterval(interval);
-  }, [loading]);
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current);
+        pollTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const requestLibraryPermissions = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -151,6 +166,72 @@ const ReportFoundStartScreen = () => {
     setImages((current) => current.filter((image) => image.uri !== uri));
   };
 
+  const clearPolling = () => {
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+  };
+
+  const navigateWithPreAnalysis = (preAnalysis: {
+    preAnalysisToken?: string | null;
+    detectedCategory?: string | null;
+    detectedDescription?: string | null;
+    analysisSummary?: string;
+    message?: string;
+    status?: string;
+  }) => {
+    const fallbackMessage =
+      preAnalysis.status === 'failed'
+        ? 'We could not finish the photo analysis. Continue manually and confirm the details yourself.'
+        : 'We could not confidently prefill this item. Continue manually.';
+
+    navigation.navigate('ReportFoundDetails', {
+      images,
+      preAnalysisToken: preAnalysis.preAnalysisToken || null,
+      category: resolveItemCategory(preAnalysis.detectedCategory),
+      description: preAnalysis.detectedDescription || undefined,
+      analysisMessage: preAnalysis.analysisSummary || preAnalysis.message || fallbackMessage,
+    });
+  };
+
+  const pollFounderPreAnalysis = (taskId: string, retryAfterMs: number) => {
+    clearPolling();
+    pollTimeoutRef.current = setTimeout(async () => {
+      try {
+        const statusResponse = await itemsApi.getFounderImagePreAnalysisStatus(taskId);
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        setLoadingState(statusResponse);
+
+        if (statusResponse.status === 'queued' || statusResponse.status === 'processing') {
+          pollFounderPreAnalysis(taskId, statusResponse.retryAfterMs || DEFAULT_RETRY_AFTER_MS);
+          return;
+        }
+
+        clearPolling();
+        isSubmitting.current = false;
+        setLoadingState(null);
+        navigateWithPreAnalysis(statusResponse);
+      } catch (error: any) {
+        if (!isMountedRef.current) {
+          return;
+        }
+        clearPolling();
+        isSubmitting.current = false;
+        setLoadingState(null);
+        navigateWithPreAnalysis({
+          status: 'failed',
+          message:
+            error?.message ||
+            'We could not finish the photo analysis. Continue manually and confirm the details yourself.',
+        });
+      }
+    }, retryAfterMs);
+  };
+
   const handleNext = async () => {
     if (isSubmitting.current) return;
     if (images.length === 0) {
@@ -160,42 +241,83 @@ const ReportFoundStartScreen = () => {
 
     try {
       isSubmitting.current = true;
-      setLoading(true);
-      const preAnalysis = await itemsApi.preAnalyzeFoundImages(images);
-      navigation.navigate('ReportFoundDetails', {
-        images,
-        preAnalysisToken: preAnalysis.preAnalysisToken || null,
-        category: resolveItemCategory(preAnalysis.detectedCategory),
-        description: preAnalysis.detectedDescription || undefined,
-        analysisMessage: preAnalysis.analysisSummary || preAnalysis.message || undefined,
+      setLoadingState({
+        status: 'queued',
+        imageCount: images.length,
+        analysisMode: images.length > 1 ? 'pp2' : 'pp1',
+        analysisPathLabel: images.length > 1 ? 'Multi-view analysis' : 'Single photo analysis',
+        stageKey: 'queued',
+        stageLabel: 'Preparing your photos',
+        stageMessage:
+          images.length > 1
+            ? 'Preparing your multi-view photo set for analysis.'
+            : 'Getting your single photo ready for inspection.',
       });
+
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          setTimeout(resolve, 0);
+        });
+      });
+
+      const startResponse = await itemsApi.startFounderImagePreAnalysis(images);
+      setLoadingState(startResponse);
+
+      if (
+        startResponse.status === 'ok'
+        || startResponse.status === 'manual_fallback'
+        || startResponse.status === 'failed'
+      ) {
+        setLoadingState(null);
+        navigateWithPreAnalysis(startResponse);
+        return;
+      }
+
+      if (!startResponse.taskId) {
+        throw new Error('Image analysis task did not return a task ID.');
+      }
+
+      pollFounderPreAnalysis(startResponse.taskId, startResponse.retryAfterMs || DEFAULT_RETRY_AFTER_MS);
     } catch (error: any) {
-      navigation.navigate('ReportFoundDetails', {
-        images,
-        preAnalysisToken: null,
-        analysisMessage:
+      setLoadingState(null);
+      navigateWithPreAnalysis({
+        status: 'failed',
+        message:
           error?.message || 'We could not finish the photo analysis. Continue manually and confirm the details yourself.',
       });
     } finally {
-      isSubmitting.current = false;
-      setLoading(false);
+      if (!pollTimeoutRef.current) {
+        isSubmitting.current = false;
+      }
     }
   };
 
   if (loading) {
-    const loadingSteps = images.length > 1 ? MULTI_IMAGE_LOADING_STEPS : SINGLE_IMAGE_LOADING_STEPS;
-    const currentStep = loadingSteps[loadingStageIndex] || loadingSteps[loadingSteps.length - 1];
+    const effectiveImageCount = loadingState?.imageCount || images.length || 1;
+    const currentStageKey =
+      typeof loadingState?.stageKey === 'string' && loadingState.stageKey.length > 0
+        ? loadingState.stageKey
+        : loadingState?.status === 'queued'
+          ? 'queued'
+          : 'detecting';
+    const stageCopy = ANALYSIS_STAGE_COPY[currentStageKey] || ANALYSIS_STAGE_COPY.detecting;
+    const isMultiView = effectiveImageCount > 1;
+    const stageIndex = ANALYSIS_STAGE_INDEX[currentStageKey] || 1;
+    const title = loadingState?.stageLabel || stageCopy.title;
+    const subtitle =
+      loadingState?.stageMessage
+      || (isMultiView ? stageCopy.multiPhotoMessage : stageCopy.singlePhotoMessage);
 
     return (
       <LoadingScreen
         badge="Photo analysis"
-        message={currentStep.title}
-        subtitle={currentStep.subtitle}
-        stageLabel={`Step ${Math.min(loadingStageIndex + 1, loadingSteps.length)} of ${loadingSteps.length}`}
+        message={title}
+        subtitle={subtitle}
+        stageLabel={`Step ${stageIndex} of ${TOTAL_ANALYSIS_STEPS}`}
         note={
-          images.length > 1
-            ? 'Multi-angle photos can improve matching quality. If we cannot prefill confidently, you can still continue manually.'
-            : 'One clear photo can still prefill the report. If confidence is low, you can continue manually.'
+          isMultiView
+            ? 'We are checking multiple angles for a stronger suggestion. If confidence stays low, you can still continue manually.'
+            : 'We are checking one clear photo first. If confidence stays low, you can still continue manually.'
         }
         illustrationVariant="auth"
       />

@@ -29,15 +29,22 @@ type FoundItemAnalysisSnapshot = {
   searchable: boolean;
 };
 
-type PreAnalysisStatus = 'ok' | 'manual_fallback';
+type RunningPreAnalysisStatus = 'queued' | 'processing';
+type TerminalPreAnalysisStatus = 'ok' | 'manual_fallback' | 'failed';
+type PreAnalysisStatus = RunningPreAnalysisStatus | TerminalPreAnalysisStatus;
 
 type PreAnalysisResponseBody = {
   status: PreAnalysisStatus;
+  taskId?: string;
   preAnalysisToken: string | null;
   analysisMode: 'pp1' | 'pp2' | null;
   imageCount: number;
   analysisPathLabel: string;
   analysisSummary: string;
+  retryAfterMs?: number;
+  stageKey?: string | null;
+  stageLabel?: string | null;
+  stageMessage?: string | null;
   detectedCategory: string | null;
   detectedDescription: string | null;
   detectedColor: string | null;
@@ -126,11 +133,17 @@ const normalizePreAnalysisToken = (value: unknown): string | null => {
 const getAnalysisPathLabel = (imageCount: number): string =>
   imageCount > 1 ? 'Multi-view analysis' : 'Single photo analysis';
 
-const buildPreAnalysisSummary = (status: PreAnalysisStatus, imageCount: number): string => {
+const buildPreAnalysisSummary = (status: TerminalPreAnalysisStatus, imageCount: number): string => {
   if (status === 'ok') {
     return imageCount > 1
       ? 'We prefilled what we could from your photo set. Review before continuing.'
       : 'We prefilled what we could from your photo. Review before continuing.';
+  }
+
+  if (status === 'failed') {
+    return imageCount > 1
+      ? 'We could not finish analyzing this photo set. Continue manually and confirm the details yourself.'
+      : 'We could not finish analyzing this photo. Continue manually and confirm the details yourself.';
   }
 
   return imageCount > 1
@@ -140,50 +153,124 @@ const buildPreAnalysisSummary = (status: PreAnalysisStatus, imageCount: number):
 
 const buildPreAnalysisResponse = ({
   status,
+  taskId,
   imageCount,
   preAnalysisToken = null,
   analysisMode = null,
+  retryAfterMs,
+  stageKey = null,
+  stageLabel = null,
+  stageMessage = null,
   detectedCategory = null,
   detectedDescription = null,
   detectedColor = null,
   searchable = false,
 }: {
   status: PreAnalysisStatus;
+  taskId?: string;
   imageCount: number;
   preAnalysisToken?: string | null;
   analysisMode?: 'pp1' | 'pp2' | null;
+  retryAfterMs?: number;
+  stageKey?: string | null;
+  stageLabel?: string | null;
+  stageMessage?: string | null;
   detectedCategory?: string | null;
   detectedDescription?: string | null;
   detectedColor?: string | null;
   searchable?: boolean;
 }): PreAnalysisResponseBody => {
-  const analysisSummary = buildPreAnalysisSummary(status, imageCount);
+  const terminalStatus =
+    status === 'queued' || status === 'processing' ? 'manual_fallback' : status;
+  const analysisSummary = buildPreAnalysisSummary(terminalStatus, imageCount);
 
   return {
     status,
+    taskId,
     preAnalysisToken,
     analysisMode,
     imageCount,
     analysisPathLabel: getAnalysisPathLabel(imageCount),
     analysisSummary,
+    retryAfterMs,
+    stageKey,
+    stageLabel,
+    stageMessage,
     detectedCategory,
     detectedDescription,
     detectedColor,
     searchable,
-    message: analysisSummary,
+    message: stageMessage || analysisSummary,
   };
+};
+
+const normalizeAsyncPreAnalysisStatus = (value: unknown): PreAnalysisStatus => {
+  switch (value) {
+    case 'queued':
+    case 'processing':
+    case 'manual_fallback':
+    case 'failed':
+      return value;
+    case 'completed':
+      return 'ok';
+    default:
+      return 'failed';
+  }
+};
+
+const buildPP1AnalysisSnapshot = (pp1Result: any): FoundItemAnalysisSnapshot | null => {
+  const detection = selectAcceptedPP1Detection(pp1Result);
+  if (!detection) {
+    return null;
+  }
+
+  const analysis = buildDefaultAnalysisSnapshot();
+  analysis.analysisMode = 'pp1';
+  analysis.pythonItemId = detection.item_id ?? null;
+  analysis.detectedCategory = detection.label ?? null;
+  analysis.detectedDescription = detection.final_description || detection.message || null;
+  analysis.detectedColor = detection.color ?? null;
+  analysis.vector128 = Array.isArray(detection.embeddings?.vector_128d)
+    ? detection.embeddings.vector_128d
+    : [];
+  analysis.pipelineResponse = pp1Result;
+
+  return analysis;
+};
+
+const buildPP2AnalysisSnapshot = (pp2Result: any): FoundItemAnalysisSnapshot | null => {
+  if (!(pp2Result?.verification?.passed === true && pp2Result?.fused)) {
+    return null;
+  }
+
+  const analysis = buildDefaultAnalysisSnapshot();
+  analysis.analysisMode = 'pp2';
+  analysis.pythonItemId = pp2Result?.item_id ?? null;
+  analysis.detectedCategory = pp2Result.fused.category ?? null;
+  analysis.detectedDescription = pp2Result.fused.caption ?? null;
+  analysis.detectedColor = pp2Result.fused.color ?? null;
+  analysis.faissIds = Array.isArray(pp2Result.faiss_ids)
+    ? pp2Result.faiss_ids.filter((id: unknown) => typeof id === 'number')
+    : [];
+  analysis.faissId = analysis.faissIds[0] ?? null;
+  analysis.pipelineResponse = pp2Result;
+  analysis.searchable = pp2Result.stored === true;
+
+  return analysis;
 };
 
 const storeFoundItemPreAnalysis = async (
   imageCount: number,
   analysis: FoundItemAnalysisSnapshot,
-  createdBy?: string
+  createdBy?: string,
+  taskId?: string | null
 ): Promise<string | null> => {
   try {
     const token = randomUUID();
 
     await FoundItemPreAnalysis.create({
       token,
+      ...(taskId ? { taskId } : {}),
       ...(createdBy ? { createdBy: new Types.ObjectId(createdBy) } : {}),
       imageCount,
       analysisMode: analysis.analysisMode,
@@ -204,6 +291,39 @@ const storeFoundItemPreAnalysis = async (
     console.error('Failed to persist found-item pre-analysis cache:', error);
     return null;
   }
+};
+
+const loadFoundItemPreAnalysisByTaskId = async (
+  taskId: string
+): Promise<{ token: string; analysis: FoundItemAnalysisSnapshot } | null> => {
+  const entry = await FoundItemPreAnalysis.findOne({
+    taskId,
+    expiresAt: { $gt: new Date() },
+  }).lean();
+
+  if (!entry) {
+    return null;
+  }
+
+  return {
+    token: entry.token,
+    analysis: {
+      analysisMode: entry.analysisMode ?? null,
+      pythonItemId: entry.pythonItemId ?? null,
+      faissId: typeof entry.faissId === 'number' ? entry.faissId : null,
+      faissIds: Array.isArray(entry.faissIds)
+        ? entry.faissIds.filter((id: unknown) => typeof id === 'number')
+        : [],
+      detectedCategory: entry.detectedCategory ?? null,
+      detectedDescription: entry.detectedDescription ?? null,
+      detectedColor: entry.detectedColor ?? null,
+      vector128: Array.isArray(entry.vector128)
+        ? entry.vector128.filter((value: unknown) => typeof value === 'number')
+        : [],
+      pipelineResponse: entry.pipelineResponse ?? null,
+      searchable: entry.searchable === true,
+    },
+  };
 };
 
 const loadFoundItemPreAnalysis = async (
@@ -398,6 +518,210 @@ export const preAnalyzeFoundImages = async (
     next(error);
   } finally {
     await cleanupTempFiles(imageFiles);
+  }
+};
+
+/**
+ * Start async founder image pre-analysis
+ * POST /api/items/pre-analyze-found-images/start
+ */
+export const startPreAnalyzeFoundImages = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  const imageFiles = (req.files as Express.Multer.File[]) || [];
+
+  try {
+    if (imageFiles.length < 1 || imageFiles.length > 3) {
+      res.status(400).json({ message: 'You must upload between 1 and 3 images' });
+      return;
+    }
+
+    const tempImagePaths = imageFiles.map((file) => file.path);
+    const imageCount = tempImagePaths.length;
+    const pipelineStart =
+      imageCount === 1
+        ? await imageProcessingService.startPP1Analyze(tempImagePaths[0])
+        : await imageProcessingService.startPP2Analyze(tempImagePaths);
+
+    const status = normalizeAsyncPreAnalysisStatus(pipelineStart?.status);
+    const responseBody = buildPreAnalysisResponse({
+      status,
+      taskId: typeof pipelineStart?.taskId === 'string' ? pipelineStart.taskId : undefined,
+      imageCount: typeof pipelineStart?.imageCount === 'number' ? pipelineStart.imageCount : imageCount,
+      analysisMode: pipelineStart?.analysisMode === 'pp2' ? 'pp2' : imageCount > 1 ? 'pp2' : 'pp1',
+      retryAfterMs:
+        typeof pipelineStart?.retryAfterMs === 'number' ? pipelineStart.retryAfterMs : 1000,
+      stageKey: typeof pipelineStart?.stageKey === 'string' ? pipelineStart.stageKey : null,
+      stageLabel: typeof pipelineStart?.stageLabel === 'string' ? pipelineStart.stageLabel : null,
+      stageMessage: typeof pipelineStart?.stageMessage === 'string' ? pipelineStart.stageMessage : null,
+    });
+
+    res.status(202).json(responseBody);
+  } catch (error) {
+    next(error);
+  } finally {
+    await cleanupTempFiles(imageFiles);
+  }
+};
+
+/**
+ * Get async founder image pre-analysis status
+ * GET /api/items/pre-analyze-found-images/status/:taskId
+ */
+export const getPreAnalyzeFoundImagesStatus = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { taskId } = req.params;
+
+    if (!taskId) {
+      res.status(400).json({ message: 'taskId is required' });
+      return;
+    }
+
+    const pipelineStatus = await imageProcessingService.getPreAnalysisJobStatus(taskId);
+    const imageCount =
+      typeof pipelineStatus?.imageCount === 'number' && pipelineStatus.imageCount >= 1
+        ? pipelineStatus.imageCount
+        : 1;
+    const analysisMode: 'pp1' | 'pp2' | null =
+      pipelineStatus?.analysisMode === 'pp2' ? 'pp2' : pipelineStatus?.analysisMode === 'pp1' ? 'pp1' : imageCount > 1 ? 'pp2' : 'pp1';
+    const normalizedStatus = normalizeAsyncPreAnalysisStatus(pipelineStatus?.status);
+
+    if (normalizedStatus === 'queued' || normalizedStatus === 'processing') {
+      res.status(200).json(
+        buildPreAnalysisResponse({
+          status: normalizedStatus,
+          taskId,
+          imageCount,
+          analysisMode,
+          retryAfterMs:
+            typeof pipelineStatus?.retryAfterMs === 'number' ? pipelineStatus.retryAfterMs : 1000,
+          stageKey: typeof pipelineStatus?.stageKey === 'string' ? pipelineStatus.stageKey : null,
+          stageLabel: typeof pipelineStatus?.stageLabel === 'string' ? pipelineStatus.stageLabel : null,
+          stageMessage:
+            typeof pipelineStatus?.stageMessage === 'string' ? pipelineStatus.stageMessage : null,
+        })
+      );
+      return;
+    }
+
+    if (normalizedStatus === 'ok') {
+      const cached = await loadFoundItemPreAnalysisByTaskId(taskId);
+      if (cached) {
+        res.status(200).json(
+          buildPreAnalysisResponse({
+            status: 'ok',
+            taskId,
+            imageCount,
+            preAnalysisToken: cached.token,
+            analysisMode: cached.analysis.analysisMode,
+            retryAfterMs:
+              typeof pipelineStatus?.retryAfterMs === 'number' ? pipelineStatus.retryAfterMs : 1000,
+            detectedCategory: cached.analysis.detectedCategory,
+            detectedDescription: cached.analysis.detectedDescription,
+            detectedColor: cached.analysis.detectedColor,
+            searchable: cached.analysis.searchable,
+          })
+        );
+        return;
+      }
+
+      const rawResult = pipelineStatus?.result;
+      const analysis =
+        analysisMode === 'pp2'
+          ? buildPP2AnalysisSnapshot(rawResult)
+          : buildPP1AnalysisSnapshot(rawResult);
+
+      if (!analysis) {
+        res.status(200).json(
+          buildPreAnalysisResponse({
+            status: 'manual_fallback',
+            taskId,
+            imageCount,
+            analysisMode,
+            retryAfterMs:
+              typeof pipelineStatus?.retryAfterMs === 'number' ? pipelineStatus.retryAfterMs : 1000,
+          })
+        );
+        return;
+      }
+
+      if (analysis.analysisMode === 'pp1' && analysis.pythonItemId && analysis.vector128.length === 128) {
+        try {
+          const indexResult = await imageProcessingService.indexVector(analysis.vector128, {
+            item_id: analysis.pythonItemId,
+            source: 'pp1_preanalysis',
+            label: analysis.detectedCategory,
+            category: analysis.detectedCategory,
+          });
+
+          analysis.faissId = typeof indexResult?.faiss_id === 'number' ? indexResult.faiss_id : null;
+          analysis.faissIds = analysis.faissId !== null ? [analysis.faissId] : [];
+          analysis.searchable = analysis.faissId !== null;
+        } catch (indexError: any) {
+          console.error(
+            'PP1 async pre-analysis vector indexing failed (non-fatal):',
+            indexError?.message || indexError
+          );
+        }
+      }
+
+      const preAnalysisToken = await storeFoundItemPreAnalysis(
+        imageCount,
+        analysis,
+        req.user?.id,
+        taskId
+      );
+
+      res.status(200).json(
+        buildPreAnalysisResponse({
+          status: 'ok',
+          taskId,
+          imageCount,
+          preAnalysisToken,
+          analysisMode: analysis.analysisMode,
+          retryAfterMs:
+            typeof pipelineStatus?.retryAfterMs === 'number' ? pipelineStatus.retryAfterMs : 1000,
+          detectedCategory: analysis.detectedCategory,
+          detectedDescription: analysis.detectedDescription,
+          detectedColor: analysis.detectedColor,
+          searchable: analysis.searchable,
+        })
+      );
+      return;
+    }
+
+    if (normalizedStatus === 'manual_fallback') {
+      res.status(200).json(
+        buildPreAnalysisResponse({
+          status: 'manual_fallback',
+          taskId,
+          imageCount,
+          analysisMode,
+          retryAfterMs:
+            typeof pipelineStatus?.retryAfterMs === 'number' ? pipelineStatus.retryAfterMs : 1000,
+        })
+      );
+      return;
+    }
+
+    res.status(200).json(
+      buildPreAnalysisResponse({
+        status: 'failed',
+        taskId,
+        imageCount,
+        analysisMode,
+        retryAfterMs:
+          typeof pipelineStatus?.retryAfterMs === 'number' ? pipelineStatus.retryAfterMs : 1000,
+      })
+    );
+  } catch (error) {
+    next(error);
   }
 };
 

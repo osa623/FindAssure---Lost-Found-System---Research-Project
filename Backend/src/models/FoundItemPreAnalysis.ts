@@ -2,6 +2,7 @@ import mongoose, { Schema, Document, Types } from 'mongoose';
 
 export interface IFoundItemPreAnalysis extends Document {
   token: string;
+  taskId?: string | null;
   createdBy?: Types.ObjectId;
   imageCount: number;
   analysisMode?: 'pp1' | 'pp2' | null;
@@ -26,6 +27,15 @@ const foundItemPreAnalysisSchema = new Schema<IFoundItemPreAnalysis>(
       required: true,
       unique: true,
       index: true,
+      trim: true,
+    },
+    taskId: {
+      type: String,
+      default: null,
+      index: {
+        unique: true,
+        sparse: true,
+      },
       trim: true,
     },
     createdBy: {

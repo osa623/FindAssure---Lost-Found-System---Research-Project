@@ -28,6 +28,19 @@ router.post(
   itemController.preAnalyzeFoundImages
 );
 
+router.post(
+  '/pre-analyze-found-images/start',
+  optionalAuth,
+  uploadTempImages.array('images', 3),
+  itemController.startPreAnalyzeFoundImages
+);
+
+router.get(
+  '/pre-analyze-found-images/status/:taskId',
+  optionalAuth,
+  itemController.getPreAnalyzeFoundImagesStatus
+);
+
 /**
  * @route   GET /api/items/found
  * @desc    List all found items (owner view - no founder answers)

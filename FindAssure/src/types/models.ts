@@ -50,12 +50,17 @@ export interface SelectedImageAsset {
 }
 
 export interface FounderImagePreAnalysisResponse {
-  status: 'ok' | 'manual_fallback';
+  status: 'queued' | 'processing' | 'ok' | 'manual_fallback' | 'failed';
+  taskId?: string;
   preAnalysisToken?: string | null;
   analysisMode?: 'pp1' | 'pp2';
   imageCount?: number;
   analysisPathLabel?: string;
   analysisSummary?: string;
+  retryAfterMs?: number;
+  stageKey?: string | null;
+  stageLabel?: string | null;
+  stageMessage?: string | null;
   detectedCategory?: string | null;
   detectedDescription?: string | null;
   detectedColor?: string | null;

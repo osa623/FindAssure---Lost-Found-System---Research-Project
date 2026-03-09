@@ -1322,7 +1322,46 @@ All 19 verifier tests pass (7 original + 12 new). Zero regressions across the fu
    DATABASE_URL=sqlite:///./data/app.db
    ```
 
-6. **Start the server:**
+6. **Run Redis with Docker Desktop (recommended on Windows):**
+   Install Docker Desktop first:
+   - https://www.docker.com/products/docker-desktop/
+   - During installation, allow Docker Desktop to use WSL 2 if prompted.
+   - After installation, open Docker Desktop and wait until it shows that Docker is running.
+
+   Verify Docker:
+   ```powershell
+   docker --version
+   docker ps
+   ```
+
+   Start Redis:
+   ```powershell
+   docker run --name findassure-redis --restart unless-stopped -p 6379:6379 -d redis:7
+   ```
+
+   Verify Redis:
+   ```powershell
+   docker exec -it findassure-redis redis-cli ping
+   ```
+
+   Expected output:
+   ```text
+   PONG
+   ```
+
+   Useful Redis container commands:
+   ```powershell
+   docker stop findassure-redis
+   docker start findassure-redis
+   docker logs findassure-redis
+   docker rm -f findassure-redis
+   ```
+
+   Notes:
+   - The default `.env` value `REDIS_URL=redis://localhost:6379/0` works with the container command above.
+   - The async founder pre-analysis flow can now fall back to in-memory job tracking if Redis is unavailable, but Redis is still recommended for durable multi-request job tracking.
+
+7. **Start the server:**
    ```bash
    python run_server.py
    ```

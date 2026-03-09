@@ -37,3 +37,16 @@ redis_manager = RedisClient()
 def get_redis_client():
     """Exposes the global Redis client instance."""
     return redis_manager.client
+
+
+def get_healthy_redis_client():
+    """Returns a usable Redis client or None if Redis is unreachable."""
+    client = redis_manager.client
+    if not client:
+        return None
+
+    try:
+        client.ping()
+        return client
+    except redis.RedisError:
+        return None

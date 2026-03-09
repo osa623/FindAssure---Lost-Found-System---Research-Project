@@ -51,6 +51,22 @@ const buildImageMimeType = (image: SelectedImageAsset): string => {
   }
 };
 
+const appendFounderPreAnalysisImages = (formData: FormData, images: SelectedImageAsset[]) => {
+  for (const image of images) {
+    const isHeic = /\.(heic|heif)$/i.test(image.fileName || image.uri)
+      || (image.mimeType?.toLowerCase() === 'image/heic')
+      || (image.mimeType?.toLowerCase() === 'image/heif');
+    const entryName = isHeic ? `photo_${Date.now()}.jpg` : (image.fileName || `photo_${Date.now()}.jpg`);
+    const entryType = isHeic ? 'image/jpeg' : buildImageMimeType(image);
+
+    formData.append('images', {
+      uri: image.uri,
+      name: entryName,
+      type: entryType,
+    } as any);
+  }
+};
+
 export const itemsApi = {
   // IMAGE UPLOAD
   
@@ -115,27 +131,7 @@ export const itemsApi = {
     images: SelectedImageAsset[]
   ): Promise<FounderImagePreAnalysisResponse> => {
     const formData = new FormData();
-
-    for (const image of images) {
-      const isHeic = /\.(heic|heif)$/i.test(image.fileName || image.uri)
-        || (image.mimeType?.toLowerCase() === 'image/heic')
-        || (image.mimeType?.toLowerCase() === 'image/heif');
-      const entryName = isHeic ? `photo_${Date.now()}.jpg` : (image.fileName || `photo_${Date.now()}.jpg`);
-      const entryType = isHeic ? 'image/jpeg' : buildImageMimeType(image);
-      console.log('[PRE-ANALYZE] FormData entry:', {
-        uri: image.uri.substring(0, 100),
-        originalFileName: image.fileName,
-        originalMimeType: image.mimeType,
-        isHeic,
-        sentName: entryName,
-        sentType: entryType,
-      });
-      formData.append('images', {
-        uri: image.uri,
-        name: entryName,
-        type: entryType,
-      } as any);
-    }
+    appendFounderPreAnalysisImages(formData, images);
 
     try {
       const response = await axiosClient.post<FounderImagePreAnalysisResponse>(
@@ -153,6 +149,49 @@ export const itemsApi = {
     } catch (error: any) {
       logAxiosRequestError('Founder image pre-analysis error', error);
       throw new Error(error.response?.data?.message || error.message || 'Failed to analyze images');
+    }
+  },
+
+  startFounderImagePreAnalysis: async (
+    images: SelectedImageAsset[]
+  ): Promise<FounderImagePreAnalysisResponse> => {
+    const formData = new FormData();
+    appendFounderPreAnalysisImages(formData, images);
+
+    try {
+      const response = await axiosClient.post<FounderImagePreAnalysisResponse>(
+        '/items/pre-analyze-found-images/start',
+        formData,
+        {
+          headers: {
+            'Accept': 'application/json',
+          },
+          timeout: 120000,
+        }
+      );
+
+      return response.data;
+    } catch (error: any) {
+      logAxiosRequestError('Founder image pre-analysis start error', error);
+      throw new Error(error.response?.data?.message || error.message || 'Failed to start image analysis');
+    }
+  },
+
+  getFounderImagePreAnalysisStatus: async (
+    taskId: string
+  ): Promise<FounderImagePreAnalysisResponse> => {
+    try {
+      const response = await axiosClient.get<FounderImagePreAnalysisResponse>(
+        `/items/pre-analyze-found-images/status/${encodeURIComponent(taskId)}`,
+        {
+          timeout: 120000,
+        }
+      );
+
+      return response.data;
+    } catch (error: any) {
+      logAxiosRequestError('Founder image pre-analysis status error', error);
+      throw new Error(error.response?.data?.message || error.message || 'Failed to fetch image analysis status');
     }
   },
   
