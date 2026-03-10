@@ -340,6 +340,7 @@ class MultiViewPipeline:
             detail_failed = self._is_florence_failed(normalized)
             per_view_by_index[idx].extraction = PP2PerViewExtraction(
                 caption=normalized["caption"],
+                detailed_description=normalized.get("detailed_description") or None,
                 ocr_text=normalized["ocr_text"],
                 grounded_features=normalized["grounded_features"],
                 extraction_confidence=(
@@ -612,6 +613,13 @@ class MultiViewPipeline:
 
         caption_raw = data.get("caption", "")
         caption = caption_raw if isinstance(caption_raw, str) else str(caption_raw or "")
+        detailed_description_raw = data.get("detailed_description")
+        if detailed_description_raw is None:
+            detailed_description_raw = data.get("final_description")
+        if isinstance(detailed_description_raw, str):
+            detailed_description = detailed_description_raw.strip()
+        else:
+            detailed_description = str(detailed_description_raw or "").strip()
 
         if "ocr_text" in data:
             ocr_raw = data.get("ocr_text", "")
@@ -624,6 +632,23 @@ class MultiViewPipeline:
             ocr_text = ""
         else:
             ocr_text = ocr_raw if isinstance(ocr_raw, str) else str(ocr_raw)
+
+        ocr_text_display_raw = data.get("ocr_text_display", "")
+        if isinstance(ocr_text_display_raw, str):
+            ocr_text_display = ocr_text_display_raw.strip()
+        else:
+            ocr_text_display = str(ocr_text_display_raw or "").strip()
+
+        ocr_lines_raw = data.get("ocr_lines", [])
+        if isinstance(ocr_lines_raw, list):
+            ocr_lines = [dict(line) for line in ocr_lines_raw if isinstance(line, dict)]
+        else:
+            ocr_lines = []
+
+        ocr_layout_source_raw = data.get("ocr_layout_source", "")
+        ocr_layout_source = (
+            str(ocr_layout_source_raw).strip() if ocr_layout_source_raw is not None else ""
+        )
 
         grounded_raw = data.get("grounded_features", {})
         if isinstance(grounded_raw, dict):
@@ -668,7 +693,11 @@ class MultiViewPipeline:
 
         return {
             "caption": caption,
+            "detailed_description": detailed_description,
             "ocr_text": ocr_text,
+            "ocr_text_display": ocr_text_display,
+            "ocr_lines": ocr_lines,
+            "ocr_layout_source": ocr_layout_source or None,
             "grounded_features": grounded_features,
             "raw": raw,
         }
@@ -1679,6 +1708,11 @@ class MultiViewPipeline:
                     ),
                     extraction=PP2PerViewExtraction(
                         caption=str(extraction.get("caption", "")),
+                        detailed_description=str(
+                            extraction.get("detailed_description")
+                            or extraction.get("final_description")
+                            or ""
+                        ).strip() or None,
                         ocr_text=str(extraction.get("ocr_text", "")),
                         grounded_features=extraction.get("grounded_features", {})
                         if isinstance(extraction.get("grounded_features", {}), dict)
@@ -2072,6 +2106,11 @@ class MultiViewPipeline:
                 ),
                 extraction=PP2PerViewExtraction(
                     caption=str(stage1_extraction.get("caption", "")),
+                    detailed_description=str(
+                        stage1_extraction.get("detailed_description")
+                        or stage1_extraction.get("final_description")
+                        or ""
+                    ).strip() or None,
                     ocr_text=str(stage1_extraction.get("ocr_text", "")),
                     grounded_features=stage1_extraction.get("grounded_features", {}),
                     extraction_confidence=(
@@ -2486,8 +2525,9 @@ class MultiViewPipeline:
                     phase2_timeout = float(getattr(settings, "PP2_PHASE2_TIMEOUT_S", 15))
                     phase2_result = _pp2_phase2_future.result(timeout=phase2_timeout)
                     if isinstance(phase2_result, dict) and phase2_result.get("status") == "accepted":
-                        if phase2_result.get("final_description"):
-                            fused.caption = str(phase2_result["final_description"])
+                        if phase2_result.get("final_description") and not getattr(fused, "detailed_description", None):
+                            fused.detailed_description = str(phase2_result["final_description"])
+                            fused.detailed_description_source = "phase2_gemini_fallback"
                         if phase2_result.get("color"):
                             fused.color = str(phase2_result["color"])
                         logger.debug(

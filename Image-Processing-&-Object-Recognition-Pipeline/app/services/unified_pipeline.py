@@ -86,6 +86,12 @@ class UnifiedPipeline:
             "color": None,
             "ocr_text": "",
             "final_description": None,
+            "detailed_description": None,
+            "description_source": None,
+            "detailed_description_source": None,
+            "description_evidence_used": {"summary": [], "detailed": []},
+            "description_filters_applied": [],
+            "description_word_count": {"final_description": 0, "detailed_description": 0},
             "category_details": {
                 "features": [],
                 "defects": [],
@@ -102,6 +108,122 @@ class UnifiedPipeline:
                 "florence": None,
                 "gemini": None
             }
+        }
+
+    @staticmethod
+    def _compose_pp1_description_bundle(
+        *,
+        label: Optional[str],
+        color: Optional[str],
+        analysis: Dict[str, Any],
+        category_details: Optional[Dict[str, Any]],
+        key_count: Optional[int],
+        preferred_description: Optional[str] = None,
+        preferred_description_source: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Compose the richest public-facing description from verified evidence."""
+        def _clean_list(value: Any) -> List[str]:
+            if isinstance(value, (list, tuple, set)):
+                return [str(item).strip() for item in value if str(item).strip()]
+            if value is None:
+                return []
+            text = str(value).strip()
+            return [text] if text else []
+
+        def _clean_description_text(value: str) -> str:
+            cleaned = str(value or "").strip()
+            if not cleaned:
+                return ""
+            cleaned = re.sub(
+                r"(?i)^(?:the\s+)?(?:inside|front|back|side|rear|top|bottom)\s+view\s+shows\s+",
+                "",
+                cleaned,
+            ).strip()
+            cleaned = re.sub(
+                r"(?i)\s+(?:on|against|near|beside)\s+(?:a\s+|the\s+)?(?:wooden\s+)?(?:table|desk|surface|floor)\b.*$",
+                "",
+                cleaned,
+            ).strip(" ,.")
+            cleaned = re.sub(r"(?i)\s+is\s+sitting\b.*$", "", cleaned).strip(" ,.")
+            cleaned = re.sub(r"(?i)\s+is\s+lying\b.*$", "", cleaned).strip(" ,.")
+            return cleaned
+
+        description_text = str(
+            preferred_description
+            or analysis.get("detailed_description")
+            or analysis.get("final_description")
+            or analysis.get("caption", "")
+            or ""
+        ).strip()
+        description_text = _clean_description_text(description_text)
+        description_lower = description_text.lower()
+
+        features = _clean_list((category_details or {}).get("features") if isinstance(category_details, dict) else [])
+        defects = _clean_list((category_details or {}).get("defects") if isinstance(category_details, dict) else [])
+        attachments = _clean_list((category_details or {}).get("attachments") if isinstance(category_details, dict) else [])
+        ocr_text = str(analysis.get("ocr_text", "") or "").strip()
+        ocr_snippet = " ".join(ocr_text.split()[:10]).strip()
+
+        prefix_parts: List[str] = []
+        canonical = canonicalize_label(label or "") if label else None
+        if canonical:
+            label_word = canonical.lower()
+            if canonical == "Key" and isinstance(key_count, int) and key_count > 1:
+                label_word = f"{key_count} keys"
+            prefix_parts.append(label_word)
+        if color and str(color).lower() not in ("unknown", "none", ""):
+            prefix_parts.insert(0, str(color).lower())
+
+        sentences: List[str] = []
+        if prefix_parts and not any(part in description_lower[:80] for part in prefix_parts):
+            sentences.append(f"A {' '.join(prefix_parts)}.")
+        if description_text:
+            sentences.append(description_text.rstrip(". ") + ".")
+
+        unseen_features = [item for item in features if item.lower() not in description_lower]
+        if unseen_features:
+            sentences.append("It has " + ", ".join(unseen_features[:4]) + ".")
+
+        unseen_attachments = [item for item in attachments if item.lower() not in description_lower]
+        if unseen_attachments:
+            sentences.append("It includes " + ", ".join(unseen_attachments[:2]) + ".")
+
+        unseen_defects = [item for item in defects if item.lower() not in description_lower]
+        if unseen_defects:
+            sentences.append("It shows " + ", ".join(unseen_defects[:2]) + ".")
+
+        if ocr_snippet and ocr_snippet.lower() not in description_lower:
+            sentences.append(f'The text "{ocr_snippet}" is visible on the surface.')
+
+        if not sentences:
+            sentences.append("Item visible in the image.")
+
+        composed_description = " ".join(sentence.strip() for sentence in sentences if sentence.strip())
+        evidence: List[str] = []
+        if preferred_description:
+            evidence.append("gemini_description")
+        elif analysis.get("caption"):
+            evidence.append("florence_caption")
+        if features:
+            evidence.append("grounded_features")
+        if defects:
+            evidence.append("grounded_defects")
+        if attachments:
+            evidence.append("grounded_attachments")
+        if ocr_snippet:
+            evidence.append("ocr_text")
+
+        source = preferred_description_source or "evidence_composer"
+        word_count = len(composed_description.split())
+        return {
+            "final_description": composed_description,
+            "detailed_description": composed_description,
+            "description_source": source,
+            "detailed_description_source": source,
+            "description_evidence_used": {"summary": evidence, "detailed": evidence},
+            "description_filters_applied": [source],
+            "description_word_count": {"final_description": word_count, "detailed_description": word_count},
+            "description_timings_ms": analysis.get("raw", {}).get("description_timings_ms", {}),
         }
 
     @staticmethod
@@ -384,30 +506,24 @@ class UnifiedPipeline:
         )
         florence_extract_ms = (time.perf_counter() - florence_start) * 1000.0
 
-        # Build description from Florence caption (skip Gemini)
-        caption = str(analysis.get("caption", "") or "").strip()
+        # Build grounded description from Florence evidence (skip Gemini)
         color = analysis.get("color_vqa") or None
         ocr_text = str(analysis.get("ocr_text", "") or "")
         grounded_features = analysis.get("grounded_features", [])
         grounded_defects = analysis.get("grounded_defects", [])
         grounded_attachments = analysis.get("grounded_attachments", [])
         key_count = analysis.get("key_count")
-
-        final_description = caption if caption else None
-
-        # Enrich short captions with a targeted VQA call
-        if final_description and len(final_description.split()) < 6:
-            try:
-                enrich_q = (
-                    f"Describe the {florence_label} in this image in 2-3 sentences. "
-                    "Include color, condition, and notable features."
-                )
-                enriched = self.florence.vqa(crop, enrich_q, profile=profile)
-                if enriched and len(enriched.split()) >= 5:
-                    final_description = enriched.strip()
-                    analysis["caption_enriched"] = True
-            except Exception as e:
-                logger.debug("Florence-primary caption enrichment failed: %s", e)
+        description_bundle = self._compose_pp1_description_bundle(
+            label=florence_label,
+            color=color,
+            analysis=analysis,
+            category_details={
+                "features": grounded_features if isinstance(grounded_features, list) else [],
+                "defects": grounded_defects if isinstance(grounded_defects, list) else [],
+                "attachments": grounded_attachments if isinstance(grounded_attachments, list) else [],
+            },
+            key_count=key_count,
+        )
 
         # Generate tags from Florence evidence
         tags: List[str] = []
@@ -451,7 +567,16 @@ class UnifiedPipeline:
             "bbox": florence_bbox,
             "color": color,
             "ocr_text": ocr_text,
-            "final_description": final_description,
+            "ocr_text_display": analysis.get("ocr_text_display", ""),
+            "ocr_lines": analysis.get("ocr_lines", []),
+            "ocr_layout_source": analysis.get("ocr_layout_source"),
+            "final_description": description_bundle.get("final_description"),
+            "detailed_description": description_bundle.get("detailed_description"),
+            "description_source": description_bundle.get("description_source"),
+            "detailed_description_source": description_bundle.get("detailed_description_source"),
+            "description_evidence_used": description_bundle.get("description_evidence_used"),
+            "description_filters_applied": description_bundle.get("description_filters_applied"),
+            "description_word_count": description_bundle.get("description_word_count"),
             "category_details": {
                 "features": grounded_features if isinstance(grounded_features, list) else [],
                 "defects": grounded_defects if isinstance(grounded_defects, list) else [],
@@ -483,6 +608,7 @@ class UnifiedPipeline:
                 },
                 "gemini": None,
                 "gemini_warnings": ["Gemini skipped — Florence-primary detection path"],
+                "description_debug": description_bundle,
                 "timings": timings,
             },
         }
@@ -522,8 +648,16 @@ class UnifiedPipeline:
             return [self._empty_response("rejected", f"Failed to open image: {str(e)}")]
 
         filename = os.path.basename(image_path)
-        profile = self.perf_profile
-        include_gemini_image = self.include_gemini_image or profile in {"balanced", "quality"}
+        profile = str(getattr(self, "perf_profile", settings.PERF_PROFILE)).lower()
+        include_gemini_image = bool(getattr(self, "include_gemini_image", False)) or profile in {"balanced", "quality"}
+        if not hasattr(self, "max_detections"):
+            self.max_detections = max(1, int(settings.PP1_MAX_DETECTIONS))
+        if not hasattr(self, "_gemini_fail_count"):
+            self._gemini_fail_count = 0
+        if not hasattr(self, "_gemini_open_until"):
+            self._gemini_open_until = 0.0
+        if not hasattr(self, "_pp1_thread_pool"):
+            self._pp1_thread_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pp1_dino")
 
         # 1. Detect
         detect_start = time.perf_counter()
@@ -834,7 +968,6 @@ class UnifiedPipeline:
                 fallback_color = analysis.get("color_vqa") or None
                 if fallback_color:
                     fallback_color = normalize_color(fallback_color) or fallback_color
-                fallback_desc = analysis.get("caption") or None
                 gemini_result = {
                     "status": "accepted_degraded",
                     "message": "Gemini circuit breaker open — accepted with Florence-only data.",
@@ -842,7 +975,7 @@ class UnifiedPipeline:
                     "color": fallback_color,
                     "category_details": {"features": [], "defects": [], "attachments": []},
                     "key_count": None,
-                    "final_description": fallback_desc,
+                    "final_description": None,
                     "tags": [],
                     "degradation_reason": "circuit_breaker_open",
                 }
@@ -873,7 +1006,6 @@ class UnifiedPipeline:
                 fallback_color = analysis.get("color_vqa") or None
                 if fallback_color:
                     fallback_color = normalize_color(fallback_color) or fallback_color
-                fallback_desc = analysis.get("caption") or None
                 gemini_result = {
                     "status": "accepted_degraded",
                     "message": RETRYABLE_UNAVAILABLE_MESSAGE,
@@ -881,13 +1013,13 @@ class UnifiedPipeline:
                     "color": fallback_color,
                     "category_details": {"features": [], "defects": [], "attachments": []},
                     "key_count": None,
-                    "final_description": fallback_desc,
+                    "final_description": None,
                     "tags": [],
                     "degradation_reason": "gemini_transient",
                 }
                 gemini_warnings.append(
                     "Gemini unavailable — accepted with Florence-only data. "
-                    "Description and color derived from Florence caption/VQA."
+                    "Description and color derived from grounded Florence evidence."
                 )
               except GeminiFatalError as exc:
                 logger.warning(
@@ -904,7 +1036,6 @@ class UnifiedPipeline:
                 fallback_color = analysis.get("color_vqa") or None
                 if fallback_color:
                     fallback_color = normalize_color(fallback_color) or fallback_color
-                fallback_desc = analysis.get("caption") or None
                 gemini_result = {
                     "status": "accepted_degraded",
                     "message": "Gemini authentication/authorization failed — accepted with Florence-only data.",
@@ -912,12 +1043,12 @@ class UnifiedPipeline:
                     "color": fallback_color,
                     "category_details": {"features": [], "defects": [], "attachments": []},
                     "key_count": None,
-                    "final_description": fallback_desc,
+                    "final_description": None,
                     "tags": [],
                 }
                 gemini_warnings.append(
                     "Gemini fatal error (auth) — accepted with Florence-only data. "
-                    "Description and color derived from Florence caption/VQA."
+                    "Description and color derived from grounded Florence evidence."
                 )
               except Exception as exc:
                 logger.exception("PP1_GEMINI_UNKNOWN_ERROR")
@@ -1035,6 +1166,30 @@ class UnifiedPipeline:
             if gemini_error_meta is not None:
                 raw_payload["gemini_error"] = gemini_error_meta
 
+            response_label = gemini_result.get("label") or final_label
+            response_color = gemini_result.get("color")
+            response_category_details = gemini_result.get("category_details", {
+                "features": [], "defects": [], "attachments": []
+            })
+            response_key_count = gemini_result.get("key_count")
+            description_bundle = None
+            if response_label:
+                description_bundle = self._compose_pp1_description_bundle(
+                    label=response_label,
+                    color=response_color or analysis.get("color_vqa"),
+                    analysis=analysis,
+                    category_details=response_category_details,
+                    key_count=response_key_count if response_key_count is not None else analysis.get("key_count"),
+                    preferred_description=gemini_result.get("detailed_description") or gemini_result.get("final_description"),
+                    preferred_description_source=(
+                        "gemini_evidence_locked"
+                        if gemini_result.get("detailed_description") or gemini_result.get("final_description")
+                        else None
+                    ),
+                )
+                raw_payload["description_debug"] = description_bundle
+                gemini_result["final_description"] = description_bundle.get("final_description")
+
             response = {
                 "status": status,
                 "message": gemini_result.get("message", "Success" if status == "accepted" else "Rejected by Gemini"),
@@ -1043,16 +1198,23 @@ class UnifiedPipeline:
                     "image_id": str(uuid.uuid4()),
                     "filename": filename
                 },
-                "label": gemini_result.get("label") or final_label,
+                "label": response_label,
                 "confidence": final_detection.confidence,
                 "bbox": final_detection.bbox,
-                "color": gemini_result.get("color"),
+                "color": response_color,
                 "ocr_text": analysis.get("ocr_text", ""),
-                "final_description": gemini_result.get("final_description"),
-                "category_details": gemini_result.get("category_details", {
-                    "features": [], "defects": [], "attachments": []
-                }),
-                "key_count": gemini_result.get("key_count"),
+                "ocr_text_display": analysis.get("ocr_text_display", ""),
+                "ocr_lines": analysis.get("ocr_lines", []),
+                "ocr_layout_source": analysis.get("ocr_layout_source"),
+                "final_description": description_bundle.get("final_description") if description_bundle else None,
+                "detailed_description": description_bundle.get("detailed_description") if description_bundle else None,
+                "description_source": description_bundle.get("description_source") if description_bundle else None,
+                "detailed_description_source": description_bundle.get("detailed_description_source") if description_bundle else None,
+                "description_evidence_used": description_bundle.get("description_evidence_used") if description_bundle else {"summary": [], "detailed": []},
+                "description_filters_applied": description_bundle.get("description_filters_applied") if description_bundle else [],
+                "description_word_count": description_bundle.get("description_word_count") if description_bundle else {"final_description": 0, "detailed_description": 0},
+                "category_details": response_category_details,
+                "key_count": response_key_count,
                 "tags": gemini_result.get("tags", []),
                 "embeddings": {
                     "vector_128d": vec_128_list,

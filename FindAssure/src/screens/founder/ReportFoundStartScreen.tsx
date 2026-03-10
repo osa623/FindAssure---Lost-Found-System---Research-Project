@@ -177,6 +177,7 @@ const ReportFoundStartScreen = () => {
     preAnalysisToken?: string | null;
     detectedCategory?: string | null;
     detectedDescription?: string | null;
+    detailedDescription?: string | null;
     analysisSummary?: string;
     message?: string;
     status?: string;
@@ -190,7 +191,7 @@ const ReportFoundStartScreen = () => {
       images,
       preAnalysisToken: preAnalysis.preAnalysisToken || null,
       category: resolveItemCategory(preAnalysis.detectedCategory),
-      description: preAnalysis.detectedDescription || undefined,
+      description: preAnalysis.detailedDescription || preAnalysis.detectedDescription || undefined,
       analysisMessage: preAnalysis.analysisSummary || preAnalysis.message || fallbackMessage,
     });
   };

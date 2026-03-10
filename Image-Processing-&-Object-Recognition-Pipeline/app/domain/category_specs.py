@@ -95,13 +95,13 @@ def canonicalize_label(label: str) -> Optional[str]:
 # Used by Florence-2 (Grounding) and Gemini (Reasoning)
 CATEGORY_SPECS = {
     "Wallet": {
-        "features": ["logo", "brand name", "pattern", "texture", "card slots", "coin pouch", "zipper", "button clasp"],
+        "features": ["logo", "brand name", "pattern", "texture", "card slots", "coin pouch", "zipper", "button clasp", "stitched logo", "stitching", "flap closure", "snap button", "zipper compartment", "bill compartment"],
         "defects": [
             "torn stitch", "frayed edge", "scratch", "scuff marks", "stain", "peeling leather",
             "broken zipper", "zipper jammed", "missing button", "broken clasp", "cracked surface",
-            "faded logo", "worn corners", "discoloration"
+            "faded logo", "worn corners", "discoloration", "edge wear", "creased leather", "peeling edges"
         ],
-        "attachments": ["strap attached", "chain attached", "keyring attached"]
+        "attachments": ["strap attached", "chain attached", "keyring attached", "wrist strap attached", "coin pouch attached"]
     },
     "Handbag": {
         "features": ["logo", "brand name", "pattern", "texture", "buckle", "zipper", "button clasp", "handle", "strap"],
@@ -140,20 +140,20 @@ CATEGORY_SPECS = {
         "attachments": ["phone case attached", "screen protector attached", "charging cable attached"]
     },
     "Helmet": {
-        "features": ["logo", "brand name", "ventilation", "graphics"],
+        "features": ["logo", "brand name", "ventilation", "graphics", "clear visor", "tinted visor", "chin vent", "top vent", "rear vent", "white writing"],
         "defects": [
             "crack", "deep scratch", "broken visor", "visor scratch", "strap tear",
-            "strap broken", "missing padding", "paint chips", "dent"
+            "strap broken", "missing padding", "paint chips", "dent", "surface scuff", "visor scuff", "worn strap"
         ],
-        "attachments": ["visor", "chin strap", "padding"]
+        "attachments": ["visor", "chin strap", "padding", "visor shield", "buckle strap"]
     },
     "Key": {
-        "features": ["logo", "brand name", "text", "teeth pattern", "key head hole", "slot in head"],
+        "features": ["logo", "brand name", "text", "teeth pattern", "key head hole", "slot in head", "grooves", "engraved text", "plastic head cover"],
         "defects": [
             "bent key", "rust", "broken key head", "worn teeth", "scratches",
-            "damaged keyring"
+            "damaged keyring", "chipped edge", "surface corrosion"
         ],
-        "attachments": ["metal key ring attached", "lanyard attached", "tag attached", "remote key fob attached"]
+        "attachments": ["metal key ring attached", "lanyard attached", "tag attached", "remote key fob attached", "carabiner attached", "hook attached"]
     },
     "Power Bank": {
         "features": ["logo", "brand name", "indicator lights", "ports"],

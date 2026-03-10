@@ -21,7 +21,11 @@ class PP2DetectionCandidate(BaseModel):
 
 class PP2PerViewExtraction(BaseModel):
     caption: str
+    detailed_description: Optional[str] = None
     ocr_text: str
+    ocr_text_display: Optional[str] = None
+    ocr_lines: Optional[List[Dict[str, Any]]] = None
+    ocr_layout_source: Optional[str] = None
     grounded_features: Dict[str, Any]
     extraction_confidence: Optional[float] = None
     raw: Optional[Dict[str, Any]] = None
@@ -144,6 +148,12 @@ class PP2FusedProfile(BaseModel):
     brand: Optional[str] = None
     color: Optional[str] = None
     caption: Optional[str] = None
+    detailed_description: Optional[str] = None
+    description_source: Optional[str] = None
+    detailed_description_source: Optional[str] = None
+    description_evidence_used: Optional[Dict[str, Any]] = None
+    description_filters_applied: Optional[List[str]] = None
+    description_word_count: Optional[Dict[str, int]] = None
     merged_ocr_tokens: List[str]
     attributes: Dict[str, Any]
     defects: List[str]
@@ -157,6 +167,8 @@ class PP2Response(BaseModel):
     per_view: List[PP2PerViewResult] = Field(..., description="Results for 2 or 3 input views")
     verification: PP2VerificationResult
     fused: Optional[PP2FusedProfile] = None
+    faiss_ids: Optional[List[int]] = None
+    resolved_label: Optional[str] = None
     stored: bool
     cache_key: Optional[str] = None
 
@@ -197,4 +209,3 @@ class PP2VerifyPairResponse(BaseModel):
     geometric: Dict[str, Any]
     passed: bool
     threshold: float
-

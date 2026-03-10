@@ -64,6 +64,20 @@ router.delete('/users/:id', adminController.deleteUser);
 router.get('/verifications', adminController.getAllVerifications);
 
 /**
+ * @route   GET /api/admin/founder-prefill-feedback
+ * @desc    Get founder prefill feedback analytics
+ * @access  Admin only
+ */
+router.get('/founder-prefill-feedback', adminController.getFounderPrefillFeedback);
+
+/**
+ * @route   GET /api/admin/founder-prefill-feedback/summary
+ * @desc    Get founder prefill feedback summary analytics
+ * @access  Admin only
+ */
+router.get('/founder-prefill-feedback/summary', adminController.getFounderPrefillFeedbackSummary);
+
+/**
  * @route   PUT /api/admin/verifications/:id/evaluate
  * @desc    Evaluate verification (for future AI implementation)
  * @access  Admin only

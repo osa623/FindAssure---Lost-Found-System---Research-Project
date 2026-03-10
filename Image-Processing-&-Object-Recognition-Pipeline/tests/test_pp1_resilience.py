@@ -35,7 +35,6 @@ from app.services.gemini_reasoner import (
     GeminiFatalError,
     GeminiReasoner,
     GeminiTransientError,
-    REASONING_FAILED_MESSAGE,
     RETRYABLE_UNAVAILABLE_MESSAGE,
 )
 from app.services.unified_pipeline import UnifiedPipeline
@@ -93,7 +92,7 @@ def _build_test_pipeline(gemini_behavior):
 
 
 class TestUnifiedPipelineGeminiFallback(unittest.TestCase):
-    def test_transient_gemini_error_degrades_to_rejected(self):
+    def test_transient_gemini_error_degrades_to_composed_response(self):
         pipeline = _build_test_pipeline(
             GeminiTransientError("503 UNAVAILABLE", status_code=503, provider_status="UNAVAILABLE")
         )
@@ -105,15 +104,22 @@ class TestUnifiedPipelineGeminiFallback(unittest.TestCase):
 
         self.assertEqual(len(out), 1)
         row = out[0]
-        self.assertEqual(row["status"], "rejected")
+        self.assertEqual(row["status"], "accepted_degraded")
         self.assertEqual(row["message"], RETRYABLE_UNAVAILABLE_MESSAGE)
         self.assertEqual(row["label"], "Wallet")
+        self.assertEqual(row["final_description"], row["detailed_description"])
+        self.assertIn("wallet", row["final_description"].lower())
+        self.assertIn("the text \"visa\" is visible on the surface", row["final_description"].lower())
+        self.assertNotIn("notable details:", row["final_description"].lower())
+        self.assertNotIn("visible details include", row["final_description"].lower())
+        self.assertNotIn("visible text reads", row["final_description"].lower())
+        self.assertNotIn("visible wear includes", row["final_description"].lower())
         self.assertIn("gemini_error", row["raw"])
         self.assertEqual(row["raw"]["gemini_error"]["retryable"], True)
         self.assertEqual(row["raw"]["gemini_error"]["status_code"], 503)
         self.assertEqual(row["raw"]["gemini_error"]["provider_status"], "UNAVAILABLE")
 
-    def test_fatal_gemini_error_degrades_to_reasoning_failed(self):
+    def test_fatal_gemini_error_degrades_to_composed_response(self):
         pipeline = _build_test_pipeline(
             GeminiFatalError("401 unauthorized", status_code=401, provider_status="UNAUTHENTICATED")
         )
@@ -124,8 +130,9 @@ class TestUnifiedPipelineGeminiFallback(unittest.TestCase):
             os.remove(path)
 
         row = out[0]
-        self.assertEqual(row["status"], "rejected")
-        self.assertEqual(row["message"], REASONING_FAILED_MESSAGE)
+        self.assertEqual(row["status"], "accepted_degraded")
+        self.assertIn("wallet", row["final_description"].lower())
+        self.assertEqual(row["description_source"], "evidence_composer")
         self.assertIn("gemini_error", row["raw"])
         self.assertEqual(row["raw"]["gemini_error"]["retryable"], False)
 
@@ -202,8 +209,9 @@ class TestPP1EndpointResilience(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertTrue(isinstance(payload, list) and len(payload) == 1)
-        self.assertEqual(payload[0]["status"], "rejected")
+        self.assertEqual(payload[0]["status"], "accepted_degraded")
         self.assertEqual(payload[0]["message"], RETRYABLE_UNAVAILABLE_MESSAGE)
+        self.assertEqual(payload[0]["final_description"], payload[0]["detailed_description"])
 
 
 class TestCaptionConfirmsYoloLabel(unittest.TestCase):

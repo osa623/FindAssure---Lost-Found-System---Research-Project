@@ -63,6 +63,7 @@ export interface FounderImagePreAnalysisResponse {
   stageMessage?: string | null;
   detectedCategory?: string | null;
   detectedDescription?: string | null;
+  detailedDescription?: string | null;
   detectedColor?: string | null;
   searchable?: boolean;
   message?: string;

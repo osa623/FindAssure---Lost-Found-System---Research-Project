@@ -14,16 +14,17 @@ class Settings(BaseSettings):
     FAISS_THRESHOLD_2VIEW: float | None = None
     GOOGLE_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
-    PERF_PROFILE: str = "fast"
+    PERF_PROFILE: str = "balanced"
     PP1_MAX_DETECTIONS: int = 1
     PP1_GEMINI_INCLUDE_IMAGE: bool = False
     FLORENCE_FAST_MAX_NEW_TOKENS: int = 96
     FLORENCE_FAST_NUM_BEAMS: int = 1
-    FLORENCE_TIMEOUT_MS: int = 30000
-    FLORENCE_OCR_TIMEOUT_MS: int = 15000
+    FLORENCE_TIMEOUT_MS: int = 120000
+    FLORENCE_OCR_TIMEOUT_MS: int = 60000
     FLORENCE_OCR_RECOVERY_MAX_SIDE: int = 384
-    FLORENCE_OCR_MAX_SIDE: int = 512
-    FLORENCE_CAPTION_MAX_SIDE: int = 640
+    FLORENCE_OCR_MAX_SIDE: int = 768
+    FLORENCE_CAPTION_MAX_SIDE: int = 768
+
     FLORENCE_ENABLE_AMP: bool = True
     FLORENCE_USE_FP16: bool = True
     PP2_USE_FLORENCE_LITE: bool = False
@@ -36,7 +37,7 @@ class Settings(BaseSettings):
     DINO_INPUT_SIZE: int = 224
     DINO_ENABLE_AMP: bool = True
     DINO_USE_FP16: bool = True
-    FLORENCE_LITE_TIMEOUT_MS: int = 15000
+    FLORENCE_LITE_TIMEOUT_MS: int = 60000
     FLORENCE_LITE_RETRY_COUNT: int = 0
     FLORENCE_LITE_PAD_RATIO: float = 0.20
     FLORENCE_LITE_REQUIRE_NONEMPTY: bool = True

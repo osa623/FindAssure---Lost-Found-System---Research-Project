@@ -25,7 +25,6 @@ const feedbackFinetuningSchema = new Schema<IFeedbackFinetuning>(
       type: Schema.Types.ObjectId,
       ref: 'Verification',
       required: true,
-      index: true,
     },
     foundItemId: {
       type: Schema.Types.ObjectId,

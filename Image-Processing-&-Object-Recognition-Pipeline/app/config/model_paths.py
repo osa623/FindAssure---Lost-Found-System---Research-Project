@@ -23,7 +23,7 @@ SWINIR_REPO_PATH = os.path.join(BASE_MODELS_DIR, "SwinIR")
 SWINIR_WEIGHTS_PATH = os.path.join(SWINIR_REPO_PATH, "model.safetensors")
 
 # --- Florence-2 Configuration ---
-FLORENCE2_MODEL_PATH = os.path.join(BASE_MODELS_DIR, "florence2-base-ft")
+FLORENCE2_MODEL_PATH = os.path.join(BASE_MODELS_DIR, "florence2-large-ft")
 
 # --- YOLO Configuration ---
 FINAL_MASTER_MODEL_PATH = os.path.join(BASE_MODELS_DIR, "final_master_model.pt")

@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import io
 import shutil
 import os
@@ -9,17 +10,21 @@ from typing import List
 from fastapi import BackgroundTasks, FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image as PILImage
+from pydantic import BaseModel
 
 from app.core.lifespan import lifespan
 from app.routers import pp2_router
 from app.routers import search_router
 from app.core.db import SessionLocal, get_db
+from app.models.item_models import FounderPrefillFeedbackRecord
 from app.services.storage_service import StorageService
+from app.services.founder_prefill_analytics import compute_founder_prefill_analytics
 from app.services.pre_analysis_job_store import get_job, save_job, update_job
 from app.config.settings import settings
 
 app = FastAPI(title="Vision Core Backend", lifespan=lifespan)
 logger = logging.getLogger(__name__)
+pipeline = None
 
 app.include_router(pp2_router.router, prefix="/pp2", tags=["Phase 2"])
 app.include_router(search_router.router, prefix="/search", tags=["Search"])
@@ -58,6 +63,71 @@ PRE_ANALYSIS_STAGE_META = {
         "message": "Packaging the analysis result for the app.",
     },
 }
+
+
+class FounderPrefillFeedbackPayload(BaseModel):
+    eventId: str
+    foundItemId: str
+    createdBy: str | None = None
+    preAnalysisToken: str
+    taskId: str | None = None
+    analysisMode: str | None = None
+    pythonItemId: str | None = None
+    imageCount: int
+    imageUrls: List[str] = []
+    predictedCategory: str | None = None
+    predictedDescription: str | None = None
+    predictedColor: str | None = None
+    analysisEvidence: dict | None = None
+    finalCategory: str
+    finalDescription: str
+    categoryChanged: bool
+    descriptionChanged: bool
+    acceptedAsIs: bool
+    createdAt: str | None = None
+
+
+def _serialize_founder_prefill_record(record: FounderPrefillFeedbackRecord) -> dict:
+    return {
+        "status": "ok",
+        "stored": True,
+        "duplicate": False,
+        "finalExtractedColor": record.final_extracted_color,
+        "pipelineAnalyticsVersion": record.pipeline_analytics_version,
+        "changeMetrics": record.change_metrics_json,
+        "comparisonEvidence": record.comparison_evidence_json,
+        "multiviewVerification": record.multiview_verification_json,
+    }
+
+
+def _log_founder_prefill_summary(
+    *,
+    payload: FounderPrefillFeedbackPayload,
+    analytics_result: dict,
+) -> None:
+    change_metrics = analytics_result.get("changeMetrics") if isinstance(analytics_result.get("changeMetrics"), dict) else {}
+    multiview = analytics_result.get("multiviewVerification") if isinstance(analytics_result.get("multiviewVerification"), dict) else {}
+    changed_dimensions = change_metrics.get("changedDimensions") if isinstance(change_metrics.get("changedDimensions"), list) else []
+    dropped_views = multiview.get("droppedViews") if isinstance(multiview.get("droppedViews"), list) else []
+    failure_reasons = multiview.get("failureReasons") if isinstance(multiview.get("failureReasons"), list) else []
+    dropped_summary = ",".join(
+        f"{item.get('viewIndex')}:{item.get('reason')}"
+        for item in dropped_views
+        if isinstance(item, dict)
+    )
+
+    logger.info(
+        "FOUNDER_PREFILL_ANALYTICS event_id=%s task_id=%s mode=%s overall_change_pct=%s changed_dimensions=%s multiview_passed=%s used_views=%s dropped_views=%s top_failure_reasons=%s",
+        payload.eventId,
+        payload.taskId,
+        payload.analysisMode,
+        change_metrics.get("overallChangePct"),
+        ",".join(str(item) for item in changed_dimensions) if changed_dimensions else "none",
+        multiview.get("passed") if multiview else None,
+        multiview.get("usedViews") if multiview else None,
+        dropped_summary or "none",
+        " | ".join(str(item) for item in failure_reasons[:3]) if failure_reasons else "none",
+    )
 
 
 def _analysis_path_label(image_count: int) -> str:
@@ -204,6 +274,70 @@ async def _run_pp1_analysis_job(app: FastAPI, task_id: str, temp_path: str) -> N
 def read_root():
     return {"message": "Vision Core Backend is running."}
 
+
+@app.post("/feedback/founder-prefill")
+async def log_founder_prefill_feedback(payload: FounderPrefillFeedbackPayload):
+    db = SessionLocal()
+    try:
+        existing = (
+            db.query(FounderPrefillFeedbackRecord)
+            .filter(FounderPrefillFeedbackRecord.event_id == payload.eventId)
+            .first()
+        )
+        if existing:
+            result = _serialize_founder_prefill_record(existing)
+            result["stored"] = False
+            result["duplicate"] = True
+            return result
+
+        parsed_created_at = None
+        if payload.createdAt:
+            try:
+                parsed_created_at = datetime.datetime.fromisoformat(
+                    payload.createdAt.replace("Z", "+00:00")
+                )
+            except Exception:
+                parsed_created_at = None
+
+        analytics_result = compute_founder_prefill_analytics(payload.model_dump())
+
+        record = FounderPrefillFeedbackRecord(
+            event_id=payload.eventId,
+            found_item_id=payload.foundItemId,
+            created_by=payload.createdBy,
+            pre_analysis_token=payload.preAnalysisToken,
+            task_id=payload.taskId,
+            analysis_mode=payload.analysisMode,
+            python_item_id=payload.pythonItemId,
+            image_count=payload.imageCount,
+            image_urls_json=payload.imageUrls,
+            predicted_category=payload.predictedCategory,
+            predicted_description=payload.predictedDescription,
+            predicted_color=payload.predictedColor,
+            analysis_evidence_json=payload.analysisEvidence,
+            final_extracted_color=analytics_result.get("finalExtractedColor"),
+            final_category=payload.finalCategory,
+            final_description=payload.finalDescription,
+            category_changed=payload.categoryChanged,
+            description_changed=payload.descriptionChanged,
+            accepted_as_is=payload.acceptedAsIs,
+            pipeline_analytics_version=analytics_result.get("pipelineAnalyticsVersion"),
+            change_metrics_json=analytics_result.get("changeMetrics"),
+            comparison_evidence_json=analytics_result.get("comparisonEvidence"),
+            multiview_verification_json=analytics_result.get("multiviewVerification"),
+            source_created_at=parsed_created_at,
+        )
+        db.add(record)
+        db.commit()
+        _log_founder_prefill_summary(payload=payload, analytics_result=analytics_result)
+        return _serialize_founder_prefill_record(record)
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Founder prefill feedback logging failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        db.close()
+
 @app.post("/pp1/analyze")
 async def analyze_pp1(
     request: Request,
@@ -267,6 +401,8 @@ async def analyze_pp1(
         # Call the pipeline from app state (shared service instances)
         try:
             pipeline = getattr(request.app.state, "unified_pipeline", None)
+            if pipeline is None:
+                pipeline = globals().get("pipeline")
             if pipeline is None:
                 raise HTTPException(status_code=500, detail="UnifiedPipeline not initialized.")
             result = pipeline.process_pp1(temp_path)

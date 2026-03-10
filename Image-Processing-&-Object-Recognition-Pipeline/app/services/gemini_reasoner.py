@@ -100,7 +100,7 @@ Do NOT guess. Do NOT invent. If evidence is missing or contradicted by the image
 
 TASK
 1) From the candidate lists, select ONLY items that are clearly supported by the EVIDENCE and VISIBLE in the image.
-2) Produce a short, detailed product-style description (1–2 sentences) using ONLY confirmed details.
+2) Produce a detailed public-listing paragraph (2–4 sentences) using ONLY confirmed details.
 3) Use ONLY the exact phrases from the candidate lists when listing features/defects/attachments.
 
 HOW TO DECIDE (STRICT)
@@ -136,7 +136,10 @@ Return exactly one JSON object with these keys:
 RULES
 - Do NOT mention the person, hands, skin tone, background.
 - If none found in a list, return an empty array for that list.
-- Keep description object-only. If OCR_TEXT is provided, include it exactly in the description.
+- Keep description object-only and specific to the item itself.
+- Prefer distinctive visible details over generic wording like "an object" or "an item".
+- If OCR_TEXT is provided and the text is visibly present on the object, include the most relevant exact text verbatim in the description.
+- Mention clearly visible features, wear, attachments, and surface markings when supported by evidence.
 - If you believe the provided LABEL is INCORRECT based on the image and evidence, you may change it.
   In that case, set label_change_reason to a short explanation (e.g. "Image shows earbuds not a wallet").
   If the label is correct, set label_change_reason to null.
@@ -501,6 +504,7 @@ class GeminiReasoner:
                 },
                 "key_count": data.get("key_count"),
                 "final_description": data.get("description"),
+                "detailed_description": data.get("description"),
                 "label_change_reason": data.get("label_change_reason"),
             }
             

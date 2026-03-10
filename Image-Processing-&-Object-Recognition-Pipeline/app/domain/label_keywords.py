@@ -51,7 +51,7 @@ CATEGORY_KEYWORDS: Dict[str, List[str]] = {
     "Student ID": [
         "student id", "id card", "school id", "campus card",
         "student card", "university id", "university card",
-        "badge", "identification", "date of issue",
+        "badge", "identification", "date of issue", "nic",
     ],
     "NIC / National ID Card": [
         "nic", "national id", "national identity card", "national identity",

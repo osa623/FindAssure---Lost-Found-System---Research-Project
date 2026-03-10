@@ -18,6 +18,7 @@ def _view_result(
     cls_name: str = "Wallet",
     grounded_features=None,
     caption: str = None,
+    detailed_description: str = None,
 ) -> PP2PerViewResult:
     if grounded_features is None:
         grounded_features = {"color": "black"}
@@ -31,6 +32,7 @@ def _view_result(
         ),
         extraction=PP2PerViewExtraction(
             caption=caption if caption is not None else f"caption_{view_index}",
+            detailed_description=detailed_description,
             ocr_text=ocr_text,
             grounded_features=grounded_features,
             extraction_confidence=1.0,
@@ -404,7 +406,7 @@ class TestPP2FusionOCRCleaning(unittest.TestCase):
 
         fused = self.service.fuse(per_view, self.vectors[:2], item_id=self.item_id, used_view_indices=[0, 1])
 
-        self.assertIn("Visible details:", fused.caption)
+        self.assertIn("It has a stitched rectangular logo on the front panel.", fused.caption)
         self.assertEqual(fused.attributes.get("caption_enrichment_mode"), "conservative_plus_caption_snippet")
         snippets_used = fused.attributes.get("caption_snippets_used", [])
         self.assertEqual(len(snippets_used), 1)
@@ -472,6 +474,167 @@ class TestPP2FusionOCRCleaning(unittest.TestCase):
         self.assertIn("logo", caption_lower)
         self.assertIn("indicator light", caption_lower)
         self.assertNotIn("zipper", caption_lower)
+
+    def test_detailed_description_prefers_best_view_detail_over_short_caption(self):
+        per_view = [
+            _view_result(
+                0,
+                "BAELLERRY GENUINE LEATHER",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Wallet",
+                grounded_features={
+                    "color": "brown",
+                    "features": ["logo", "coin pouch", "zipper"],
+                    "attachments": ["strap attached"],
+                    "defects": ["scuff marks"],
+                },
+                caption="wallet front",
+                detailed_description="A brown leather wallet with a front logo, zipper coin pouch, and visible edge wear.",
+            ),
+            _view_result(
+                1,
+                "BAELLERRY",
+                quality_score=0.95,
+                confidence=0.96,
+                cls_name="Wallet",
+                grounded_features={
+                    "color": "brown",
+                    "features": ["logo", "coin pouch", "zipper"],
+                },
+                caption="wallet back",
+            ),
+        ]
+
+        fused = self.service.fuse(per_view, self.vectors[:2], item_id=self.item_id, used_view_indices=[0, 1])
+
+        self.assertIn("brown leather wallet", fused.detailed_description.lower())
+        self.assertIn("zipper coin pouch", fused.detailed_description.lower())
+        self.assertIn("baellerry", fused.detailed_description.lower())
+        self.assertNotEqual(fused.detailed_description.lower().strip(), "wallet front")
+
+    def test_detailed_description_removes_person_holding_context(self):
+        per_view = [
+            _view_result(
+                0,
+                "ACTIVE ENERATION",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Helmet",
+                grounded_features={"color": "black", "features": ["clear visor", "logo"]},
+                caption="A person is holding a black helmet with a clear visor.",
+                detailed_description="A person is holding a black helmet with a clear visor and white writing.",
+            ),
+            _view_result(
+                1,
+                "ACTIVE ENERATION",
+                quality_score=0.95,
+                confidence=0.96,
+                cls_name="Helmet",
+                grounded_features={"color": "black", "features": ["logo"]},
+                caption="The helmet has white writing under the visor.",
+            ),
+        ]
+
+        fused = self.service.fuse(per_view, self.vectors[:2], item_id=self.item_id, used_view_indices=[0, 1])
+
+        self.assertNotIn("person", fused.detailed_description.lower())
+        self.assertNotIn("holding", fused.detailed_description.lower())
+        self.assertIn("black helmet", fused.detailed_description.lower())
+
+    def test_multi_angle_fusion_keeps_features_from_other_views(self):
+        per_view = [
+            _view_result(
+                0,
+                "BAELLERRY",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Wallet",
+                grounded_features={"color": "brown", "features": ["logo", "button clasp"]},
+                caption="A brown wallet with a stitched logo and button clasp.",
+                detailed_description="A brown leather wallet with a stitched logo on the front.",
+            ),
+            _view_result(
+                1,
+                "BAELLERRY",
+                quality_score=0.96,
+                confidence=0.97,
+                cls_name="Wallet",
+                grounded_features={"color": "brown", "features": ["coin pouch", "zipper"]},
+                caption="The inside view shows a coin pouch and zipper compartment.",
+                detailed_description="The inside view shows a coin pouch and zipper compartment.",
+            ),
+        ]
+
+        fused = self.service.fuse(per_view, self.vectors[:2], item_id=self.item_id, used_view_indices=[0, 1])
+
+        self.assertIn("button clasp", fused.detailed_description.lower())
+        self.assertIn("coin pouch", fused.detailed_description.lower())
+        self.assertIn("zipper", fused.detailed_description.lower())
+        self.assertNotIn("notable details:", fused.detailed_description.lower())
+        self.assertNotIn("other angles show", fused.detailed_description.lower())
+        self.assertNotIn("visible text reads", fused.detailed_description.lower())
+        self.assertNotIn("visible wear includes", fused.detailed_description.lower())
+
+    def test_multi_angle_fusion_keeps_defects_from_other_views(self):
+        per_view = [
+            _view_result(
+                0,
+                "BAELLERRY",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Wallet",
+                grounded_features={"color": "brown", "features": ["logo"], "defects": ["edge wear"]},
+                caption="A brown wallet with a stitched logo.",
+                detailed_description="A brown leather wallet with a stitched logo on the front.",
+            ),
+            _view_result(
+                1,
+                "BAELLERRY",
+                quality_score=0.96,
+                confidence=0.97,
+                cls_name="Wallet",
+                grounded_features={"color": "brown", "defects": ["scuff marks"]},
+                caption="The back side has scuff marks near the corner.",
+                detailed_description="The back side has scuff marks near the corner.",
+            ),
+        ]
+
+        fused = self.service.fuse(per_view, self.vectors[:2], item_id=self.item_id, used_view_indices=[0, 1])
+
+        self.assertIn("edge wear", fused.detailed_description.lower())
+        self.assertIn("scuff marks", fused.detailed_description.lower())
+        self.assertIn("other_angle_defect_fusion", fused.description_filters_applied)
+
+    def test_detailed_description_removes_scene_remnants(self):
+        per_view = [
+            _view_result(
+                0,
+                "BAELLERRY",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Wallet",
+                grounded_features={"color": "brown", "features": ["logo"]},
+                caption="A brown wallet is sitting on a wooden table.",
+                detailed_description="A brown leather wallet is sitting on a wooden table with a stitched logo.",
+            ),
+            _view_result(
+                1,
+                "BAELLERRY",
+                quality_score=0.95,
+                confidence=0.96,
+                cls_name="Wallet",
+                grounded_features={"color": "brown", "features": ["card slots"]},
+                caption="The inside view shows card slots.",
+                detailed_description="The inside view shows card slots.",
+            ),
+        ]
+
+        fused = self.service.fuse(per_view, self.vectors[:2], item_id=self.item_id, used_view_indices=[0, 1])
+
+        self.assertNotIn("sitting on", fused.detailed_description.lower())
+        self.assertNotIn("is sitting", fused.detailed_description.lower())
+        self.assertIn("card slots", fused.detailed_description.lower())
 
     def test_defect_consensus_excludes_single_view_defect(self):
         per_view = [
@@ -616,6 +779,337 @@ class TestCaptionColorFallback(unittest.TestCase):
         # Color may be None or empty — but should not fabricate one
         color = (fused.color or "").strip()
         self.assertIn(color, ["", "Unknown", None])
+
+
+class TestMultiAngleCaptionFusion(unittest.TestCase):
+    """Verify that multi-angle captions from different views are merged
+    into the fused detailed_description."""
+
+    def setUp(self):
+        self.service = MultiViewFusionService()
+        self.vectors = [np.array([1.0, 0.0]), np.array([1.0, 0.0])]
+        self.item_id = "multi-angle-test"
+
+    def test_different_angle_captions_merged_into_detailed_description(self):
+        """When views describe different aspects (front with logo vs back
+        with card slots), the fused detailed_description should contain
+        information from both angles."""
+        v0 = _view_result(
+            0,
+            "BAELLERRY",
+            quality_score=0.99,
+            confidence=0.98,
+            cls_name="Wallet",
+            grounded_features={"color": "brown", "features": ["logo"]},
+            caption="A brown wallet with a stitched rectangular logo on the front panel",
+            detailed_description="A brown leather wallet with a stitched rectangular logo on the front panel.",
+        )
+        v1 = _view_result(
+            1,
+            "BAELLERRY",
+            quality_score=0.90,
+            confidence=0.95,
+            cls_name="Wallet",
+            grounded_features={"color": "brown", "features": ["card slots"]},
+            caption="A brown wallet with multiple card slots and a coin pouch on the inside",
+            detailed_description="A brown wallet with multiple card slots and a coin pouch on the inside.",
+        )
+        per_view = [v0, v1]
+        fused = self.service.fuse(per_view, self.vectors, item_id=self.item_id, used_view_indices=[0, 1])
+
+        desc_lower = fused.detailed_description.lower()
+        # Best-view (v0) content should be in the description
+        self.assertIn("logo", desc_lower)
+        # Other-view (v1) content should also be merged in
+        self.assertIn("card slots", desc_lower)
+        # Multi-angle evidence should be tracked
+        self.assertIn("multi_angle_views", fused.description_evidence_used.get("detailed", []))
+        self.assertEqual(fused.detailed_description_source, "multi_angle_evidence_composer")
+
+    def test_single_view_no_multi_angle_merging(self):
+        """With only one scope view, no multi-angle fusion should occur."""
+        v0 = _view_result(
+            0,
+            "BRANDX",
+            quality_score=0.99,
+            confidence=0.98,
+            cls_name="Wallet",
+            grounded_features={"color": "black"},
+            caption="A black wallet with zipper closure",
+            detailed_description="A black wallet with zipper closure.",
+        )
+        v1 = _view_result(
+            1,
+            "BRANDX",
+            quality_score=0.90,
+            confidence=0.95,
+            cls_name="Wallet",
+            grounded_features={"color": "black"},
+            caption="",
+        )
+        per_view = [v0, v1]
+        fused = self.service.fuse(per_view, self.vectors, item_id=self.item_id, used_view_indices=[0, 1])
+
+        # No multi-angle evidence when second view has empty caption
+        self.assertEqual(fused.attributes.get("multi_angle_phrases_used", []), [])
+        self.assertEqual(fused.detailed_description_source, "best_view_evidence_composer")
+
+    def test_duplicate_angle_info_not_repeated(self):
+        """When both views say the same thing, the multi-angle merger should
+        not add redundant phrases."""
+        v0 = _view_result(
+            0,
+            "BRAND",
+            quality_score=0.99,
+            confidence=0.98,
+            cls_name="Wallet",
+            grounded_features={"color": "black"},
+            caption="A black wallet with zipper",
+            detailed_description="A black wallet with zipper.",
+        )
+        v1 = _view_result(
+            1,
+            "BRAND",
+            quality_score=0.90,
+            confidence=0.95,
+            cls_name="Wallet",
+            grounded_features={"color": "black"},
+            caption="A black wallet with zipper",
+            detailed_description="A black wallet with zipper.",
+        )
+        per_view = [v0, v1]
+        fused = self.service.fuse(per_view, self.vectors, item_id=self.item_id, used_view_indices=[0, 1])
+
+        # Multi-angle phrases should be empty since both views say the same thing
+        self.assertEqual(fused.attributes.get("multi_angle_phrases_used", []), [])
+
+
+class TestBackgroundSuppression(unittest.TestCase):
+    """Verify that background/furniture sentences are stripped from the
+    detailed description by the enhanced sanitiser."""
+
+    def setUp(self):
+        self.service = MultiViewFusionService()
+        self.vectors = [np.array([1.0, 0.0]), np.array([1.0, 0.0])]
+        self.item_id = "bg-test"
+
+    def test_table_under_object_dropped_from_description(self):
+        """The exact user-reported issue: 'a white table under the helmet'
+        must NOT appear in the fused detailed_description."""
+        per_view = [
+            _view_result(
+                0,
+                "ACTIVE ENERATION",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Helmet",
+                grounded_features={"color": "black", "features": ["clear visor"]},
+                caption="a black helmet with a clear visor.",
+                detailed_description=(
+                    "a black helmet with a clear visor. "
+                    "The helmet has white writing on it. "
+                    "a white table under the helmet."
+                ),
+            ),
+            _view_result(
+                1,
+                "ACTIVE ENERATION",
+                quality_score=0.90,
+                confidence=0.95,
+                cls_name="Helmet",
+                grounded_features={"color": "black", "features": ["logo"]},
+                caption="a black helmet with a logo.",
+            ),
+        ]
+        fused = self.service.fuse(
+            per_view, self.vectors, item_id=self.item_id, used_view_indices=[0, 1]
+        )
+        desc = fused.detailed_description.lower()
+        self.assertNotIn("table", desc)
+        self.assertIn("black helmet", desc)
+        self.assertIn("clear visor", desc)
+
+    def test_desk_near_object_dropped(self):
+        per_view = [
+            _view_result(
+                0,
+                "",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Wallet",
+                grounded_features={"color": "brown", "features": ["logo"]},
+                caption="a brown wallet with a logo.",
+                detailed_description="a brown wallet with a logo on a wooden desk near the window.",
+            ),
+            _view_result(
+                1, "", quality_score=0.90, confidence=0.95, cls_name="Wallet",
+                grounded_features={"color": "brown"},
+                caption="a brown wallet.",
+            ),
+        ]
+        fused = self.service.fuse(
+            per_view, self.vectors, item_id=self.item_id, used_view_indices=[0, 1]
+        )
+        desc = fused.detailed_description.lower()
+        self.assertNotIn("desk", desc)
+        self.assertIn("brown", desc)
+
+    def test_floor_surface_dropped(self):
+        per_view = [
+            _view_result(
+                0,
+                "",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Bag",
+                grounded_features={"color": "red", "features": ["zipper"]},
+                caption="a red bag with a zipper.",
+                detailed_description="a red bag with a zipper. a tiled floor beneath the bag.",
+            ),
+            _view_result(
+                1, "", quality_score=0.90, confidence=0.95, cls_name="Bag",
+                grounded_features={"color": "red"},
+                caption="a red bag.",
+            ),
+        ]
+        fused = self.service.fuse(
+            per_view, self.vectors, item_id=self.item_id, used_view_indices=[0, 1]
+        )
+        desc = fused.detailed_description.lower()
+        self.assertNotIn("floor", desc)
+        self.assertIn("red", desc)
+        self.assertIn("zipper", desc)
+
+
+class TestColorPrefixInDescription(unittest.TestCase):
+    """Verify that the detailed description always opens with the item colour
+    when colour is known but absent from the Florence caption."""
+
+    def setUp(self):
+        self.service = MultiViewFusionService()
+        self.vectors = [np.array([1.0, 0.0]), np.array([1.0, 0.0])]
+        self.item_id = "color-test"
+
+    def test_color_prepended_when_missing_from_caption(self):
+        per_view = [
+            _view_result(
+                0,
+                "",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Wallet",
+                grounded_features={"color": "blue", "features": ["logo"]},
+                caption="a small wallet with a stitched logo.",
+                detailed_description="A small wallet with a stitched logo.",
+            ),
+            _view_result(
+                1, "", quality_score=0.90, confidence=0.95, cls_name="Wallet",
+                grounded_features={"color": "blue"},
+                caption="a wallet.",
+            ),
+        ]
+        fused = self.service.fuse(
+            per_view, self.vectors, item_id=self.item_id, used_view_indices=[0, 1]
+        )
+        desc = fused.detailed_description.lower()
+        # "blue" must appear because grounded colour is known
+        self.assertIn("blue", desc)
+
+    def test_no_prefix_when_color_already_present(self):
+        per_view = [
+            _view_result(
+                0,
+                "",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Wallet",
+                grounded_features={"color": "brown", "features": ["logo"]},
+                caption="a brown wallet with a stitched logo.",
+                detailed_description="A brown leather wallet with a stitched logo.",
+            ),
+            _view_result(
+                1, "", quality_score=0.90, confidence=0.95, cls_name="Wallet",
+                grounded_features={"color": "brown"},
+                caption="a brown wallet.",
+            ),
+        ]
+        fused = self.service.fuse(
+            per_view, self.vectors, item_id=self.item_id, used_view_indices=[0, 1]
+        )
+        desc = fused.detailed_description
+        # Should NOT start with a redundant "A brown wallet." prefix
+        self.assertFalse(
+            desc.lower().startswith("a brown wallet. a brown"),
+            f"Redundant colour prefix detected: {desc!r}",
+        )
+
+
+class TestOCRSurfacePhrasing(unittest.TestCase):
+    """Verify that OCR text in the detailed description uses the new
+    'visible on the surface' phrasing."""
+
+    def setUp(self):
+        self.service = MultiViewFusionService()
+        self.vectors = [np.array([1.0, 0.0]), np.array([1.0, 0.0])]
+        self.item_id = "ocr-phrasing-test"
+
+    def test_ocr_text_uses_surface_phrasing(self):
+        per_view = [
+            _view_result(
+                0,
+                "ACTIVE GENERATION",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Helmet",
+                grounded_features={"color": "black", "features": ["visor"]},
+                caption="a black helmet with a visor.",
+                detailed_description="A black helmet with a clear visor.",
+            ),
+            _view_result(
+                1,
+                "ACTIVE GENERATION",
+                quality_score=0.90,
+                confidence=0.95,
+                cls_name="Helmet",
+                grounded_features={"color": "black"},
+                caption="a black helmet.",
+            ),
+        ]
+        fused = self.service.fuse(
+            per_view, self.vectors, item_id=self.item_id, used_view_indices=[0, 1]
+        )
+        desc = fused.detailed_description
+        self.assertIn('visible on the surface', desc.lower())
+        self.assertNotIn('text on it reads', desc.lower())
+
+    def test_ocr_token_appears_in_description(self):
+        per_view = [
+            _view_result(
+                0,
+                "BAELLERRY",
+                quality_score=0.99,
+                confidence=0.98,
+                cls_name="Wallet",
+                grounded_features={"color": "brown"},
+                caption="a brown wallet.",
+                detailed_description="A brown wallet.",
+            ),
+            _view_result(
+                1,
+                "BAELLERRY",
+                quality_score=0.90,
+                confidence=0.95,
+                cls_name="Wallet",
+                grounded_features={"color": "brown"},
+                caption="a brown wallet.",
+            ),
+        ]
+        fused = self.service.fuse(
+            per_view, self.vectors, item_id=self.item_id, used_view_indices=[0, 1]
+        )
+        desc = fused.detailed_description.lower()
+        self.assertIn("baellerry", desc)
+        self.assertIn("visible on the surface", desc)
 
 
 if __name__ == "__main__":

@@ -126,6 +126,14 @@ export async function getPreAnalysisJobStatus(taskId: string) {
   return data;
 }
 
+export async function sendFounderPrefillFeedback(payload: Record<string, unknown>) {
+  const { data } = await withPipelineLogging('founder prefill feedback relay', () =>
+    client.post('/feedback/founder-prefill', payload)
+  );
+
+  return data;
+}
+
 export async function indexVector(
   vector128d: number[],
   metadata: Record<string, unknown>
