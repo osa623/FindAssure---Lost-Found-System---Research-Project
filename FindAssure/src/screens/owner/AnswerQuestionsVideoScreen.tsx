@@ -8,9 +8,11 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { itemsApi } from '../../api/itemsApi';
+import { FormInput } from '../../components/FormInput';
 import { GlassCard } from '../../components/GlassCard';
 import { OverlayLoadingState } from '../../components/OverlayLoadingState';
 import { PrimaryButton } from '../../components/PrimaryButton';
@@ -43,6 +45,9 @@ const AnswerQuestionsVideoScreen = () => {
   const [recordingQuestionIndex, setRecordingQuestionIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingStageIndex, setLoadingStageIndex] = useState(0);
+  const [showManualReviewForm, setShowManualReviewForm] = useState(false);
+  const [manualReviewReason, setManualReviewReason] = useState('');
+  const [manualReviewSubmitting, setManualReviewSubmitting] = useState(false);
 
   useEffect(() => {
     if (!loading) {
@@ -126,6 +131,43 @@ const AnswerQuestionsVideoScreen = () => {
     }
   };
 
+  const handleManualReviewRequest = async () => {
+    const trimmedReason = manualReviewReason.trim();
+
+    if (trimmedReason.length < 10) {
+      showToast({
+        title: 'Add a reason',
+        message: 'Please briefly explain why you need manual ownership review.',
+        variant: 'warning',
+      });
+      return;
+    }
+
+    try {
+      setManualReviewSubmitting(true);
+      await itemsApi.requestManualVerificationReview({
+        foundItemId: foundItem._id,
+        reason: trimmedReason,
+      });
+
+      showToast({
+        title: 'Request sent',
+        message: 'Admin has been notified with your details and this item information.',
+        variant: 'success',
+      });
+      setManualReviewReason('');
+      setShowManualReviewForm(false);
+    } catch (error: any) {
+      showToast({
+        title: 'Could not contact admin',
+        message: error.message || 'Please try again.',
+        variant: 'error',
+      });
+    } finally {
+      setManualReviewSubmitting(false);
+    }
+  };
+
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -135,7 +177,67 @@ const AnswerQuestionsVideoScreen = () => {
           <Text style={styles.infoText}>Speak clearly and look at the camera.</Text>
           <Text style={styles.infoText}>Give specific details only the true owner would know.</Text>
           <Text style={styles.infoText}>You can preview, remove, and retake clips before submitting.</Text>
-          </GlassCard>
+        </GlassCard>
+
+        <GlassCard style={styles.supportCard}>
+          <View style={styles.supportHeaderRow}>
+            <View style={styles.supportBadge}>
+              <Ionicons name="shield-checkmark" size={16} color={theme.colors.accent} />
+              <Text style={styles.supportBadgeText}>Manual help</Text>
+            </View>
+          </View>
+          <Text style={styles.supportTitle}>Need help with these questions?</Text>
+          <Text style={styles.supportText}>
+            If you are the real owner but cannot answer by video, send a manual review request to admin.
+          </Text>
+          <TouchableOpacity
+            style={styles.contactAdminCta}
+            onPress={() => setShowManualReviewForm((current) => !current)}
+            activeOpacity={0.9}
+          >
+            <View style={styles.contactAdminIconWrap}>
+              <Ionicons
+                name={showManualReviewForm ? 'close-circle' : 'mail-open'}
+                size={20}
+                color={theme.colors.onTint}
+              />
+            </View>
+            <View style={styles.contactAdminContent}>
+              <Text style={styles.contactAdminTitle}>
+                {showManualReviewForm ? 'Hide Admin Contact' : 'Contact Admin'}
+              </Text>
+              <Text style={styles.contactAdminSubtitle}>
+                Share your reason and request a manual ownership review.
+              </Text>
+            </View>
+            <Ionicons
+              name={showManualReviewForm ? 'chevron-up' : 'chevron-forward'}
+              size={18}
+              color={theme.colors.onTint}
+            />
+          </TouchableOpacity>
+
+          {showManualReviewForm ? (
+            <View style={styles.manualReviewForm}>
+              <FormInput
+                label="Reason for manual review"
+                value={manualReviewReason}
+                onChangeText={setManualReviewReason}
+                placeholder="Example: I know the item details, but I cannot record clear video answers right now."
+                multiline
+                numberOfLines={4}
+                maxLength={500}
+                hint="This will be emailed to the admin together with your details, item details, and founder details."
+              />
+              <PrimaryButton
+                title="Send Inquiry to Admin"
+                onPress={handleManualReviewRequest}
+                loading={manualReviewSubmitting}
+                variant="secondary"
+              />
+            </View>
+          ) : null}
+        </GlassCard>
 
         <View style={styles.questionsContainer}>
           {foundItem.questions.map((question, index) => (
@@ -212,10 +314,79 @@ const createStyles = (theme: ReturnType<typeof useAppTheme>['theme']) =>
     headerCard: {
       marginBottom: theme.spacing.lg,
     },
+    supportCard: {
+      marginBottom: theme.spacing.lg,
+      borderWidth: 1,
+      borderColor: theme.colors.accent + '22',
+    },
+    supportHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'flex-start',
+      marginBottom: theme.spacing.sm,
+    },
+    supportBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.xs,
+      alignSelf: 'flex-start',
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 6,
+      borderRadius: theme.radius.pill,
+      backgroundColor: theme.colors.accentSoft,
+    },
+    supportBadgeText: {
+      ...theme.type.caption,
+      color: theme.colors.accent,
+      fontWeight: '700',
+    },
     title: {
       ...theme.type.title,
       color: theme.colors.textStrong,
       marginBottom: theme.spacing.sm,
+    },
+    supportTitle: {
+      ...theme.type.section,
+      color: theme.colors.textStrong,
+      marginBottom: theme.spacing.xs,
+    },
+    supportText: {
+      ...theme.type.body,
+      color: theme.colors.textMuted,
+      lineHeight: 20,
+    },
+    contactAdminCta: {
+      marginTop: theme.spacing.md,
+      borderRadius: theme.radius.lg,
+      backgroundColor: theme.colors.accent,
+      padding: theme.spacing.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.md,
+      ...theme.shadows.soft,
+    },
+    contactAdminIconWrap: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(255,255,255,0.16)',
+    },
+    contactAdminContent: {
+      flex: 1,
+    },
+    contactAdminTitle: {
+      ...theme.type.bodyStrong,
+      color: theme.colors.onTint,
+      marginBottom: 2,
+    },
+    contactAdminSubtitle: {
+      ...theme.type.caption,
+      color: 'rgba(255,255,255,0.86)',
+    },
+    manualReviewForm: {
+      marginTop: theme.spacing.md,
+      gap: theme.spacing.md,
     },
     subtitle: {
       ...theme.type.body,

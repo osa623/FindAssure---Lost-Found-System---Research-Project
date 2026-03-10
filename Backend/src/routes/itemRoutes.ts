@@ -96,6 +96,13 @@ router.post('/generate-questions', itemController.generateQuestions);
 router.post('/verification', requireAuth, uploadVideos.any(), itemController.createVerification);
 
 /**
+ * @route   POST /api/items/verification/manual-review
+ * @desc    Request manual ownership review from admin
+ * @access  Private
+ */
+router.post('/verification/manual-review', requireAuth, itemController.requestManualVerificationReview);
+
+/**
  * @route   GET /api/items/verification/:id
  * @desc    Get verification by ID
  * @access  Private (owner - no founder answers) / Admin (full view)

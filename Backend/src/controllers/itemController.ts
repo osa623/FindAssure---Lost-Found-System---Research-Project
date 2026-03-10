@@ -1652,6 +1652,44 @@ export const createVerification = async (
 };
 
 /**
+ * Request manual ownership review
+ * POST /api/items/verification/manual-review
+ */
+export const requestManualVerificationReview = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: 'Authentication required' });
+      return;
+    }
+
+    const foundItemId = trimString(req.body?.foundItemId);
+    const reason = trimString(req.body?.reason);
+
+    if (!foundItemId || !reason) {
+      res.status(400).json({ message: 'foundItemId and reason are required' });
+      return;
+    }
+
+    if (reason.length < 10) {
+      res.status(400).json({ message: 'Please provide a slightly more detailed reason' });
+      return;
+    }
+
+    await verificationService.requestManualVerificationReview(foundItemId, req.user.id, reason);
+
+    res.status(200).json({
+      message: 'Manual review request sent to admin successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Get verification by ID
  * GET /api/items/verification/:id
  */

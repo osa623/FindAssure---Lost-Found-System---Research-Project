@@ -389,6 +389,22 @@ export const itemsApi = {
     }
   },
 
+  requestManualVerificationReview: async (data: {
+    foundItemId: string;
+    reason: string;
+  }): Promise<{ message: string }> => {
+    try {
+      const response = await axiosClient.post<{ message: string }>(
+        '/items/verification/manual-review',
+        data
+      );
+      return response.data;
+    } catch (error: any) {
+      logAxiosRequestError('Manual verification review request error', error);
+      throw new Error(error.response?.data?.message || 'Failed to contact admin');
+    }
+  },
+
   // ADMIN ENDPOINTS
   
   // Get admin overview statistics

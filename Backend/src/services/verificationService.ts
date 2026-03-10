@@ -2,8 +2,9 @@ import { Types } from 'mongoose';
 import { Verification, IVerification, VerificationStatus, IVerificationAnswer } from '../models/Verification';
 import { FoundItem } from '../models/FoundItem';
 import { LostRequest } from '../models/LostRequest';
+import { User } from '../models/User';
 import { verifyOwnershipWithPython, PythonVerificationRequest, PythonVerificationResponse, VideoFile } from './pythonVerificationService';
-import { sendFounderVerificationPassedEmail } from './emailService';
+import { sendFounderVerificationPassedEmail, sendManualVerificationReviewEmail } from './emailService';
 
 export interface OwnerAnswerInput {
   questionId: number;
@@ -321,4 +322,60 @@ export const evaluateVerification = async (
 export const getPendingVerificationsCount = async (): Promise<number> => {
   const count = await Verification.countDocuments({ status: 'pending' });
   return count;
+};
+
+export const requestManualVerificationReview = async (
+  foundItemId: string,
+  ownerId: string,
+  reason: string
+): Promise<void> => {
+  const trimmedReason = reason.trim();
+
+  if (!trimmedReason) {
+    throw new Error('Reason is required');
+  }
+
+  const [foundItem, owner, linkedLostRequest] = await Promise.all([
+    FoundItem.findById(foundItemId),
+    User.findById(ownerId),
+    LostRequest.findOne({
+      ownerId: new Types.ObjectId(ownerId),
+      matchedFoundItemIds: new Types.ObjectId(foundItemId),
+    }).sort({ createdAt: -1 }),
+  ]);
+
+  if (!foundItem) {
+    throw new Error('Found item not found');
+  }
+
+  if (!owner) {
+    throw new Error('Owner not found');
+  }
+
+  const adminEmail = 'pawarasasmina1@gmail.com';
+  const foundLocations = (foundItem.found_location || []).map((entry) => {
+    const bits = [entry.location, entry.floor_id || null, entry.hall_name || null].filter(Boolean);
+    return bits.join(' | ');
+  });
+
+  const sent = await sendManualVerificationReviewEmail({
+    adminEmail,
+    ownerName: owner.name || null,
+    ownerEmail: owner.email || null,
+    ownerPhone: owner.phone || null,
+    ownerId: owner._id.toString(),
+    itemId: foundItem._id.toString(),
+    itemCategory: foundItem.category,
+    itemDescription: foundItem.description,
+    founderName: foundItem.founderContact?.name || null,
+    founderEmail: foundItem.founderContact?.email || null,
+    founderPhone: foundItem.founderContact?.phone || null,
+    foundLocations,
+    ownerReason: trimmedReason,
+    ownerLostDescription: linkedLostRequest?.description || null,
+  });
+
+  if (!sent) {
+    throw new Error('Manual review email could not be sent because email is not configured');
+  }
 };
